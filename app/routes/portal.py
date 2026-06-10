@@ -50,7 +50,11 @@ HTML = """<!DOCTYPE html>
     .day-date { font-size: .73rem; opacity: .85; }
     .day-body { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
     .day-body label { font-size: .7rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; display: block; margin-bottom: 2px; }
-    .day-body select, .day-body input[type=number], .day-body textarea {
+    .day-body select {
+      width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 5px 4px 5px 6px;
+      font-size: .78rem; font-family: inherit; outline: none; transition: border-color .2s; background: #fff;
+    }
+    .day-body input[type=number], .day-body textarea {
       width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
       font-size: .85rem; font-family: inherit; outline: none; transition: border-color .2s; background: #fff;
     }
