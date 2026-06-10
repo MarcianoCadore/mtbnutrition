@@ -333,6 +333,19 @@ def formatar_plano_whatsapp(data_iso: str, plano: dict) -> str:
     return "\n".join(linhas)
 
 
+def formatar_lembrete_refeicao(ref: dict) -> str:
+    """Mensagem de lembrete (30 min antes) com o que comer na refeição."""
+    linhas = [
+        f"⏰ *Daqui a 30 min — {ref['nome']} ({ref['horario']})*",
+        "",
+        "🍽️ O que comer:",
+    ]
+    for i in ref["itens"]:
+        linhas.append(f"  • {i['texto']}")
+    linhas += ["", f"_{ref['kcal']} kcal · {ref['proteina_g']:g}g proteína_", "_MTB Nutrition Bot 🤖_"]
+    return "\n".join(linhas)
+
+
 def guia_refeicoes() -> list[dict]:
     """Expande o guia por refeição com kcal/proteína por alimento recomendado."""
     out = []

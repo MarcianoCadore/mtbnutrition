@@ -4,8 +4,9 @@ from apscheduler.triggers.interval import IntervalTrigger
 from datetime import datetime, timedelta
 import pytz
 
-from app.services.whatsapp_service import send_lembrete_refeicao, send_message
-from app.services.nutricao_service import plano_para_tipo, formatar_plano_whatsapp
+from app.services.whatsapp_service import send_message
+from app.services.nutricao_service import plano_para_tipo, formatar_plano_whatsapp, formatar_lembrete_refeicao
+from app.services.config_service import get_horarios
 from app.services.mongo_service import get_db
 from config.settings import settings
 
@@ -13,7 +14,7 @@ TZ = pytz.timezone("America/Sao_Paulo")
 scheduler = AsyncIOScheduler(timezone=TZ)
 
 async def job_plano_diario():
-    """Roda às 6h — envia o plano alimentar fixo do treino de hoje."""
+    """Roda às 8h — envia o plano alimentar fixo do treino de hoje."""
     print(f"[{datetime.now()}] Enviando plano alimentar do dia...")
     try:
         db = get_db()
@@ -59,51 +60,61 @@ async def job_plano_diario():
     except Exception as e:
         print(f"[{datetime.now()}] Erro no job_plano_diario: {e}")
 
-async def job_lembrete_almoco():
-    """Roda às 11h30 — lembrete de almoço"""
+async def _tipo_treino_hoje() -> str:
+    """Tipo do treino de hoje (a partir da semana salva); DESCANSO se não houver."""
+    db = get_db()
+    hoje_iso = datetime.now(TZ).date().isoformat()
+    seg = datetime.now(TZ).date() - timedelta(days=datetime.now(TZ).date().weekday())
+    doc = await db.semanas.find_one({"semana_inicio": seg.isoformat()})
+    if doc:
+        for t in doc.get("treinos", []):
+            if t.get("data") == hoje_iso:
+                return t.get("tipo") or "DESCANSO"
+    return "DESCANSO"
+
+
+# Refeições para lembrete (chave de horário na config -> nome no cardápio).
+LEMBRETES_REFEICAO = [
+    ("cafe", "Café da manhã"),
+    ("almoco", "Almoço"),
+    ("lanche_tarde", "Lanche da tarde"),
+    ("jantar", "Jantar"),
+]
+
+
+async def enviar_lembrete_refeicao_pre(meal_nome: str):
+    """Envia, 30 min antes, o que comer na refeição do dia."""
     try:
-        db = get_db()
-        hoje = datetime.now(TZ).date()
-        plano_doc = await db.planos.find_one({"data": {"$gte": datetime(hoje.year, hoje.month, hoje.day)}})
-
-        if plano_doc:
-            refeicoes = plano_doc.get("refeicoes", [])
-            almoco = next((r for r in refeicoes if "almoço" in r["nome"].lower() or "almoco" in r["nome"].lower()), None)
-            if almoco:
-                await send_lembrete_refeicao(almoco["nome"], almoco["itens"])
+        hoje_iso = datetime.now(TZ).date().isoformat()
+        tipo = await _tipo_treino_hoje()
+        cfg = await get_horarios()
+        plano = plano_para_tipo(tipo, hoje_iso, cfg)
+        ref = next((r for r in plano["refeicoes"] if r["nome"] == meal_nome), None)
+        if ref and settings.WHATSAPP_TO:
+            await send_message(settings.WHATSAPP_TO, formatar_lembrete_refeicao(ref))
+            print(f"[{datetime.now()}] Lembrete enviado: {meal_nome}")
     except Exception as e:
-        print(f"[{datetime.now()}] Erro no lembrete almoço: {e}")
+        print(f"[{datetime.now()}] Erro no lembrete {meal_nome}: {e}")
 
-async def job_lembrete_lanche():
-    """Roda às 15h — lembrete de lanche"""
-    try:
-        db = get_db()
-        hoje = datetime.now(TZ).date()
-        plano_doc = await db.planos.find_one({"data": {"$gte": datetime(hoje.year, hoje.month, hoje.day)}})
 
-        if plano_doc:
-            refeicoes = plano_doc.get("refeicoes", [])
-            lanche = next((r for r in refeicoes if "lanche" in r["nome"].lower() and "tarde" in r["nome"].lower()), None)
-            lanche = lanche or next((r for r in refeicoes if "lanche" in r["nome"].lower()), None)
-            if lanche:
-                await send_lembrete_refeicao(lanche["nome"], lanche["itens"])
-    except Exception as e:
-        print(f"[{datetime.now()}] Erro no lembrete lanche: {e}")
-
-async def job_lembrete_janta():
-    """Roda às 20h — lembrete de janta"""
-    try:
-        db = get_db()
-        hoje = datetime.now(TZ).date()
-        plano_doc = await db.planos.find_one({"data": {"$gte": datetime(hoje.year, hoje.month, hoje.day)}})
-
-        if plano_doc:
-            refeicoes = plano_doc.get("refeicoes", [])
-            janta = next((r for r in refeicoes if "janta" in r["nome"].lower()), None)
-            if janta:
-                await send_lembrete_refeicao(janta["nome"], janta["itens"])
-    except Exception as e:
-        print(f"[{datetime.now()}] Erro no lembrete janta: {e}")
+async def agendar_lembretes_refeicao():
+    """(Re)agenda os lembretes para 30 min antes de cada refeição, conforme a
+    config de horários. Chamado no start e quando o usuário muda os horários."""
+    cfg = await get_horarios()
+    for chave, nome in LEMBRETES_REFEICAO:
+        try:
+            h, m = map(int, cfg[chave].split(":"))
+        except (KeyError, ValueError):
+            continue
+        total = (h * 60 + m - 30) % (24 * 60)   # 30 min antes
+        scheduler.add_job(
+            enviar_lembrete_refeicao_pre,
+            CronTrigger(hour=total // 60, minute=total % 60),
+            args=[nome],
+            id=f"lembrete_{chave}",
+            replace_existing=True,
+        )
+    print("🍽️ Lembretes de refeição agendados (30 min antes de cada refeição)")
 
 async def job_garmin_sync():
     """Roda a cada 10 min — sincroniza treinos planejados e atividades do Garmin."""
@@ -124,12 +135,15 @@ async def job_garmin_sync():
 
 
 def start_scheduler():
-    scheduler.add_job(job_plano_diario,     CronTrigger(hour=6,  minute=0))
-    scheduler.add_job(job_lembrete_almoco,  CronTrigger(hour=11, minute=30))
-    scheduler.add_job(job_lembrete_lanche,  CronTrigger(hour=15, minute=0))
-    scheduler.add_job(job_lembrete_janta,   CronTrigger(hour=20, minute=0))
+    scheduler.add_job(job_plano_diario,     CronTrigger(hour=8,  minute=0))
     scheduler.add_job(job_garmin_sync,      IntervalTrigger(minutes=10))
     scheduler.start()
+    # agenda os lembretes de refeição a partir da config (logo após o start)
+    scheduler.add_job(
+        agendar_lembretes_refeicao, "date",
+        run_date=datetime.now(TZ) + timedelta(seconds=3),
+        misfire_grace_time=120,
+    )
     print("✅ Scheduler iniciado — notificações + Garmin sync ativos")
 
 def stop_scheduler():

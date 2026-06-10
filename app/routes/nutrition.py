@@ -36,6 +36,9 @@ async def gravar_horarios(body: HorariosBody):
         cfg = await salvar_horarios(body.model_dump(exclude_none=True))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    # reagenda os lembretes de refeição para os novos horários
+    from app.tasks.scheduler import agendar_lembretes_refeicao
+    await agendar_lembretes_refeicao()
     return {"status": "salvo", **cfg}
 
 
