@@ -95,6 +95,31 @@ HTML = """<!DOCTYPE html>
     .analise-toggle.open .chev { transform: rotate(180deg); }
     .analise-detalhes { margin-top: 4px; }
 
+    .nutri-area { margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 8px; }
+    .nutri-toggle { background: #f1f8f6; border: 1px solid #cfe9e3; color: var(--green); font-size: .8rem; font-weight: 700; cursor: pointer; padding: 8px 10px; border-radius: 8px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px; }
+    .nutri-toggle:hover { background: #e6f3ef; }
+    .nutri-estrat { font-size: .76rem; color: var(--muted); font-style: italic; background: #f7f9fc; border-radius: 8px; padding: 7px 9px; margin-bottom: 8px; line-height: 1.4; }
+    .nutri-meta { display: flex; gap: 8px; margin-bottom: 8px; }
+    .nutri-meta .nm { flex: 1; background: var(--green); color: #fff; border-radius: 8px; padding: 6px; text-align: center; }
+    .nutri-meta .nm .nmv { font-size: .95rem; font-weight: 800; }
+    .nutri-meta .nm .nml { font-size: .62rem; text-transform: uppercase; letter-spacing: .4px; opacity: .9; }
+    .nutri-ref { border-bottom: 1px solid #eee; padding: 6px 0; }
+    .nutri-ref:last-child { border-bottom: none; }
+    .nutri-ref-h { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+    .nutri-ref-h .nrn { font-size: .78rem; font-weight: 700; }
+    .nutri-ref-h .nrt { font-size: .68rem; color: var(--muted); font-weight: 600; white-space: nowrap; }
+    .nutri-ref ul { list-style: none; margin-top: 3px; }
+    .nutri-ref li { display: flex; justify-content: space-between; gap: 8px; font-size: .76rem; padding: 2px 0; }
+    .nutri-ref li .nk { color: var(--muted); font-size: .7rem; white-space: nowrap; }
+
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: center; justify-content: center; z-index: 100; padding: 16px; }
+    .modal-overlay.show { display: flex; }
+    .modal { background: #fff; border-radius: 16px; max-width: 460px; width: 100%; max-height: 86vh; overflow-y: auto; position: relative; padding: 22px; box-shadow: 0 10px 40px rgba(0,0,0,.25); }
+    .modal-close { position: absolute; top: 12px; right: 12px; background: #f0f2f5; border: none; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; font-size: 1rem; color: var(--muted); line-height: 1; }
+    .modal-close:hover { background: #e5e7eb; }
+    .modal-head h3 { font-size: 1.1rem; color: var(--green); }
+    .modal-head .modal-sub { font-size: .82rem; color: var(--muted); font-weight: 600; margin-bottom: 12px; }
+
     .tipo-Z2_LONGO    { background: #1565c0; }
     .tipo-TIROS       { background: #c62828; }
     .tipo-VO2MAX      { background: #6a1b9a; }
@@ -132,6 +157,8 @@ HTML = """<!DOCTYPE html>
     <div class="sub">Portal de Treinos</div>
   </div>
   <div class="nav-links">
+    <a href="/nutrition/alimentos">🍽️ Alimentos</a>
+    <a href="/nutrition/guia">🥗 Nutrição</a>
     <a href="/whatsapp/">📲 WhatsApp</a>
     <a href="/docs">📖 API Docs</a>
   </div>
@@ -162,6 +189,14 @@ HTML = """<!DOCTYPE html>
 </main>
 
 <div class="toast" id="toast"></div>
+
+<div class="modal-overlay" id="nutriModal" onclick="fecharNutriModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="fecharNutriModal()">✕</button>
+    <div class="modal-head" id="nutriModalHead"></div>
+    <div class="modal-body" id="nutriModalBody"></div>
+  </div>
+</div>
 
 <script>
 const DIAS  = ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo'];
@@ -318,6 +353,12 @@ function buildCards(treinos) {
         <button class="rest-toggle" id="resttoggle-${key}" onclick="toggleRest('${key}')">
           ${hide ? '🏃 Adicionar treino' : '🛌 Marcar descanso'}
         </button>
+
+        <div class="nutri-area">
+          <button class="nutri-toggle" onclick="abrirNutriModal('${key}')">
+            🥗 Plano alimentar do dia
+          </button>
+        </div>
         ${resHTML}
       </div>`;
     grid.appendChild(c);
@@ -366,6 +407,46 @@ function toggleAnalise(key) {
   btn.classList.toggle('open', !aberto);
   btn.querySelector('span').textContent = aberto ? 'Mais informação' : 'Menos informação';
 }
+
+async function abrirNutriModal(key) {
+  const tipo = document.getElementById(`tp-${key}`)?.value || 'DESCANSO';
+  const lbl  = (TIPOS.find(tp => tp.v === tipo) || {l: tipo}).l;
+  const head = document.getElementById('nutriModalHead');
+  const body = document.getElementById('nutriModalBody');
+  head.innerHTML = `<h3>🥗 Plano alimentar do dia</h3><div class="modal-sub">${lbl}</div>`;
+  body.innerHTML = '<div style="padding:24px;text-align:center;color:#888">Carregando…</div>';
+  document.getElementById('nutriModal').classList.add('show');
+
+  try {
+    const r = await fetch(`/nutrition/plano/${tipo}`);
+    const p = await r.json();
+    const refs = (p.refeicoes || []).map(rf => {
+      const itens = (rf.itens || []).map(i =>
+        `<li><span>${i.texto}</span><span class="nk">${i.kcal} kcal · ${i.proteina_g}g P</span></li>`
+      ).join('');
+      return `<div class="nutri-ref">
+        <div class="nutri-ref-h"><span class="nrn">${rf.horario} · ${rf.nome}</span>
+        <span class="nrt">${rf.kcal} kcal · ${rf.proteina_g}g P</span></div>
+        <ul>${itens}</ul></div>`;
+    }).join('');
+    const notaTreino = p.nota_treino ? `<div class="nutri-estrat" style="background:#fff7e6;color:#8a5a00">⏰ ${p.nota_treino}</div>` : '';
+    body.innerHTML = `
+      <div class="nutri-estrat">💡 ${p.estrategia}</div>
+      <div class="nutri-meta">
+        <div class="nm"><div class="nmv">${p.kcal_total}</div><div class="nml">kcal/dia</div></div>
+        <div class="nm"><div class="nmv">${p.proteina_total_g}g</div><div class="nml">proteína</div></div>
+      </div>
+      ${notaTreino}
+      ${refs}`;
+  } catch(e) {
+    body.innerHTML = '<div style="padding:16px;color:#c62828">Erro ao carregar plano</div>';
+  }
+}
+
+function fecharNutriModal(e) {
+  document.getElementById('nutriModal').classList.remove('show');
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') fecharNutriModal(); });
 
 function collect() {
   const treinos = [];

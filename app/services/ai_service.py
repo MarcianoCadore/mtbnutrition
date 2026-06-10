@@ -42,7 +42,8 @@ Atleta: Marciano, 34 anos, 85kg, 1,81m, meta 78kg.
 FC máxima: 192 bpm
 Zonas: Z1 até 134 | Z2 135-153 | Z3 154-164 | Z4 165-177 | Z5 178+
 Objetivo: emagrecer preservando músculo + performance MTB
-Meta proteína: 187g/dia | Não gosta de whey protein
+Meta proteína: 187g/dia | Usa whey protein
+Alimentos base preferidos: arroz, pão, carne, leite, queijo, iogurte, whey protein
 
 {treino_desc}
 
