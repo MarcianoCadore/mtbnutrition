@@ -9,6 +9,7 @@ class TipoTreino(str, Enum):
     TIROS       = "TIROS"
     VO2MAX      = "VO2MAX"
     TEMPO       = "TEMPO"
+    FORCA       = "FORCA"
     RECUPERACAO = "RECUPERACAO"
     DESCANSO    = "DESCANSO"
 

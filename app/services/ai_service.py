@@ -13,6 +13,7 @@ KCAL_POR_TIPO = {
     TipoTreino.TIROS:       3200,
     TipoTreino.VO2MAX:      3200,
     TipoTreino.TEMPO:       2800,
+    TipoTreino.FORCA:       2700,
     TipoTreino.RECUPERACAO: 2200,
     TipoTreino.DESCANSO:    2100,
 }
@@ -71,7 +72,7 @@ Responda APENAS em JSON válido, sem markdown, sem texto extra:
   ]
 }}"""
 
-_TIPOS_VALIDOS = {"Z2_LONGO", "TIROS", "VO2MAX", "TEMPO", "RECUPERACAO", "DESCANSO"}
+_TIPOS_VALIDOS = {"Z2_LONGO", "TIROS", "VO2MAX", "TEMPO", "FORCA", "RECUPERACAO", "DESCANSO"}
 
 # Palavras-chave por tipo de treino (regex, case-insensitive).
 # Classificador determinístico — não depende da quota do Gemini.
@@ -90,7 +91,14 @@ _PADROES_TIPO = {
         r"\btempo\b(?!\s+(?:total|de|em|na|no|m[ée]di[oa]|restante|gasto|parado))",
         r"\blimiar\b", r"\bthreshold\b", r"\bftp\b", r"sweet\s*spot",
         r"\bsweetspot\b", r"\blactat", r"\bz[34]\b", r"\bsubidas?\b",
-        r"\bfor[çc]a\b", r"\btorque\b", r"\bsst\b",
+        r"\bsst\b",
+    ],
+    "FORCA": [
+        r"\bfor[çc]a\b", r"for[çc]a\s*espec[íi]fica", r"\btorque\b",
+        r"baixa\s*cad[êe]ncia", r"cad[êe]ncia\s*baixa",
+        r"\bsobremarcha\b", r"big\s*gear", r"marcha\s*pesada",
+        r"\b(?:4[5-9]|5\d|6\d)\s*[-–a]?\s*\d*\s*rpm\b",  # cadência baixa em rpm (45-69)
+        r"\bmuscula", r"\bresist[êe]ncia\s*muscular",
     ],
     "RECUPERACAO": [
         r"recupera", r"recovery", r"regenerativ", r"\bregen\b",
@@ -108,7 +116,9 @@ _PADROES_TIPO = {
 }
 
 # Em caso de empate, vence o tipo mais específico/intenso (índice maior).
-_PRIORIDADE_TIPO = ["Z2_LONGO", "RECUPERACAO", "DESCANSO", "TEMPO", "TIROS", "VO2MAX"]
+# FORCA fica acima de TEMPO e Z2_LONGO: "força específica em subida com cadência
+# baixa" deve vencer os sinais genéricos de "subida" (TEMPO) e "cadência" (Z2).
+_PRIORIDADE_TIPO = ["Z2_LONGO", "RECUPERACAO", "DESCANSO", "TEMPO", "FORCA", "TIROS", "VO2MAX"]
 
 
 def _limpar_datas(texto: str) -> str:
@@ -118,6 +128,25 @@ def _limpar_datas(texto: str) -> str:
     t = re.sub(r"\b(?:segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo)"
                r"[\s-]*(?:feira)?\b", " ", t, flags=re.IGNORECASE)
     return t
+
+
+def extrair_cadencia_texto(*textos: str | None) -> str | None:
+    """Extrai um alvo de cadência (rpm) do texto livre das notas/descrição.
+
+    Reconhece faixas ("50-60rpm" → "50-60") e valores únicos ("90rpm" → "90").
+    Retorna None quando não há menção de cadência. Usado como fallback quando
+    o workout do Garmin não traz um target de cadência estruturado.
+    """
+    for texto in textos:
+        if not texto:
+            continue
+        m = re.search(r"(\d{2,3})\s*[-–a]\s*(\d{2,3})\s*rpm", texto, re.IGNORECASE)
+        if m:
+            return f"{m.group(1)}-{m.group(2)}"
+        m2 = re.search(r"(\d{2,3})\s*rpm", texto, re.IGNORECASE)
+        if m2:
+            return m2.group(1)
+    return None
 
 
 def classificar_por_texto(*textos: str | None) -> str | None:
@@ -197,7 +226,8 @@ Classifique o tipo de treino. Retorne APENAS uma das opções abaixo, sem explic
 Z2_LONGO - aeróbico longo, foco em Z2 (base aeróbica, cadência, baixa intensidade)
 TIROS - intervalos curtos de alta intensidade, sprints
 VO2MAX - esforço alto sustentado, Z5 predominante
-TEMPO - esforço moderado-alto contínuo, Z3-Z4
+TEMPO - esforço moderado-alto contínuo, Z3-Z4 (limiar, sweet spot)
+FORCA - força específica/torque: cadência baixa (45-60rpm) em subida ou marcha pesada
 RECUPERACAO - sessão leve, Z1, recuperação ativa
 DESCANSO - sem treino efetivo"""
 

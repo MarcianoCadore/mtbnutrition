@@ -94,6 +94,7 @@ HTML = """<!DOCTYPE html>
     .tipo-TIROS       { background: #c62828; }
     .tipo-VO2MAX      { background: #6a1b9a; }
     .tipo-TEMPO       { background: #e65100; }
+    .tipo-FORCA       { background: #5d4037; }
     .tipo-RECUPERACAO { background: #00695c; }
     .tipo-DESCANSO    { background: #607d8b; }
 
@@ -165,6 +166,7 @@ const TIPOS = [
   {v:'TIROS',      l:'⚡ Tiros',        s:'Tiros'},
   {v:'VO2MAX',     l:'🔥 VO2Max',       s:'VO2Max'},
   {v:'TEMPO',      l:'💨 Tempo',        s:'Tempo'},
+  {v:'FORCA',      l:'💪 Força',        s:'Força'},
   {v:'RECUPERACAO',l:'🌿 Recuperação',  s:'Recuperação'},
 ];
 
@@ -480,7 +482,7 @@ async function uploadFit(key, input) {
       } else {
       const TIPO_LABELS = {
         Z2_LONGO: 'Z2 Longo', TIROS: 'Tiros', VO2MAX: 'VO2Max',
-        TEMPO: 'Tempo', RECUPERACAO: 'Recuperação', DESCANSO: 'Descanso',
+        TEMPO: 'Tempo', FORCA: 'Força', RECUPERACAO: 'Recuperação', DESCANSO: 'Descanso',
       };
       const linhas = [];
       linhas.push(TIPO_LABELS[tipo] || tipo);

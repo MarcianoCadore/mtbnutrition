@@ -127,6 +127,11 @@ async def sync_treinos_planejados(semana_inicio: str) -> int:
                 except Exception as e:
                     logger.warning("Garmin get_workout_by_id %s: %s", workout_id, e)
 
+            # fallback: cadência mencionada no texto das notas (ex.: "50-60rpm")
+            if cadencia_rpm is None:
+                from app.services.ai_service import extrair_cadencia_texto
+                cadencia_rpm = extrair_cadencia_texto(notas)
+
             semana = _semana_de(date_str)
             doc = await db.semanas.find_one({"semana_inicio": semana})
 
