@@ -108,7 +108,44 @@ async def sync_garmin(semana_inicio: str):
     from app.services.garmin_service import sync_treinos_planejados, sync_atividades
     pl = await sync_treinos_planejados(semana_inicio)
     at = await sync_atividades(semana_inicio)
-    return {"status": "ok", "treinos_importados": pl, "atividades_processadas": at}
+    # reclassifica a partir das descrições recém-importadas (independe da quota do Gemini)
+    rc = await reclassificar_semana(semana_inicio)
+    return {
+        "status": "ok",
+        "treinos_importados": pl,
+        "atividades_processadas": at,
+        "reclassificados": rc.get("reclassificados", 0),
+    }
+
+
+@router.post("/reclassificar/{semana_inicio}")
+async def reclassificar_semana(semana_inicio: str):
+    """Reclassifica o tipo de cada treino da semana a partir da descrição salva.
+
+    Não depende do Garmin — usa o classificador determinístico por texto.
+    Treinos sem descrição ou de descanso explícito não são alterados.
+    """
+    from app.services.ai_service import classificar_por_texto
+
+    db = get_db()
+    doc = await db.semanas.find_one({"semana_inicio": semana_inicio})
+    if not doc:
+        return {"status": "sem treinos", "reclassificados": 0}
+
+    alterados = []
+    for t in doc.get("treinos", []):
+        descricao = t.get("descricao")
+        if not descricao:
+            continue
+        novo_tipo = classificar_por_texto(descricao)
+        if novo_tipo and novo_tipo != t.get("tipo"):
+            await db.semanas.update_one(
+                {"semana_inicio": semana_inicio, "treinos.data": t["data"]},
+                {"$set": {"treinos.$.tipo": novo_tipo}},
+            )
+            alterados.append({"data": t["data"], "de": t.get("tipo"), "para": novo_tipo})
+
+    return {"status": "ok", "reclassificados": len(alterados), "detalhes": alterados}
 
 
 @router.get("/garmin/debug/{semana_inicio}")

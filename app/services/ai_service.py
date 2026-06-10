@@ -1,5 +1,6 @@
 import google.generativeai as genai
 import json
+import re
 from config.settings import settings
 from app.models.models import Treino, TipoTreino, PlanoAlimentar
 from datetime import datetime
@@ -72,8 +73,96 @@ Responda APENAS em JSON válido, sem markdown, sem texto extra:
 
 _TIPOS_VALIDOS = {"Z2_LONGO", "TIROS", "VO2MAX", "TEMPO", "RECUPERACAO", "DESCANSO"}
 
+# Palavras-chave por tipo de treino (regex, case-insensitive).
+# Classificador determinístico — não depende da quota do Gemini.
+_PADROES_TIPO = {
+    "VO2MAX": [
+        r"vo\s*[2₂]\s*max", r"\bvo\s*[2₂]\b", r"\bv0?2\s*max\b",
+        r"m[áa]x\s*consumo", r"consumo\s*m[áa]ximo",
+    ],
+    "TIROS": [
+        r"\btiros?\b", r"\bsprints?\b", r"\bintervalos?\b", r"\bhiit\b",
+        r"all[\s-]?out", r"\bm[áa]xim", r"\bexplos", r"neuromuscular",
+        r"anaer[óo]bic", r"\bataques?\b", r"\bpiques?\b", r"\barranques?\b",
+        r"\bz5\b",
+    ],
+    "TEMPO": [
+        r"\btempo\b(?!\s+(?:total|de|em|na|no|m[ée]di[oa]|restante|gasto|parado))",
+        r"\blimiar\b", r"\bthreshold\b", r"\bftp\b", r"sweet\s*spot",
+        r"\bsweetspot\b", r"\blactat", r"\bz[34]\b", r"\bsubidas?\b",
+        r"\bfor[çc]a\b", r"\btorque\b", r"\bsst\b",
+    ],
+    "RECUPERACAO": [
+        r"recupera", r"recovery", r"regenerativ", r"\bregen\b",
+        r"\bsoltura\b", r"\bleve\b", r"\bz1\b", r"\beasy\b", r"\bsolta\b",
+    ],
+    "Z2_LONGO": [
+        r"\bz2\b", r"\blongo\b", r"\blong\b", r"\bbase\b", r"endurance",
+        r"aer[óo]bic", r"\bfundo\b", r"\brodagem\b", r"\bvolume\b",
+        r"cad[êe]ncia", r"cadence", r"fundo\s*aer[óo]bico",
+    ],
+    "DESCANSO": [
+        r"\bdescanso\b", r"\brest\b", r"\bfolga\b", r"\boff\b",
+        r"day\s*off", r"dia\s*livre",
+    ],
+}
+
+# Em caso de empate, vence o tipo mais específico/intenso (índice maior).
+_PRIORIDADE_TIPO = ["Z2_LONGO", "RECUPERACAO", "DESCANSO", "TEMPO", "TIROS", "VO2MAX"]
+
+
+def _limpar_datas(texto: str) -> str:
+    """Remove datas e dias da semana que poluem a classificação por texto."""
+    t = re.sub(r"\b\d{4}-\d{1,2}-\d{1,2}\b", " ", texto)        # 2026-06-08
+    t = re.sub(r"\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b", " ", t)  # 11/06, 08-06-2026
+    t = re.sub(r"\b(?:segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo)"
+               r"[\s-]*(?:feira)?\b", " ", t, flags=re.IGNORECASE)
+    return t
+
+
+def classificar_por_texto(*textos: str | None) -> str | None:
+    """Classifica o tipo de treino por palavras-chave no título/descrição.
+
+    O primeiro texto (título do treino) recebe peso maior. Retorna None
+    quando nenhuma palavra-chave casa — aí o chamador usa outro sinal.
+    """
+    scores = {t: 0.0 for t in _PADROES_TIPO}
+    for idx, texto in enumerate(textos):
+        if not texto:
+            continue
+        t = _limpar_datas(texto.lower())
+        peso = 3.0 if idx == 0 else 1.0  # idx 0 = título do treino
+        for tipo, padroes in _PADROES_TIPO.items():
+            for pat in padroes:
+                if re.search(pat, t, re.IGNORECASE):
+                    scores[tipo] += peso
+
+    melhor = max(_PADROES_TIPO, key=lambda t: (scores[t], _PRIORIDADE_TIPO.index(t)))
+    return melhor if scores[melhor] > 0 else None
+
+
 async def classificar_tipo_treino(analise: dict) -> str:
-    """Usa IA para classificar o tipo de treino com base nos dados do .fit."""
+    """Classifica o tipo de treino combinando texto, dados de FC e IA.
+
+    Ordem de confiança:
+      1. Palavras-chave no nome/notas/descrição (determinístico, confiável)
+      2. Classificação por FC/potência do .fit (já feita em fit_service)
+      3. Gemini (último recurso — sujeito a quota)
+    """
+    # 1) Palavras-chave — título tem prioridade
+    tipo_kw = classificar_por_texto(
+        analise.get("workout_name"),
+        analise.get("workout_notes"),
+        analise.get("descricao_existente"),
+        analise.get("descricao_estruturada"),
+    )
+    if tipo_kw:
+        return tipo_kw
+
+    # 2) Sinal de FC/potência do arquivo .fit (treino realizado)
+    if analise.get("avg_hr") or analise.get("max_hr"):
+        return analise.get("tipo", "Z2_LONGO")
+
     linhas = []
     if analise.get("workout_name"):
         linhas.append(f"Nome do treino: {analise['workout_name']}")
@@ -95,6 +184,7 @@ async def classificar_tipo_treino(analise: dict) -> str:
     if not linhas:
         return analise.get("tipo", "Z2_LONGO")
 
+    # 3) Gemini — último recurso
     prompt = f"""Você é um especialista em treinamento de ciclismo MTB.
 
 Atleta: Marciano, FC máxima 192 bpm
