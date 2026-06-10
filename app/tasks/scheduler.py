@@ -31,7 +31,9 @@ async def job_plano_diario():
                     tipo = t.get("tipo") or "DESCANSO"
                     break
 
-        plano = plano_para_tipo(tipo)
+        from app.services.config_service import get_horarios
+        cfg = await get_horarios()
+        plano = plano_para_tipo(tipo, hoje_iso, cfg)
 
         # Salva versão compatível com os lembretes de refeição (PlanoAlimentar)
         await db.planos.insert_one({

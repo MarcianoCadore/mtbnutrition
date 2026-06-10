@@ -157,6 +157,7 @@ HTML = """<!DOCTYPE html>
     <div class="sub">Portal de Treinos</div>
   </div>
   <div class="nav-links">
+    <a href="/nutrition/config">⏰ Horários</a>
     <a href="/nutrition/alimentos">🍽️ Alimentos</a>
     <a href="/nutrition/guia">🥗 Nutrição</a>
     <a href="/whatsapp/">📲 WhatsApp</a>
@@ -418,7 +419,7 @@ async function abrirNutriModal(key) {
   document.getElementById('nutriModal').classList.add('show');
 
   try {
-    const r = await fetch(`/nutrition/plano/${tipo}`);
+    const r = await fetch(`/nutrition/plano/${tipo}?data=${key}`);
     const p = await r.json();
     const refs = (p.refeicoes || []).map(rf => {
       const itens = (rf.itens || []).map(i =>

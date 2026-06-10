@@ -3,16 +3,40 @@ from fastapi.responses import HTMLResponse
 from datetime import datetime
 from app.models.models import PlanoAlimentar, Treino
 from app.services.ai_service import gerar_plano_alimentar
+from pydantic import BaseModel
 from app.services.nutricao_service import plano_para_tipo, tabela_alimentos, guia_refeicoes, TIPO_PARA_MENU
+from app.services.config_service import get_horarios, salvar_horarios
 from app.services.mongo_service import get_db
 
 router = APIRouter()
 
 
 @router.get("/plano/{tipo}")
-async def plano_por_tipo(tipo: str):
-    """Cardápio fixo (tabela) para um tipo de treino — usado nos cards do portal."""
-    return plano_para_tipo(tipo)
+async def plano_por_tipo(tipo: str, data: str | None = None):
+    """Cardápio do tipo de treino para uma data (varia a cada dia) — usado nos cards."""
+    cfg = await get_horarios()
+    return plano_para_tipo(tipo, data, cfg)
+
+
+class HorariosBody(BaseModel):
+    cafe: str | None = None
+    almoco: str | None = None
+    lanche_tarde: str | None = None
+    jantar: str | None = None
+
+
+@router.get("/horarios")
+async def ler_horarios():
+    return await get_horarios()
+
+
+@router.post("/horarios")
+async def gravar_horarios(body: HorariosBody):
+    try:
+        cfg = await salvar_horarios(body.model_dump(exclude_none=True))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "salvo", **cfg}
 
 
 @router.post("/gerar", response_model=dict)
@@ -61,9 +85,10 @@ async def guia_nutricao():
     )
 
     # cardápios por tipo
+    cfg = await get_horarios()
     blocos = []
     for tipo in _ORDEM_TIPOS:
-        p = plano_para_tipo(tipo)
+        p = plano_para_tipo(tipo, None, cfg)
         refs = []
         for r in p["refeicoes"]:
             itens = "".join(
@@ -159,7 +184,8 @@ async def guia_nutricao():
 
   <p class="sub" style="margin-bottom:14px">👉 Veja também: <a href="/nutrition/alimentos" style="color:var(--green);font-weight:700">O que comer em cada refeição</a></p>
 
-  <h2 style="font-size:1.1rem; margin:24px 4px 12px; color:var(--green)">Cardápios por tipo de treino</h2>
+  <h2 style="font-size:1.1rem; margin:24px 4px 6px; color:var(--green)">Cardápios por tipo de treino</h2>
+  <p class="sub" style="margin-bottom:12px">🔄 O cardápio varia a cada dia (rotação de alimentos equivalentes) — abaixo um exemplo de cada tipo.</p>
   {''.join(blocos)}
 </main>
 </body>
@@ -228,5 +254,95 @@ async def guia_alimentos():
   <p class="sub">Quando comer cada alimento, com as calorias por porção. Veja também os <a href="/nutrition/guia">cardápios por tipo de treino</a>.</p>
   {''.join(blocos)}
 </main>
+</body>
+</html>"""
+
+
+@router.get("/config", response_class=HTMLResponse)
+async def config_horarios():
+    return """<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MTB Nutrition — Horários das refeições</title>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  :root { --green:#0e8a7d; --text:#1f2937; --muted:#6b7280; --border:#e5e7eb; --bg:#f0f2f5; }
+  body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; background:var(--bg); color:var(--text); }
+  nav { background:#fff; border-bottom:1px solid var(--border); padding:14px 20px; display:flex; align-items:center; gap:10px; }
+  nav .logo { font-weight:800; color:var(--green); }
+  nav a { margin-left:auto; color:var(--muted); text-decoration:none; font-size:.9rem; font-weight:600; }
+  main { max-width:520px; margin:0 auto; padding:24px 16px 60px; }
+  h1 { font-size:1.4rem; margin-bottom:6px; }
+  .sub { color:var(--muted); margin-bottom:22px; font-size:.92rem; }
+  .card { background:#fff; border-radius:14px; padding:24px; box-shadow:0 1px 4px rgba(0,0,0,.06); }
+  .field { margin-bottom:18px; }
+  label { display:block; font-size:.9rem; font-weight:700; margin-bottom:6px; }
+  label .ic { margin-right:6px; }
+  input[type=time] { width:100%; border:1.5px solid var(--border); border-radius:10px; padding:12px; font-size:1.05rem; outline:none; font-family:inherit; }
+  input[type=time]:focus { border-color:var(--green); }
+  .auto { background:#f7f9fc; border-radius:10px; padding:11px 13px; font-size:.84rem; color:var(--muted); margin-bottom:18px; }
+  .auto b { color:var(--green); }
+  button { width:100%; padding:14px; background:var(--green); color:#fff; border:none; border-radius:10px; font-size:1rem; font-weight:700; cursor:pointer; }
+  button:hover:not(:disabled) { background:#0c7669; }
+  button:disabled { opacity:.6; cursor:not-allowed; }
+  .status { margin-top:14px; padding:12px; border-radius:10px; font-size:.9rem; display:none; }
+  .ok { background:#e8f5e9; color:#2e7d32; display:block; }
+  .err { background:#fdecea; color:#c62828; display:block; }
+</style>
+</head>
+<body>
+<nav>
+  <span style="font-size:1.4rem">⏰</span>
+  <span class="logo">MTB Nutrition</span>
+  <a href="/portal/">← Voltar ao portal</a>
+</nav>
+<main>
+  <h1>Horários das refeições</h1>
+  <p class="sub">Defina quando você costuma comer. Vale para todos os dias e pode ser alterado a qualquer momento. Os cardápios usam esses horários.</p>
+  <div class="card">
+    <div class="field">
+      <label><span class="ic">🌅</span>Café da manhã</label>
+      <input type="time" id="cafe">
+    </div>
+    <div class="field">
+      <label><span class="ic">🍽️</span>Almoço</label>
+      <input type="time" id="almoco">
+    </div>
+    <div class="field">
+      <label><span class="ic">☕</span>Lanche da tarde</label>
+      <input type="time" id="lanche_tarde">
+    </div>
+    <div class="field">
+      <label><span class="ic">🌙</span>Jantar</label>
+      <input type="time" id="jantar">
+    </div>
+    <button id="btn" onclick="salvar()">💾 Salvar horários</button>
+    <div id="st" class="status"></div>
+  </div>
+</main>
+<script>
+  const campos = ['cafe','almoco','lanche_tarde','jantar'];
+  async function carregar() {
+    const r = await fetch('/nutrition/horarios');
+    const d = await r.json();
+    campos.forEach(k => document.getElementById(k).value = d[k]);
+  }
+  async function salvar() {
+    const btn = document.getElementById('btn'), st = document.getElementById('st');
+    const body = {};
+    campos.forEach(k => body[k] = document.getElementById(k).value);
+    btn.disabled = true; btn.textContent = 'Salvando...'; st.className='status';
+    try {
+      const r = await fetch('/nutrition/horarios', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Erro');
+      st.className='status ok'; st.textContent='✅ Horários salvos!';
+    } catch(e) { st.className='status err'; st.textContent='❌ ' + e.message; }
+    finally { btn.disabled=false; btn.textContent='💾 Salvar horários'; }
+  }
+  carregar();
+</script>
 </body>
 </html>"""
