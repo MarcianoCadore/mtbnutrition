@@ -326,7 +326,7 @@ async def sync_atividades(semana_inicio: str) -> int:
         doc = await db.semanas.find_one({"semana_inicio": semana})
         ja_processada = doc and any(
             t.get("data") == act_date
-            and t.get("resultado", {}).get("garmin_activity_id") == act_id
+            and (t.get("resultado") or {}).get("garmin_activity_id") == act_id
             for t in doc.get("treinos", [])
         )
         if ja_processada:
