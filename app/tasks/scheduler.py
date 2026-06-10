@@ -106,7 +106,7 @@ async def job_lembrete_janta():
         print(f"[{datetime.now()}] Erro no lembrete janta: {e}")
 
 async def job_garmin_sync():
-    """Roda a cada 30 min — sincroniza treinos planejados e atividades do Garmin."""
+    """Roda a cada 10 min — sincroniza treinos planejados e atividades do Garmin."""
     from config.settings import settings
     if not settings.GARMIN_EMAIL or not settings.GARMIN_PASSWORD:
         return
@@ -128,7 +128,7 @@ def start_scheduler():
     scheduler.add_job(job_lembrete_almoco,  CronTrigger(hour=11, minute=30))
     scheduler.add_job(job_lembrete_lanche,  CronTrigger(hour=15, minute=0))
     scheduler.add_job(job_lembrete_janta,   CronTrigger(hour=20, minute=0))
-    scheduler.add_job(job_garmin_sync,      IntervalTrigger(minutes=30))
+    scheduler.add_job(job_garmin_sync,      IntervalTrigger(minutes=10))
     scheduler.start()
     print("✅ Scheduler iniciado — notificações + Garmin sync ativos")
 
