@@ -248,6 +248,42 @@ REFEICOES_GUIA = [
 ]
 
 
+_TIPO_LABEL_WPP = {
+    "Z2_LONGO": "🚴 Z2 Longo", "TIROS": "⚡ Tiros", "VO2MAX": "🔥 VO2Max",
+    "TEMPO": "💨 Tempo", "FORCA": "💪 Força", "RECUPERACAO": "🌿 Recuperação",
+    "DESCANSO": "🛌 Descanso",
+}
+
+
+def formatar_plano_whatsapp(data_iso: str, plano: dict) -> str:
+    """Monta a mensagem do plano alimentar do dia para o WhatsApp."""
+    from datetime import datetime
+    d = datetime.strptime(data_iso, "%Y-%m-%d")
+    dias = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
+    data_fmt = d.strftime("%d/%m/%Y")
+    tipo_lbl = _TIPO_LABEL_WPP.get(plano["tipo"], plano["tipo"])
+
+    linhas = [
+        f"🍽️ *Plano alimentar — {dias[d.weekday()]}, {data_fmt}*",
+        f"{tipo_lbl} · {plano['kcal_total']} kcal · {plano['proteina_total_g']:g}g proteína",
+        "",
+        f"💡 _{plano['estrategia']}_",
+    ]
+    if plano.get("nota_treino"):
+        linhas += ["", f"⏰ {plano['nota_treino']}"]
+    linhas.append("")
+
+    for r in plano["refeicoes"]:
+        linhas.append(f"*{r['horario']} · {r['nome']}* ({r['kcal']} kcal · {r['proteina_g']:g}g P)")
+        for i in r["itens"]:
+            linhas.append(f"  • {i['texto']}")
+        linhas.append("")
+
+    linhas.append("💧 Mínimo 3L de água/dia")
+    linhas.append("_MTB Nutrition Bot 🤖_")
+    return "\n".join(linhas)
+
+
 def guia_refeicoes() -> list[dict]:
     """Expande o guia por refeição com kcal/proteína por alimento recomendado."""
     out = []

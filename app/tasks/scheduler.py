@@ -4,41 +4,55 @@ from apscheduler.triggers.interval import IntervalTrigger
 from datetime import datetime, timedelta
 import pytz
 
-from app.services.ai_service import gerar_plano_alimentar
-from app.services.whatsapp_service import send_plano_diario, send_lembrete_refeicao
+from app.services.whatsapp_service import send_lembrete_refeicao, send_message
+from app.services.nutricao_service import plano_para_tipo, formatar_plano_whatsapp
 from app.services.mongo_service import get_db
+from config.settings import settings
 
 TZ = pytz.timezone("America/Sao_Paulo")
 scheduler = AsyncIOScheduler(timezone=TZ)
 
 async def job_plano_diario():
-    """Roda às 6h — gera e envia plano do dia"""
-    print(f"[{datetime.now()}] Gerando plano alimentar do dia...")
+    """Roda às 6h — envia o plano alimentar fixo do treino de hoje."""
+    print(f"[{datetime.now()}] Enviando plano alimentar do dia...")
     try:
         db = get_db()
 
-        # Busca treino de hoje no MongoDB
+        # Tipo do treino de hoje a partir da semana salva (db.semanas)
         hoje = datetime.now(TZ).date()
-        treino_doc = await db.treinos.find_one({
-            "data": {
-                "$gte": datetime(hoje.year, hoje.month, hoje.day),
-                "$lt": datetime(hoje.year, hoje.month, hoje.day + 1) if hoje.day < 28 else datetime(hoje.year, hoje.month + 1, 1)
-            }
+        hoje_iso = hoje.isoformat()
+        seg = hoje - timedelta(days=hoje.weekday())
+        doc = await db.semanas.find_one({"semana_inicio": seg.isoformat()})
+
+        tipo = "DESCANSO"
+        if doc:
+            for t in doc.get("treinos", []):
+                if t.get("data") == hoje_iso:
+                    tipo = t.get("tipo") or "DESCANSO"
+                    break
+
+        plano = plano_para_tipo(tipo)
+
+        # Salva versão compatível com os lembretes de refeição (PlanoAlimentar)
+        await db.planos.insert_one({
+            "data": datetime.now(),
+            "tipo_dia": plano["tipo"],
+            "kcal_total": plano["kcal_total"],
+            "proteina_total_g": plano["proteina_total_g"],
+            "refeicoes": [
+                {
+                    "nome": r["nome"], "horario": r["horario"],
+                    "itens": [i["texto"] for i in r["itens"]],
+                    "kcal_estimado": r["kcal"], "proteina_g": r["proteina_g"],
+                    "carbo_g": 0, "gordura_g": 0,
+                }
+                for r in plano["refeicoes"]
+            ],
         })
 
-        treino = None
-        if treino_doc:
-            from app.models.models import Treino
-            treino = Treino(**treino_doc)
-
-        plano = await gerar_plano_alimentar(treino)
-
-        # Salva no MongoDB
-        await db.planos.insert_one(plano.model_dump())
-
-        # Envia WhatsApp
-        await send_plano_diario(plano)
-        print(f"[{datetime.now()}] Plano enviado com sucesso!")
+        if settings.WHATSAPP_TO:
+            await send_message(settings.WHATSAPP_TO, formatar_plano_whatsapp(hoje_iso, plano))
+        print(f"[{datetime.now()}] Plano ({tipo}) enviado com sucesso!")
 
     except Exception as e:
         print(f"[{datetime.now()}] Erro no job_plano_diario: {e}")
@@ -67,7 +81,8 @@ async def job_lembrete_lanche():
 
         if plano_doc:
             refeicoes = plano_doc.get("refeicoes", [])
-            lanche = next((r for r in refeicoes if "lanche" in r["nome"].lower()), None)
+            lanche = next((r for r in refeicoes if "lanche" in r["nome"].lower() and "tarde" in r["nome"].lower()), None)
+            lanche = lanche or next((r for r in refeicoes if "lanche" in r["nome"].lower()), None)
             if lanche:
                 await send_lembrete_refeicao(lanche["nome"], lanche["itens"])
     except Exception as e:
