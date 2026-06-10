@@ -410,12 +410,15 @@ async def sync_atividades(semana_inicio: str) -> int:
         else:
             existe = any(t.get("data") == act_date for t in doc.get("treinos", []))
             if existe:
+                # Preserva o tipo planejado (mais confiável que a classificação do
+                # .fit). Só adota o tipo do .fit quando não havia plano (DESCANSO).
+                set_fields = {"treinos.$.resultado": resultado}
+                tipo_existente = treino_planejado.get("tipo")
+                if not tipo_existente or tipo_existente == "DESCANSO":
+                    set_fields["treinos.$.tipo"] = tipo_real
                 await db.semanas.update_one(
                     {"semana_inicio": semana, "treinos.data": act_date},
-                    {"$set": {
-                        "treinos.$.resultado": resultado,
-                        "treinos.$.tipo": tipo_real,
-                    }},
+                    {"$set": set_fields},
                 )
             else:
                 await db.semanas.update_one(

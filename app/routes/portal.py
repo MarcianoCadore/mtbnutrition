@@ -79,6 +79,7 @@ HTML = """<!DOCTYPE html>
     .treino-resumo li .ri { font-size: .85rem; width: 16px; text-align: center; }
     .treino-resumo li .rk { color: var(--muted); font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; min-width: 58px; }
     .treino-resumo li .rv { font-weight: 700; }
+    .treino-resumo li .rv.rv-cad { white-space: nowrap; }
     .rest-toggle { background: none; border: none; color: var(--muted); font-size: .72rem; cursor: pointer; text-decoration: underline; padding: 2px 0; width: 100%; text-align: center; }
     .rest-toggle:hover { color: var(--text); }
 
@@ -89,11 +90,8 @@ HTML = """<!DOCTYPE html>
     .analise-lista { list-style: none; }
     .analise-lista li { font-size: .78rem; padding: 2px 0; display: flex; gap: 6px; align-items: flex-start; }
     .analise-lista li .icon { flex-shrink: 0; }
-    .analise-toggle { background: none; border: none; color: var(--green); font-size: .74rem; font-weight: 700; cursor: pointer; padding: 4px 0 2px; display: flex; align-items: center; gap: 4px; }
-    .analise-toggle:hover { text-decoration: underline; }
-    .analise-toggle .chev { transition: transform .2s; font-size: .8rem; }
-    .analise-toggle.open .chev { transform: rotate(180deg); }
-    .analise-detalhes { margin-top: 4px; }
+    .aval-btn { margin-top: 8px; background: #eef4ff; border: 1px solid #cfe0ff; color: #1565c0; font-size: .8rem; font-weight: 700; cursor: pointer; padding: 9px 10px; border-radius: 8px; width: 100%; }
+    .aval-btn:hover { background: #e2edff; }
 
     .nutri-area { margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 8px; }
     .nutri-toggle { background: #f1f8f6; border: 1px solid #cfe9e3; color: var(--green); font-size: .8rem; font-weight: 700; cursor: pointer; padding: 8px 10px; border-radius: 8px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px; }
@@ -199,6 +197,14 @@ HTML = """<!DOCTYPE html>
   </div>
 </div>
 
+<div class="modal-overlay" id="avalModal" onclick="fecharAvalModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="fecharAvalModal()">✕</button>
+    <div class="modal-head" id="avalModalHead"></div>
+    <div class="modal-body" id="avalModalBody"></div>
+  </div>
+</div>
+
 <script>
 const DIAS  = ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo'];
 const TIPOS = [
@@ -212,6 +218,7 @@ const TIPOS = [
 ];
 
 let monday = getMonday(new Date());
+const _resultados = {};
 
 function getMonday(d) {
   const day = d.getDay();
@@ -265,38 +272,10 @@ function buildCards(treinos) {
     const tipoLbl = (TIPOS.find(tp => tp.v === t.tipo) || {l: t.tipo}).l;
 
     const res = t.resultado || null;
-    const resHTML = (() => {
-      if (!res) return '';
-      const ia = res.analise_ia || {};
-      const fortes = (ia.pontos_fortes || []).map(p => `<li><span class="icon">✅</span>${p}</li>`).join('');
-      const fracos = (ia.pontos_fracos || []).map(p => `<li><span class="icon">⚠️</span>${p}</li>`).join('');
-      const resumoTxt = ia.resumo ? `<div class="resumo-txt">"${ia.resumo}"</div>` : '';
-      const mItems = [];
-      if (res.duracao_min) { const h=Math.floor(res.duracao_min/60),m=res.duracao_min%60; mItems.push(`<div class="metric"><div class="mv">${h>0?h+'h':''}${m>0?m+'min':''}</div><div class="ml">Real</div></div>`); }
-      if (res.distancia_km) mItems.push(`<div class="metric"><div class="mv">${res.distancia_km} km</div><div class="ml">Distância</div></div>`);
-      if (res.avg_hr) mItems.push(`<div class="metric"><div class="mv">${res.avg_hr} bpm</div><div class="ml">FC média</div></div>`);
-      if (res.max_hr) mItems.push(`<div class="metric"><div class="mv">${res.max_hr} bpm</div><div class="ml">FC máx</div></div>`);
-      if (res.cadencia_media_rpm) mItems.push(`<div class="metric"><div class="mv">${res.cadencia_media_rpm} rpm</div><div class="ml">Cadência</div></div>`);
-      if (res.cadencia_max_rpm) mItems.push(`<div class="metric"><div class="mv">${res.cadencia_max_rpm} rpm</div><div class="ml">Cad. máx</div></div>`);
-      if (res.calorias) mItems.push(`<div class="metric"><div class="mv">${res.calorias}</div><div class="ml">kcal</div></div>`);
-      const temDetalhes = !!(fortes || fracos);
-      const detalhesHTML = temDetalhes ? `
-        <button class="analise-toggle" id="analise-toggle-${key}" onclick="toggleAnalise('${key}')">
-          <span>Mais informação</span><span class="chev">▾</span>
-        </button>
-        <div class="analise-detalhes" id="analise-detalhes-${key}" style="display:none">
-          ${fortes ? `<ul class="analise-lista">${fortes}</ul>` : ''}
-          ${fracos  ? `<ul class="analise-lista" style="margin-top:4px">${fracos}</ul>` : ''}
-        </div>` : '';
-      return `<div class="resultado-section">
-        <div class="resultado-header">📊 Resultado</div>
-        ${mItems.length ? `<div class="metrics">${mItems.join('')}</div>` : ''}
-        <div class="analise-bloco">
-          ${resumoTxt}
-          ${detalhesHTML}
-        </div>
-      </div>`;
-    })();
+    if (res) _resultados[key] = res;
+    const resHTML = res
+      ? `<button class="aval-btn" onclick="abrirAvaliacao('${key}')">📊 Ver avaliação do treino</button>`
+      : '';
 
     const fitInfoHTML = fitFile
       ? `<div class="fit-info">
@@ -305,9 +284,11 @@ function buildCards(treinos) {
          </div>`
       : '';
 
-    const metricsHTML = (dur || dist || elev)
+    const cadReal = (res && res.cadencia_media_rpm) ? res.cadencia_media_rpm : '';
+    const metricsHTML = (dur || dist || elev || cadReal)
       ? `<div class="metrics" id="metrics-${key}">
            ${dur  ? `<div class="metric"><div class="mv">${dur} min</div><div class="ml">Duração</div></div>` : ''}
+           ${cadReal ? `<div class="metric"><div class="mv">${cadReal} rpm</div><div class="ml">Cad. real</div></div>` : ''}
            ${dist ? `<div class="metric"><div class="mv">${dist} km</div><div class="ml">Distância</div></div>` : ''}
            ${elev ? `<div class="metric"><div class="mv">${elev} m</div><div class="ml">Elevação</div></div>` : ''}
          </div>`
@@ -317,7 +298,7 @@ function buildCards(treinos) {
     const resumoHTML = !hide ? `
       <ul class="treino-resumo" id="resumo-${key}">
         <li><span class="ri">⏱</span><span class="rk">Tempo</span><span class="rv" id="resumo-dur-${key}">${durStr || '—'}</span></li>
-        <li><span class="ri">🦵</span><span class="rk">Cadência</span><span class="rv" id="resumo-cad-${key}">${cad ? cad+' rpm' : '—'}</span></li>
+        <li><span class="ri">🦵</span><span class="rk">Cad. alvo</span><span class="rv rv-cad" id="resumo-cad-${key}">${cad ? cad+' rpm' : '—'}</span></li>
       </ul>` : '';
 
     c.innerHTML = `
@@ -401,14 +382,38 @@ function toggleRest(key) {
   onTipo(key);
 }
 
-function toggleAnalise(key) {
-  const det = document.getElementById(`analise-detalhes-${key}`);
-  const btn = document.getElementById(`analise-toggle-${key}`);
-  if (!det || !btn) return;
-  const aberto = det.style.display !== 'none';
-  det.style.display = aberto ? 'none' : 'block';
-  btn.classList.toggle('open', !aberto);
-  btn.querySelector('span').textContent = aberto ? 'Mais informação' : 'Menos informação';
+function abrirAvaliacao(key) {
+  const res = _resultados[key];
+  if (!res) return;
+  const ia = res.analise_ia || {};
+  const tipo = document.getElementById(`tp-${key}`)?.value;
+  const lbl = (TIPOS.find(tp => tp.v === tipo) || {l: ''}).l;
+
+  const mItems = [];
+  if (res.duracao_min) { const h=Math.floor(res.duracao_min/60),m=res.duracao_min%60; mItems.push(`<div class="metric"><div class="mv">${h>0?h+'h':''}${m>0?m+'min':''}</div><div class="ml">Real</div></div>`); }
+  if (res.distancia_km) mItems.push(`<div class="metric"><div class="mv">${res.distancia_km} km</div><div class="ml">Distância</div></div>`);
+  if (res.avg_hr) mItems.push(`<div class="metric"><div class="mv">${res.avg_hr} bpm</div><div class="ml">FC média</div></div>`);
+  if (res.max_hr) mItems.push(`<div class="metric"><div class="mv">${res.max_hr} bpm</div><div class="ml">FC máx</div></div>`);
+  if (res.cadencia_media_rpm) mItems.push(`<div class="metric"><div class="mv">${res.cadencia_media_rpm} rpm</div><div class="ml">Cad. real</div></div>`);
+  if (res.cadencia_max_rpm) mItems.push(`<div class="metric"><div class="mv">${res.cadencia_max_rpm} rpm</div><div class="ml">Cad. máx</div></div>`);
+  if (res.calorias) mItems.push(`<div class="metric"><div class="mv">${res.calorias}</div><div class="ml">kcal</div></div>`);
+
+  const fortes = (ia.pontos_fortes || []).map(p => `<li><span class="icon">✅</span>${p}</li>`).join('');
+  const fracos = (ia.pontos_fracos || []).map(p => `<li><span class="icon">⚠️</span>${p}</li>`).join('');
+
+  document.getElementById('avalModalHead').innerHTML = `<h3>📊 Avaliação do treino</h3><div class="modal-sub">${lbl}</div>`;
+  document.getElementById('avalModalBody').innerHTML = `
+    ${mItems.length ? `<div class="metrics">${mItems.join('')}</div>` : ''}
+    <div class="analise-bloco">
+      ${ia.resumo ? `<div class="resumo-txt">"${ia.resumo}"</div>` : ''}
+      ${fortes ? `<ul class="analise-lista">${fortes}</ul>` : ''}
+      ${fracos ? `<ul class="analise-lista" style="margin-top:6px">${fracos}</ul>` : ''}
+    </div>`;
+  document.getElementById('avalModal').classList.add('show');
+}
+
+function fecharAvalModal(e) {
+  document.getElementById('avalModal').classList.remove('show');
 }
 
 async function abrirNutriModal(key) {
@@ -449,7 +454,7 @@ async function abrirNutriModal(key) {
 function fecharNutriModal(e) {
   document.getElementById('nutriModal').classList.remove('show');
 }
-document.addEventListener('keydown', e => { if (e.key === 'Escape') fecharNutriModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { fecharNutriModal(); fecharAvalModal(); } });
 
 function collect() {
   const treinos = [];

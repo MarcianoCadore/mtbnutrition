@@ -264,6 +264,10 @@ async def analisar_atividade_pos_treino(planejado: dict, resultado: dict) -> dic
         linhas.append(f"- FC média: {resultado['avg_hr']} bpm")
     if resultado.get("max_hr"):
         linhas.append(f"- FC máxima: {resultado['max_hr']} bpm")
+    if resultado.get("cadencia_media_rpm"):
+        linhas.append(f"- Cadência média: {resultado['cadencia_media_rpm']} rpm")
+    if resultado.get("cadencia_max_rpm"):
+        linhas.append(f"- Cadência máxima: {resultado['cadencia_max_rpm']} rpm")
     if resultado.get("elevacao_m"):
         linhas.append(f"- Elevação: {resultado['elevacao_m']} m")
     if resultado.get("calorias"):
