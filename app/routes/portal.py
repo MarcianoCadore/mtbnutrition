@@ -24,7 +24,7 @@ HTML = """<!DOCTYPE html>
     nav .nav-links a { color: #fff; text-decoration: none; font-size: 0.88rem; opacity: .85; white-space: nowrap; }
     nav .nav-links a:hover { opacity: 1; text-decoration: underline; }
 
-    main { max-width: 1120px; margin: 0 auto; padding: 24px 16px 80px; }
+    main { max-width: 1400px; margin: 0 auto; padding: 24px 20px 80px; }
 
     .week-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
     .week-bar .arrow { background: #fff; border: 1.5px solid var(--border); border-radius: 8px; width: 38px; height: 38px; cursor: pointer; font-size: 1.1rem; display: flex; align-items: center; justify-content: center; transition: all .15s; }
@@ -50,11 +50,7 @@ HTML = """<!DOCTYPE html>
     .day-date { font-size: .73rem; opacity: .85; }
     .day-body { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
     .day-body label { font-size: .7rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; display: block; margin-bottom: 2px; }
-    .day-body select {
-      width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 5px 4px 5px 6px;
-      font-size: .78rem; font-family: inherit; outline: none; transition: border-color .2s; background: #fff;
-    }
-    .day-body input[type=number], .day-body textarea {
+    .day-body select, .day-body input[type=number], .day-body textarea {
       width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
       font-size: .85rem; font-family: inherit; outline: none; transition: border-color .2s; background: #fff;
     }
@@ -164,12 +160,12 @@ HTML = """<!DOCTYPE html>
 <script>
 const DIAS  = ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo'];
 const TIPOS = [
-  {v:'DESCANSO',    l:'🛌 Descanso'},
-  {v:'Z2_LONGO',   l:'🚴 Z2 Longo'},
-  {v:'TIROS',      l:'⚡ Tiros'},
-  {v:'VO2MAX',     l:'🔥 VO2Max'},
-  {v:'TEMPO',      l:'💨 Tempo'},
-  {v:'RECUPERACAO',l:'🌿 Recuperação'},
+  {v:'DESCANSO',    l:'🛌 Descanso',    s:'Descanso'},
+  {v:'Z2_LONGO',   l:'🚴 Z2 Longo',    s:'Z2 Longo'},
+  {v:'TIROS',      l:'⚡ Tiros',        s:'Tiros'},
+  {v:'VO2MAX',     l:'🔥 VO2Max',       s:'VO2Max'},
+  {v:'TEMPO',      l:'💨 Tempo',        s:'Tempo'},
+  {v:'RECUPERACAO',l:'🌿 Recuperação',  s:'Recuperação'},
 ];
 
 let monday = getMonday(new Date());
@@ -213,7 +209,7 @@ function buildCards(treinos) {
     c.className = 'day-card' + (isToday ? ' today' : '');
 
     const opts = TIPOS.map(tp =>
-      `<option value="${tp.v}" ${tp.v===t.tipo?'selected':''}>${tp.l}</option>`
+      `<option value="${tp.v}" ${tp.v===t.tipo?'selected':''}>${tp.s}</option>`
     ).join('');
 
     const dur     = t.duracao_min   || '';
