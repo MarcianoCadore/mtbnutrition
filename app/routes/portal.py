@@ -89,6 +89,11 @@ HTML = """<!DOCTYPE html>
     .analise-lista { list-style: none; }
     .analise-lista li { font-size: .78rem; padding: 2px 0; display: flex; gap: 6px; align-items: flex-start; }
     .analise-lista li .icon { flex-shrink: 0; }
+    .analise-toggle { background: none; border: none; color: var(--green); font-size: .74rem; font-weight: 700; cursor: pointer; padding: 4px 0 2px; display: flex; align-items: center; gap: 4px; }
+    .analise-toggle:hover { text-decoration: underline; }
+    .analise-toggle .chev { transition: transform .2s; font-size: .8rem; }
+    .analise-toggle.open .chev { transform: rotate(180deg); }
+    .analise-detalhes { margin-top: 4px; }
 
     .tipo-Z2_LONGO    { background: #1565c0; }
     .tipo-TIROS       { background: #c62828; }
@@ -236,13 +241,21 @@ function buildCards(treinos) {
       if (res.avg_hr) mItems.push(`<div class="metric"><div class="mv">${res.avg_hr} bpm</div><div class="ml">FC média</div></div>`);
       if (res.max_hr) mItems.push(`<div class="metric"><div class="mv">${res.max_hr} bpm</div><div class="ml">FC máx</div></div>`);
       if (res.calorias) mItems.push(`<div class="metric"><div class="mv">${res.calorias}</div><div class="ml">kcal</div></div>`);
+      const temDetalhes = !!(fortes || fracos);
+      const detalhesHTML = temDetalhes ? `
+        <button class="analise-toggle" id="analise-toggle-${key}" onclick="toggleAnalise('${key}')">
+          <span>Mais informação</span><span class="chev">▾</span>
+        </button>
+        <div class="analise-detalhes" id="analise-detalhes-${key}" style="display:none">
+          ${fortes ? `<ul class="analise-lista">${fortes}</ul>` : ''}
+          ${fracos  ? `<ul class="analise-lista" style="margin-top:4px">${fracos}</ul>` : ''}
+        </div>` : '';
       return `<div class="resultado-section">
         <div class="resultado-header">📊 Resultado</div>
         ${mItems.length ? `<div class="metrics">${mItems.join('')}</div>` : ''}
         <div class="analise-bloco">
           ${resumoTxt}
-          ${fortes ? `<ul class="analise-lista">${fortes}</ul>` : ''}
-          ${fracos  ? `<ul class="analise-lista" style="margin-top:4px">${fracos}</ul>` : ''}
+          ${detalhesHTML}
         </div>
       </div>`;
     })();
@@ -342,6 +355,16 @@ function toggleRest(key) {
   const sel = document.getElementById(`tp-${key}`);
   sel.value = sel.value === 'DESCANSO' ? 'Z2_LONGO' : 'DESCANSO';
   onTipo(key);
+}
+
+function toggleAnalise(key) {
+  const det = document.getElementById(`analise-detalhes-${key}`);
+  const btn = document.getElementById(`analise-toggle-${key}`);
+  if (!det || !btn) return;
+  const aberto = det.style.display !== 'none';
+  det.style.display = aberto ? 'none' : 'block';
+  btn.classList.toggle('open', !aberto);
+  btn.querySelector('span').textContent = aberto ? 'Mais informação' : 'Menos informação';
 }
 
 function collect() {

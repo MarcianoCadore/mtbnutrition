@@ -11,11 +11,14 @@ class Settings(BaseSettings):
     # Garmin Connect
     GARMIN_EMAIL: str = ""
     GARMIN_PASSWORD: str = ""
-    # Twilio (legado)
+    # Twilio
     TWILIO_ACCOUNT_SID: str = ""
     TWILIO_AUTH_TOKEN: str = ""
     WHATSAPP_FROM: str = ""
     WHATSAPP_TO: str = ""
+    # Content API — template aprovado para notificações proativas (fora da janela de 24h).
+    # SID no formato HX... do template "passthrough" com 1 variável {{1}}.
+    TWILIO_CONTENT_SID: str = ""
 
     class Config:
         env_file = ".env"

@@ -1,6 +1,11 @@
+import json
+import logging
+
 from twilio.rest import Client
 from config.settings import settings
 from app.models.models import PlanoAlimentar
+
+logger = logging.getLogger(__name__)
 
 _client: Client | None = None
 
@@ -13,13 +18,38 @@ def get_client() -> Client:
 def _fmt(phone: str) -> str:
     return phone if phone.startswith("whatsapp:") else f"whatsapp:{phone}"
 
-async def send_message(to: str, message: str) -> dict:
-    msg = get_client().messages.create(
-        from_=_fmt(settings.WHATSAPP_FROM),
-        to=_fmt(to),
-        body=message,
-    )
-    return {"sid": msg.sid, "status": msg.status}
+async def send_message(to: str, message: str, *, force_freeform: bool = False) -> dict:
+    """Envia mensagem no WhatsApp.
+
+    Se TWILIO_CONTENT_SID estiver configurado, usa o template aprovado (Content API),
+    que pode ser enviado a qualquer momento — inclusive fora da janela de 24h.
+    A mensagem inteira vai na variável {{1}} do template.
+
+    Sem o SID (ou com force_freeform), cai no envio freeform, que só é entregue
+    dentro da janela de 24h após a última mensagem do usuário (erro 63016 fora dela).
+    """
+    params = {
+        "from_": _fmt(settings.WHATSAPP_FROM),
+        "to": _fmt(to),
+    }
+    usando_template = bool(settings.TWILIO_CONTENT_SID) and not force_freeform
+    if usando_template:
+        params["content_sid"] = settings.TWILIO_CONTENT_SID
+        params["content_variables"] = json.dumps({"1": message})
+    else:
+        params["body"] = message
+
+    msg = get_client().messages.create(**params)
+
+    if not usando_template:
+        logger.warning(
+            "WhatsApp enviado em modo freeform (sem TWILIO_CONTENT_SID): "
+            "só será entregue dentro da janela de 24h."
+        )
+    if getattr(msg, "error_code", None):
+        logger.error("WhatsApp erro %s: %s", msg.error_code, msg.error_message)
+
+    return {"sid": msg.sid, "status": msg.status, "error_code": getattr(msg, "error_code", None)}
 
 def format_plano_whatsapp(plano: PlanoAlimentar) -> str:
     data_str   = plano.data.strftime("%d/%m/%Y")

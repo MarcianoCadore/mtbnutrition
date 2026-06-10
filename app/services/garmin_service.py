@@ -70,7 +70,6 @@ async def sync_treinos_planejados(semana_inicio: str) -> int:
     d0 = datetime.strptime(semana_inicio, "%Y-%m-%d").date()
     d1 = d0 + timedelta(days=6)
 
-    sincronizados = 0
     meses = set()
     cur = d0
     while cur <= d1:
@@ -80,6 +79,18 @@ async def sync_treinos_planejados(semana_inicio: str) -> int:
 
     db = get_db()
 
+    # Snapshot do estado ANTES do sync, para detectar mudanças nos dias de treino.
+    # Indexado por garmin_workout_id -> {data, nome}.
+    doc_antes = await db.semanas.find_one({"semana_inicio": semana_inicio})
+    antes = {}
+    if doc_antes:
+        for t in doc_antes.get("treinos", []):
+            wid = t.get("garmin_workout_id")
+            if wid:
+                antes[wid] = {"data": t.get("data"), "nome": (t.get("descricao") or "").split("\n")[0]}
+
+    # Coleta todos os workouts da semana antes de processar
+    all_workouts = []
     for year, month in meses:
         try:
             raw = api.get_scheduled_workouts(year, month)
@@ -93,101 +104,169 @@ async def sync_treinos_planejados(semana_inicio: str) -> int:
         elif isinstance(raw, list):
             calendar_items = raw
 
-        # filtra apenas treinos planejados da semana (exclui atividades já realizadas)
         workouts = [
             item for item in calendar_items
             if item.get("itemType") == "workout"
             and d0.isoformat() <= (item.get("date") or "")[:10] <= d1.isoformat()
         ]
+        all_workouts.extend(workouts)
 
-        logger.info("Garmin semana %s: %d workout(s) planejado(s)", semana_inicio, len(workouts))
+    logger.info("Garmin semana %s: %d workout(s) planejado(s)", semana_inicio, len(all_workouts))
 
-        for item in workouts:
-            date_str = item["date"][:10]
-            workout_id = str(item.get("workoutId") or "")
-            nome = item.get("title") or ""
+    # Mapa workout_id -> {data, nome} atual no Garmin (para detectar workouts movidos)
+    garmin_info = {
+        str(item["workoutId"]): {"data": item["date"][:10], "nome": item.get("title") or ""}
+        for item in all_workouts
+        if item.get("workoutId")
+    }
+    garmin_id_para_data = {wid: info["data"] for wid, info in garmin_info.items()}
 
-            # busca detalhes completos: duração, cadência e notas
-            duracao_min = None
-            cadencia_rpm = None
-            notas = nome
+    sincronizados = 0
+    for item in all_workouts:
+        date_str = item["date"][:10]
+        workout_id = str(item.get("workoutId") or "")
+        nome = item.get("title") or ""
 
-            if workout_id:
-                try:
-                    wk = api.get_workout_by_id(int(workout_id))
-                    dur_secs = wk.get("estimatedDurationInSecs")
-                    if dur_secs:
-                        duracao_min = max(1, round(dur_secs / 60))
-                    cads = _extrair_cadencias(wk)
-                    if cads:
-                        cadencia_rpm = cads[0]
-                    desc = (wk.get("description") or "").strip()
-                    if desc:
-                        notas = f"{nome}\n{desc}".strip() if nome and nome != desc else desc
-                except Exception as e:
-                    logger.warning("Garmin get_workout_by_id %s: %s", workout_id, e)
+        duracao_min = None
+        cadencia_rpm = None
+        notas = nome
 
-            # fallback: cadência mencionada no texto das notas (ex.: "50-60rpm")
-            if cadencia_rpm is None:
-                from app.services.ai_service import extrair_cadencia_texto
-                cadencia_rpm = extrair_cadencia_texto(notas)
+        if workout_id:
+            try:
+                wk = api.get_workout_by_id(int(workout_id))
+                dur_secs = wk.get("estimatedDurationInSecs")
+                if dur_secs:
+                    duracao_min = max(1, round(dur_secs / 60))
+                cads = _extrair_cadencias(wk)
+                if cads:
+                    cadencia_rpm = cads[0]
+                desc = (wk.get("description") or "").strip()
+                if desc:
+                    notas = f"{nome}\n{desc}".strip() if nome and nome != desc else desc
+            except Exception as e:
+                logger.warning("Garmin get_workout_by_id %s: %s", workout_id, e)
 
-            semana = _semana_de(date_str)
-            doc = await db.semanas.find_one({"semana_inicio": semana})
+        if cadencia_rpm is None:
+            from app.services.ai_service import extrair_cadencia_texto
+            cadencia_rpm = extrair_cadencia_texto(notas)
 
-            tipo_planejado = "Z2_LONGO"
-            if nome:
-                try:
-                    from app.services.ai_service import classificar_tipo_treino
-                    tipo_planejado = await classificar_tipo_treino({
-                        "workout_name": nome,
-                        "duracao_min": duracao_min,
-                        "descricao_existente": notas,
-                    })
-                except Exception:
-                    pass
+        semana = _semana_de(date_str)
+        doc = await db.semanas.find_one({"semana_inicio": semana})
 
-            treino_entry = {
-                "data": date_str,
-                "tipo": tipo_planejado,
-                "descricao": notas,
-                "garmin_workout_id": workout_id,
-            }
-            if duracao_min is not None:
-                treino_entry["duracao_min"] = duracao_min
-            if cadencia_rpm is not None:
-                treino_entry["cadencia_rpm"] = cadencia_rpm
-
-            if not doc:
-                await db.semanas.insert_one({
-                    "semana_inicio": semana,
-                    "objetivo": "",
-                    "treinos": [treino_entry],
+        tipo_planejado = "Z2_LONGO"
+        if nome:
+            try:
+                from app.services.ai_service import classificar_tipo_treino
+                tipo_planejado = await classificar_tipo_treino({
+                    "workout_name": nome,
+                    "duracao_min": duracao_min,
+                    "descricao_existente": notas,
                 })
+            except Exception:
+                pass
+
+        treino_entry = {
+            "data": date_str,
+            "tipo": tipo_planejado,
+            "descricao": notas,
+            "garmin_workout_id": workout_id,
+        }
+        if duracao_min is not None:
+            treino_entry["duracao_min"] = duracao_min
+        if cadencia_rpm is not None:
+            treino_entry["cadencia_rpm"] = cadencia_rpm
+
+        if not doc:
+            await db.semanas.insert_one({
+                "semana_inicio": semana,
+                "objetivo": "",
+                "treinos": [treino_entry],
+            })
+        else:
+            existe = any(t.get("data") == date_str for t in doc.get("treinos", []))
+            if not existe:
+                await db.semanas.update_one(
+                    {"semana_inicio": semana},
+                    {"$push": {"treinos": treino_entry}},
+                )
             else:
-                existe = any(t.get("data") == date_str for t in doc.get("treinos", []))
-                if not existe:
-                    await db.semanas.update_one(
-                        {"semana_inicio": semana},
-                        {"$push": {"treinos": treino_entry}},
-                    )
-                else:
-                    set_fields = {
-                        "treinos.$.garmin_workout_id": workout_id,
-                        "treinos.$.tipo": tipo_planejado,
-                        "treinos.$.descricao": notas,
-                    }
-                    if duracao_min is not None:
-                        set_fields["treinos.$.duracao_min"] = duracao_min
-                    if cadencia_rpm is not None:
-                        set_fields["treinos.$.cadencia_rpm"] = cadencia_rpm
-                    await db.semanas.update_one(
-                        {"semana_inicio": semana, "treinos.data": date_str},
-                        {"$set": set_fields},
-                    )
-            sincronizados += 1
+                set_fields = {
+                    "treinos.$.garmin_workout_id": workout_id,
+                    "treinos.$.tipo": tipo_planejado,
+                    "treinos.$.descricao": notas,
+                }
+                if duracao_min is not None:
+                    set_fields["treinos.$.duracao_min"] = duracao_min
+                if cadencia_rpm is not None:
+                    set_fields["treinos.$.cadencia_rpm"] = cadencia_rpm
+                await db.semanas.update_one(
+                    {"semana_inicio": semana, "treinos.data": date_str},
+                    {"$set": set_fields},
+                )
+        sincronizados += 1
+
+    # Remove entradas de treinos que foram movidos para outra data no Garmin
+    doc = await db.semanas.find_one({"semana_inicio": semana_inicio})
+    if doc:
+        for treino in doc.get("treinos", []):
+            wid = treino.get("garmin_workout_id")
+            if not wid or wid not in garmin_id_para_data:
+                continue
+            data_atual_garmin = garmin_id_para_data[wid]
+            if treino.get("data") != data_atual_garmin:
+                logger.info(
+                    "Garmin: workout %s movido de %s para %s — removendo entrada antiga",
+                    wid, treino["data"], data_atual_garmin,
+                )
+                await db.semanas.update_one(
+                    {"semana_inicio": semana_inicio},
+                    {"$pull": {"treinos": {"garmin_workout_id": wid, "data": treino["data"]}}},
+                )
+
+    # Detecta mudanças nos dias de treino e notifica no WhatsApp
+    mudancas = []
+    for wid, info in garmin_info.items():
+        if wid not in antes:
+            mudancas.append({"tipo": "novo", "data": info["data"], "nome": info["nome"]})
+        elif antes[wid]["data"] != info["data"]:
+            mudancas.append({
+                "tipo": "movido", "de": antes[wid]["data"],
+                "para": info["data"], "nome": info["nome"] or antes[wid]["nome"],
+            })
+    for wid, info in antes.items():
+        if wid not in garmin_info:
+            mudancas.append({"tipo": "removido", "data": info["data"], "nome": info["nome"]})
+
+    if mudancas:
+        try:
+            from app.services.whatsapp_service import send_message
+            if settings.WHATSAPP_TO:
+                await send_message(settings.WHATSAPP_TO, _formatar_mudancas_treino(mudancas))
+        except Exception as e:
+            logger.error("WhatsApp mudanças de treino error: %s", e)
 
     return sincronizados
+
+
+def _data_br(data_iso: str) -> str:
+    """'2026-06-13' -> 'Sábado, 13/06'"""
+    d = datetime.strptime(data_iso, "%Y-%m-%d")
+    dias = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
+    return f"{dias[d.weekday()]}, {d.strftime('%d/%m')}"
+
+
+def _formatar_mudancas_treino(mudancas: list[dict]) -> str:
+    linhas = ["🚵 *Treinos atualizados*", ""]
+    for m in mudancas:
+        nome = m.get("nome") or "Treino"
+        if m["tipo"] == "novo":
+            linhas.append(f"➕ Novo: {_data_br(m['data'])} — {nome}")
+        elif m["tipo"] == "movido":
+            linhas.append(f"🔄 Movido: {_data_br(m['de'])} → {_data_br(m['para'])} — {nome}")
+        elif m["tipo"] == "removido":
+            linhas.append(f"➖ Removido: {_data_br(m['data'])} — {nome}")
+    linhas += ["", "_MTB Nutrition Bot 🤖_"]
+    return "\n".join(linhas)
 
 
 def _extrair_cadencias(wk: dict) -> list[str]:
