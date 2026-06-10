@@ -276,6 +276,8 @@ function buildCards(treinos) {
       if (res.distancia_km) mItems.push(`<div class="metric"><div class="mv">${res.distancia_km} km</div><div class="ml">Distância</div></div>`);
       if (res.avg_hr) mItems.push(`<div class="metric"><div class="mv">${res.avg_hr} bpm</div><div class="ml">FC média</div></div>`);
       if (res.max_hr) mItems.push(`<div class="metric"><div class="mv">${res.max_hr} bpm</div><div class="ml">FC máx</div></div>`);
+      if (res.cadencia_media_rpm) mItems.push(`<div class="metric"><div class="mv">${res.cadencia_media_rpm} rpm</div><div class="ml">Cadência</div></div>`);
+      if (res.cadencia_max_rpm) mItems.push(`<div class="metric"><div class="mv">${res.cadencia_max_rpm} rpm</div><div class="ml">Cad. máx</div></div>`);
       if (res.calorias) mItems.push(`<div class="metric"><div class="mv">${res.calorias}</div><div class="ml">kcal</div></div>`);
       const temDetalhes = !!(fortes || fracos);
       const detalhesHTML = temDetalhes ? `

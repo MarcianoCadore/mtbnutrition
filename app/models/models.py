@@ -22,6 +22,8 @@ class ResultadoTreino(BaseModel):
     elevacao_m: Optional[float] = None
     avg_hr: Optional[int] = None
     max_hr: Optional[int] = None
+    cadencia_media_rpm: Optional[int] = None
+    cadencia_max_rpm: Optional[int] = None
     calorias: Optional[int] = None
     analise_ia: Optional[dict] = None
 

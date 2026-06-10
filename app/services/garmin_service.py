@@ -355,6 +355,16 @@ async def sync_atividades(semana_inicio: str) -> int:
 
         analise = analisar_fit(fit_path)
 
+        # Cadência vem do resumo da atividade do Garmin (média e máxima);
+        # cai no valor calculado do .fit se o resumo não trouxer.
+        cad_media = act.get("averageBikingCadenceInRevPerMinute")
+        cad_max = act.get("maxBikingCadenceInRevPerMinute")
+        if cad_media is None and analise.get("cadencia_rpm"):
+            try:
+                cad_media = float(str(analise["cadencia_rpm"]).split("-")[0])
+            except ValueError:
+                cad_media = None
+
         resultado = {
             "garmin_activity_id": act_id,
             "fit_file": fit_filename,
@@ -363,6 +373,8 @@ async def sync_atividades(semana_inicio: str) -> int:
             "elevacao_m": analise.get("elevacao_m"),
             "avg_hr": analise.get("avg_hr"),
             "max_hr": analise.get("max_hr"),
+            "cadencia_media_rpm": round(cad_media) if cad_media else None,
+            "cadencia_max_rpm": round(cad_max) if cad_max else None,
             "calorias": analise.get("calorias"),
         }
 
@@ -463,6 +475,11 @@ def _formatar_pos_treino(data: str, planejado: dict, resultado: dict) -> str:
         linhas.append(f"❤️ FC média: {resultado['avg_hr']} bpm")
     if resultado.get("max_hr"):
         linhas.append(f"🔥 FC máx: {resultado['max_hr']} bpm")
+    if resultado.get("cadencia_media_rpm"):
+        cad = f"🦵 Cadência: {resultado['cadencia_media_rpm']} rpm"
+        if resultado.get("cadencia_max_rpm"):
+            cad += f" (máx {resultado['cadencia_max_rpm']})"
+        linhas.append(cad)
     if resultado.get("calorias"):
         linhas.append(f"🔋 Calorias: {resultado['calorias']} kcal")
 
