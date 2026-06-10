@@ -111,6 +111,46 @@ async def sync_garmin(semana_inicio: str):
     return {"status": "ok", "treinos_importados": pl, "atividades_processadas": at}
 
 
+@router.get("/garmin/debug/{semana_inicio}")
+async def debug_garmin(semana_inicio: str):
+    """Retorna o raw da API Garmin para diagnóstico."""
+    from datetime import timedelta
+    from app.services.garmin_service import get_garmin_client
+    api = get_garmin_client()
+    d0 = datetime.strptime(semana_inicio, "%Y-%m-%d").date()
+    d1 = d0 + timedelta(days=6)
+
+    atividades_raw = []
+    try:
+        atividades_raw = api.get_activities_by_date(d0.isoformat(), d1.isoformat()) or []
+    except Exception as e:
+        atividades_raw = [{"erro": str(e)}]
+
+    workouts_raw = {}
+    try:
+        workouts_raw = api.get_scheduled_workouts(d0.year, d0.month)
+    except Exception as e:
+        workouts_raw = {"erro": str(e)}
+
+    return {
+        "semana": f"{d0} a {d1}",
+        "atividades_count": len(atividades_raw),
+        "atividades_tipos": [
+            {
+                "id": a.get("activityId"),
+                "nome": a.get("activityName"),
+                "data": a.get("startTimeLocal", "")[:10],
+                "typeKey": (a.get("activityType") or {}).get("typeKey"),
+            }
+            for a in atividades_raw[:10]
+        ],
+        "workouts_raw_type": type(workouts_raw).__name__,
+        "workouts_raw_keys": list(workouts_raw.keys()) if isinstance(workouts_raw, dict) else None,
+        "workouts_raw_preview": workouts_raw if isinstance(workouts_raw, dict) else workouts_raw[:3],
+        "db_semana": await get_db().semanas.find_one({"semana_inicio": semana_inicio}, {"_id": 0}),
+    }
+
+
 @router.post("/fit/{semana_inicio}/{data}")
 async def upload_fit(semana_inicio: str, data: str, arquivo: UploadFile = File(...)):
     if not arquivo.filename.lower().endswith(".fit"):
@@ -149,6 +189,7 @@ async def upload_fit(semana_inicio: str, data: str, arquivo: UploadFile = File(.
         "duracao_min": analise.get("duracao_min"),
         "distancia_km": analise.get("distancia_km"),
         "elevacao_m": analise.get("elevacao_m"),
+        "cadencia_rpm": analise.get("cadencia_rpm"),
         "fit_file": safe_name,
     }
 

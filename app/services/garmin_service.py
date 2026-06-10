@@ -65,12 +65,12 @@ def _extrair_fit_do_zip(data: bytes) -> bytes | None:
 
 
 async def sync_treinos_planejados(semana_inicio: str) -> int:
-    """Busca treinos planejados no calendário Garmin e insere no MongoDB."""
+    """Busca treinos planejados no calendário Garmin e faz upsert no MongoDB."""
     api = get_garmin_client()
     d0 = datetime.strptime(semana_inicio, "%Y-%m-%d").date()
     d1 = d0 + timedelta(days=6)
 
-    importados = 0
+    sincronizados = 0
     meses = set()
     cur = d0
     while cur <= d1:
@@ -87,51 +87,71 @@ async def sync_treinos_planejados(semana_inicio: str) -> int:
             logger.error("Garmin scheduled_workouts error: %s", e)
             continue
 
-        # A resposta pode ser dict com 'calendarItems' ou lista
-        items = []
+        calendar_items = []
         if isinstance(raw, dict):
-            items = raw.get("calendarItems") or raw.get("calendarItems", [])
-            if not items:
-                # tenta navegar pela estrutura
-                for v in raw.values():
-                    if isinstance(v, list):
-                        items = v
-                        break
+            calendar_items = raw.get("calendarItems") or []
         elif isinstance(raw, list):
-            items = raw
+            calendar_items = raw
 
-        for item in items:
-            date_str = (
-                item.get("date")
-                or item.get("startDate")
-                or item.get("scheduledDate")
-                or ""
-            )[:10]
-            if not date_str or not (d0.isoformat() <= date_str <= d1.isoformat()):
-                continue
+        # filtra apenas treinos planejados da semana (exclui atividades já realizadas)
+        workouts = [
+            item for item in calendar_items
+            if item.get("itemType") == "workout"
+            and d0.isoformat() <= (item.get("date") or "")[:10] <= d1.isoformat()
+        ]
 
-            workout_id = str(
-                item.get("workoutId") or item.get("id") or ""
-            )
-            nome = (
-                item.get("title")
-                or item.get("workoutName")
-                or item.get("name")
-                or ""
-            )
-            duracao_s = item.get("estimatedDurationInSecs") or item.get("duration") or 0
-            duracao_min = round(int(duracao_s) / 60) if duracao_s else None
+        logger.info("Garmin semana %s: %d workout(s) planejado(s)", semana_inicio, len(workouts))
+
+        for item in workouts:
+            date_str = item["date"][:10]
+            workout_id = str(item.get("workoutId") or "")
+            nome = item.get("title") or ""
+
+            # busca detalhes completos: duração, cadência e notas
+            duracao_min = None
+            cadencia_rpm = None
+            notas = nome
+
+            if workout_id:
+                try:
+                    wk = api.get_workout_by_id(int(workout_id))
+                    dur_secs = wk.get("estimatedDurationInSecs")
+                    if dur_secs:
+                        duracao_min = max(1, round(dur_secs / 60))
+                    cads = _extrair_cadencias(wk)
+                    if cads:
+                        cadencia_rpm = cads[0]
+                    desc = (wk.get("description") or "").strip()
+                    if desc:
+                        notas = f"{nome}\n{desc}".strip() if nome and nome != desc else desc
+                except Exception as e:
+                    logger.warning("Garmin get_workout_by_id %s: %s", workout_id, e)
 
             semana = _semana_de(date_str)
             doc = await db.semanas.find_one({"semana_inicio": semana})
 
+            tipo_planejado = "Z2_LONGO"
+            if nome:
+                try:
+                    from app.services.ai_service import classificar_tipo_treino
+                    tipo_planejado = await classificar_tipo_treino({
+                        "workout_name": nome,
+                        "duracao_min": duracao_min,
+                        "descricao_existente": notas,
+                    })
+                except Exception:
+                    pass
+
             treino_entry = {
                 "data": date_str,
-                "tipo": "Z2_LONGO",
-                "descricao": nome,
-                "duracao_min": duracao_min,
+                "tipo": tipo_planejado,
+                "descricao": notas,
                 "garmin_workout_id": workout_id,
             }
+            if duracao_min is not None:
+                treino_entry["duracao_min"] = duracao_min
+            if cadencia_rpm is not None:
+                treino_entry["cadencia_rpm"] = cadencia_rpm
 
             if not doc:
                 await db.semanas.insert_one({
@@ -139,7 +159,6 @@ async def sync_treinos_planejados(semana_inicio: str) -> int:
                     "objetivo": "",
                     "treinos": [treino_entry],
                 })
-                importados += 1
             else:
                 existe = any(t.get("data") == date_str for t in doc.get("treinos", []))
                 if not existe:
@@ -147,20 +166,50 @@ async def sync_treinos_planejados(semana_inicio: str) -> int:
                         {"semana_inicio": semana},
                         {"$push": {"treinos": treino_entry}},
                     )
-                    importados += 1
                 else:
-                    # atualiza apenas garmin_workout_id se ainda não tiver
-                    for t in doc.get("treinos", []):
-                        if t.get("data") == date_str and not t.get("garmin_workout_id"):
-                            await db.semanas.update_one(
-                                {"semana_inicio": semana, "treinos.data": date_str},
-                                {"$set": {
-                                    "treinos.$.garmin_workout_id": workout_id,
-                                    "treinos.$.descricao": t.get("descricao") or nome,
-                                }},
-                            )
+                    set_fields = {
+                        "treinos.$.garmin_workout_id": workout_id,
+                        "treinos.$.tipo": tipo_planejado,
+                        "treinos.$.descricao": notas,
+                    }
+                    if duracao_min is not None:
+                        set_fields["treinos.$.duracao_min"] = duracao_min
+                    if cadencia_rpm is not None:
+                        set_fields["treinos.$.cadencia_rpm"] = cadencia_rpm
+                    await db.semanas.update_one(
+                        {"semana_inicio": semana, "treinos.data": date_str},
+                        {"$set": set_fields},
+                    )
+            sincronizados += 1
 
-    return importados
+    return sincronizados
+
+
+def _extrair_cadencias(wk: dict) -> list[str]:
+    """Extrai targets de cadência das etapas do workout Garmin."""
+    cadencias = []
+    for seg in wk.get("workoutSegments") or []:
+        for step in seg.get("workoutSteps") or []:
+            tgt_key = (step.get("targetType") or {}).get("workoutTargetTypeKey", "")
+            if "cadence" in tgt_key.lower():
+                v1 = step.get("targetValueOne")
+                v2 = step.get("targetValueTwo")
+                if v1 and v2 and abs(v1 - v2) > 1:
+                    cadencias.append(f"{int(v1)}-{int(v2)}")
+                elif v1:
+                    cadencias.append(str(int(v1)))
+    return cadencias
+
+
+_CYCLING_TYPES = {
+    "cycling", "mountain_biking", "road_biking", "gravel_cycling",
+    "indoor_cycling", "virtual_ride", "bmx", "bike",
+}
+
+
+def _is_cycling(act: dict) -> bool:
+    type_key = (act.get("activityType") or {}).get("typeKey", "")
+    return any(k in type_key.lower() for k in ("cycl", "bike", "mtb", "mountain"))
 
 
 async def sync_atividades(semana_inicio: str) -> int:
@@ -170,9 +219,9 @@ async def sync_atividades(semana_inicio: str) -> int:
     d1 = d0 + timedelta(days=6)
 
     try:
-        atividades = api.get_activities_by_date(
-            d0.isoformat(), d1.isoformat(), "cycling"
-        )
+        todas = api.get_activities_by_date(d0.isoformat(), d1.isoformat())
+        atividades = [a for a in (todas or []) if _is_cycling(a)]
+        logger.info("Garmin atividades encontradas: %d (todas) / %d (bike)", len(todas or []), len(atividades))
     except Exception as e:
         logger.error("Garmin get_activities_by_date error: %s", e)
         return 0

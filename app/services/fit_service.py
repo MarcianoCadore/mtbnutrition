@@ -1,3 +1,4 @@
+import re
 import statistics
 from fitparse import FitFile
 
@@ -112,15 +113,17 @@ def _passos_para_texto(passos: list[dict], duracao_min: int | None) -> str:
 def analisar_fit(caminho: str) -> dict:
     ff = FitFile(caminho)
 
-    hr_values    = []
-    power_values = []
-    duration_s   = 0.0
-    distance_m   = 0.0
-    elevation_m  = 0.0
-    calories     = 0
-    avg_power    = None
-    norm_power   = None
-    max_power    = None
+    hr_values       = []
+    power_values    = []
+    cadence_values  = []
+    duration_s      = 0.0
+    distance_m      = 0.0
+    elevation_m     = 0.0
+    calories        = 0
+    avg_power       = None
+    norm_power      = None
+    max_power       = None
+    avg_cadence_ses = None
 
     # Dados agregados da sessão
     for msg in ff.get_messages("session"):
@@ -144,6 +147,8 @@ def analisar_fit(caminho: str) -> dict:
                 norm_power = float(val)
             elif name == "max_power":
                 max_power = float(val)
+            elif name == "avg_cadence":
+                avg_cadence_ses = int(val)
 
     # Registros por segundo
     for msg in ff.get_messages("record"):
@@ -153,6 +158,9 @@ def analisar_fit(caminho: str) -> dict:
         pw = msg.get_value("power")
         if pw is not None:
             power_values.append(int(pw))
+        cad = msg.get_value("cadence")
+        if cad is not None and int(cad) > 0:
+            cadence_values.append(int(cad))
 
     # Fallbacks: duração e potência a partir dos records
     if not duration_s and hr_values:
@@ -175,11 +183,32 @@ def analisar_fit(caminho: str) -> dict:
     descricao_estruturada = _passos_para_texto(passos, duration_min)
 
     workout_name = None
+    workout_notes = None
     for msg in ff.get_messages("workout"):
         wn = msg.get_value("wkt_name")
         if wn:
             workout_name = str(wn)
-            break
+        for field in msg.fields:
+            if field.name == "unknown_17" and field.value:
+                workout_notes = str(field.value)
+        break
+
+    # Cadência: 1) média da sessão/records; 2) extrai do texto da descrição
+    cadencia_rpm = None
+    if avg_cadence_ses and avg_cadence_ses > 0:
+        cadencia_rpm = str(avg_cadence_ses)
+    elif cadence_values:
+        avg_cad = round(sum(cadence_values) / len(cadence_values))
+        cadencia_rpm = str(avg_cad)
+    else:
+        texto = (descricao_estruturada or "") + " " + (workout_name or "")
+        m = re.search(r'(\d{2,3})\s*[-–]\s*(\d{2,3})\s*rpm', texto, re.IGNORECASE)
+        if m:
+            cadencia_rpm = f"{m.group(1)}-{m.group(2)}"
+        else:
+            m2 = re.search(r'(\d{2,3})\s*rpm', texto, re.IGNORECASE)
+            if m2:
+                cadencia_rpm = m2.group(1)
 
     return {
         "tipo":                   tipo,
@@ -189,6 +218,8 @@ def analisar_fit(caminho: str) -> dict:
         "calorias":               calories or None,
         "avg_hr":                 avg_hr,
         "max_hr":                 max_hr,
+        "cadencia_rpm":           cadencia_rpm,
         "workout_name":           workout_name,
+        "workout_notes":          workout_notes,
         "descricao_estruturada":  descricao_estruturada or None,
     }

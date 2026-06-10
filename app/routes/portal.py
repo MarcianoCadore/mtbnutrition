@@ -263,7 +263,6 @@ function buildCards(treinos) {
     const durStr = dur ? (() => { const h = Math.floor(dur/60); const m = dur%60; return (h>0?h+'h':'')+( m>0?m+'min':''); })() : '';
     const resumoHTML = !hide ? `
       <ul class="treino-resumo" id="resumo-${key}">
-        <li><span class="ri">🚴</span><span class="rk">Tipo</span><span class="rv" id="resumo-tipo-${key}">${tipoLbl}</span></li>
         <li><span class="ri">⏱</span><span class="rk">Tempo</span><span class="rv" id="resumo-dur-${key}">${durStr || '—'}</span></li>
         <li><span class="ri">🦵</span><span class="rk">Cadência</span><span class="rv" id="resumo-cad-${key}">${cad ? cad+' rpm' : '—'}</span></li>
       </ul>` : '';
@@ -277,6 +276,7 @@ function buildCards(treinos) {
         <input type="hidden" id="dur-${key}"     value="${dur}">
         <input type="hidden" id="dist-${key}"    value="${dist}">
         <input type="hidden" id="elev-${key}"    value="${elev}">
+        <input type="hidden" id="cad-${key}"     value="${cad}">
         <input type="hidden" id="fitfile-${key}" value="${fitFile}">
         <select id="tp-${key}" style="${hide ? 'display:none' : ''}" onchange="onTipo('${key}')">
           ${opts}
@@ -286,10 +286,6 @@ function buildCards(treinos) {
           ${resumoHTML}
           ${metricsHTML}
 
-          <div>
-            <label>Cadência (rpm)</label>
-            <input type="text" id="cad-${key}" value="${cad}" placeholder="Ex: 85-95" oninput="atualizarResumo('${key}')">
-          </div>
           <div class="fit-area">
             <label class="fit-label" for="fit-${key}">📎 Enviar arquivo .fit</label>
             <input type="file" id="fit-${key}" accept=".fit" onchange="uploadFit('${key}', this)">
@@ -449,9 +445,10 @@ async function uploadFit(key, input) {
     // salva referência do arquivo nos hiddens
     const ffEl = document.getElementById(`fitfile-${key}`);
     if (ffEl && d.fit_file) ffEl.value = d.fit_file;
-    if (d.duracao_min)  { const el = document.getElementById(`dur-${key}`);  if (el) el.value = d.duracao_min; }
-    if (d.distancia_km) { const el = document.getElementById(`dist-${key}`); if (el) el.value = d.distancia_km; }
-    if (d.elevacao_m)   { const el = document.getElementById(`elev-${key}`); if (el) el.value = d.elevacao_m; }
+    if (d.duracao_min)   { const el = document.getElementById(`dur-${key}`);  if (el) el.value = d.duracao_min; }
+    if (d.distancia_km)  { const el = document.getElementById(`dist-${key}`); if (el) el.value = d.distancia_km; }
+    if (d.elevacao_m)    { const el = document.getElementById(`elev-${key}`); if (el) el.value = d.elevacao_m; }
+    if (d.cadencia_rpm)  { const el = document.getElementById(`cad-${key}`);  if (el) { el.value = d.cadencia_rpm; atualizarResumo(key); } }
 
     // link do arquivo
     document.getElementById(`fitinfo-${key}`).innerHTML =
@@ -477,6 +474,10 @@ async function uploadFit(key, input) {
     // preenche descrição automática se o campo estiver vazio
     const descEl = document.getElementById(`desc-${key}`);
     if (descEl && !descEl.value.trim()) {
+      // usa notas do workout do Garmin se disponível
+      if (d.workout_notes) {
+        descEl.value = d.workout_notes;
+      } else {
       const TIPO_LABELS = {
         Z2_LONGO: 'Z2 Longo', TIROS: 'Tiros', VO2MAX: 'VO2Max',
         TEMPO: 'Tempo', RECUPERACAO: 'Recuperação', DESCANSO: 'Descanso',
@@ -493,6 +494,7 @@ async function uploadFit(key, input) {
       if (d.avg_hr)       linhas.push(`FC média: ${d.avg_hr} bpm`);
       if (d.calorias)     linhas.push(`Calorias: ${d.calorias}`);
       descEl.value = linhas.join('\\n');
+      } // fim else workout_notes
     }
 
     const lbl = (TIPOS.find(tp => tp.v === tipo) || {l: tipo}).l;
@@ -516,6 +518,12 @@ async function removerFit(key) {
       const el = document.getElementById(`${f}-${key}`);
       if (el) el.value = '';
     });
+
+    // limpa cadência e notas
+    const cadEl = document.getElementById(`cad-${key}`);
+    if (cadEl) cadEl.value = '';
+    const descEl = document.getElementById(`desc-${key}`);
+    if (descEl) descEl.value = '';
 
     // reseta o card para DESCANSO
     const sel = document.getElementById(`tp-${key}`);

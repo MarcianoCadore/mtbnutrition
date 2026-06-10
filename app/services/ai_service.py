@@ -87,6 +87,8 @@ async def classificar_tipo_treino(analise: dict) -> str:
         linhas.append(f"Distância: {analise['distancia_km']} km")
     if analise.get("descricao_existente"):
         linhas.append(f"\nDescrição do treino: {analise['descricao_existente']}")
+    if analise.get("workout_notes"):
+        linhas.append(f"\nNotas do treino: {analise['workout_notes']}")
     if analise.get("descricao_estruturada"):
         linhas.append(f"\nEstrutura planejada:\n{analise['descricao_estruturada']}")
 
