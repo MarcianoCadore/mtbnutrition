@@ -254,6 +254,16 @@ async def ler_zonas():
     return await get_zonas()
 
 
+@router.post("/zonas/importar-garmin")
+async def importar_zonas_garmin():
+    """Lê as zonas de FC oficiais direto da conta Garmin (preview, não salva)."""
+    from app.services.garmin_service import zonas_do_garmin
+    try:
+        return await zonas_do_garmin()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Não consegui ler as zonas do Garmin: {e}")
+
+
 @router.post("/zonas/extrair")
 async def extrair_zonas(imagem: UploadFile = File(...)):
     """Recebe uma captura de tela do Garmin e extrai as zonas via IA (preview)."""
@@ -457,8 +467,15 @@ _PAGINA_ZONAS = """<!DOCTYPE html>
   <p class="sub">Configure as faixas de bpm de cada zona. Elas são enviadas como alvo nos treinos que vão para o Garmin.</p>
 
   <div class="card">
-    <h2>📷 Ler da imagem do Garmin</h2>
-    <p class="hint">Tire um print da tela de zonas de FC no app/relógio Garmin e envie aqui — a IA preenche os campos automaticamente. Confira antes de salvar.</p>
+    <h2>📥 Importar do Garmin</h2>
+    <p class="hint">Puxa as zonas oficiais do seu perfil de ciclismo direto da conta Garmin — sem print, sem IA. É o jeito mais confiável.</p>
+    <button id="btnGarmin" onclick="importarGarmin()">📥 Importar zonas do Garmin</button>
+    <div id="stGarmin" class="status"></div>
+  </div>
+
+  <div class="card">
+    <h2>📷 Ler de uma imagem</h2>
+    <p class="hint">Alternativa: tire um print da tela de zonas de FC no app/relógio Garmin e envie aqui — a IA preenche os campos. Confira antes de salvar.</p>
     <div class="upload-row">
       <input type="file" id="img" accept="image/*">
       <button class="sec" id="btnLer" style="width:auto; padding:12px 16px" onclick="lerImagem()">🤖 Ler zonas</button>
@@ -526,6 +543,19 @@ _PAGINA_ZONAS = """<!DOCTYPE html>
       const r = await fetch('/workout/zonas/dados');
       aplicar(await r.json());
     } catch(e) { renderZonas([]); }
+  }
+  async function importarGarmin() {
+    const btn = document.getElementById('btnGarmin'), st = document.getElementById('stGarmin');
+    btn.disabled = true; btn.textContent = 'Importando...'; st.className='status info'; st.textContent='📡 Lendo zonas do Garmin...';
+    try {
+      const r = await fetch('/workout/zonas/importar-garmin', { method:'POST' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Erro');
+      aplicar(d);
+      const esporte = d.sport ? ' (perfil ' + d.sport.toLowerCase() + ')' : '';
+      st.className='status ok'; st.textContent='✅ Zonas importadas do Garmin' + esporte + '! Confira e clique em Salvar.';
+    } catch(e) { st.className='status err'; st.textContent='❌ ' + e.message; }
+    finally { btn.disabled=false; btn.textContent='📥 Importar zonas do Garmin'; }
   }
   async function lerImagem() {
     const inp = document.getElementById('img'), st = document.getElementById('stImg'), btn = document.getElementById('btnLer');

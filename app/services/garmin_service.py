@@ -1,6 +1,7 @@
 import os
 import zipfile
 import io
+import asyncio
 import logging
 from datetime import datetime, timedelta
 
@@ -48,6 +49,47 @@ def get_garmin_client() -> Garmin:
 def _semana_de(data: str) -> str:
     d = datetime.strptime(data, "%Y-%m-%d").date()
     return (d - timedelta(days=d.weekday())).isoformat()
+
+
+async def zonas_do_garmin(sport: str = "CYCLING") -> dict:
+    """Lê as zonas de FC oficiais do dispositivo direto da API do Garmin.
+
+    Prefere o perfil do esporte pedido (ciclismo), caindo no DEFAULT. Retorna
+    {"fc_max", "limiar", "zonas": [{"zona","min","max"}, ...]} — mesmo formato da
+    extração por imagem. Os 'floors' do Garmin viram faixas: cada zona vai do seu
+    floor até (floor da próxima - 1); a Z5 vai do floor 5 até a FC máxima.
+    """
+    api = get_garmin_client()
+
+    def _fetch():
+        return api.connectapi("/biometric-service/heartRateZones")
+
+    dados = await asyncio.to_thread(_fetch)
+    if not dados:
+        raise ValueError("O Garmin não retornou zonas de FC.")
+
+    escolha = next((d for d in dados if (d.get("sport") or "").upper() == sport.upper()), None)
+    if escolha is None:
+        escolha = next((d for d in dados if (d.get("sport") or "").upper() == "DEFAULT"), dados[0])
+
+    floors = [escolha.get(f"zone{i}Floor") for i in range(1, 6)]
+    if any(f is None for f in floors):
+        raise ValueError("Perfil de zonas do Garmin incompleto.")
+    fc_max = escolha.get("maxHeartRateUsed")
+    limiar = escolha.get("lactateThresholdHeartRateUsed")
+
+    zonas = []
+    for i in range(5):
+        mn = int(floors[i])
+        mx = int(floors[i + 1]) - 1 if i < 4 else int(fc_max or floors[i] + 12)
+        zonas.append({"zona": i + 1, "min": mn, "max": mx})
+
+    return {
+        "fc_max": int(fc_max) if fc_max else None,
+        "limiar": int(limiar) if limiar else None,
+        "zonas": zonas,
+        "sport": escolha.get("sport"),
+    }
 
 
 def _extrair_fit_do_zip(data: bytes) -> bytes | None:
