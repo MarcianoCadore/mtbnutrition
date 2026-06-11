@@ -327,15 +327,30 @@ async def config_horarios():
 </main>
 <script>
   const campos = ['cafe','almoco','lanche_tarde','jantar'];
+  const rotulos = {cafe:'Café da manhã', almoco:'Almoço', lanche_tarde:'Lanche da tarde', jantar:'Jantar'};
   async function carregar() {
     const r = await fetch('/nutrition/horarios');
     const d = await r.json();
     campos.forEach(k => document.getElementById(k).value = d[k]);
   }
+  function validarOrdem(body) {
+    let prev = null;
+    for (const k of campos) {
+      if (!body[k]) continue;
+      const [h,m] = body[k].split(':').map(Number);
+      const min = h*60 + m;
+      if (prev && min <= prev.min)
+        return `${rotulos[k]} (${body[k]}) precisa ser depois de ${rotulos[prev.k]} (${prev.hora}). Confira se não trocou manhã por noite (ex.: 09:00 em vez de 21:00).`;
+      prev = {min, k, hora: body[k]};
+    }
+    return null;
+  }
   async function salvar() {
     const btn = document.getElementById('btn'), st = document.getElementById('st');
     const body = {};
     campos.forEach(k => body[k] = document.getElementById(k).value);
+    const erro = validarOrdem(body);
+    if (erro) { st.className='status err'; st.textContent='❌ ' + erro; return; }
     btn.disabled = true; btn.textContent = 'Salvando...'; st.className='status';
     try {
       const r = await fetch('/nutrition/horarios', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
