@@ -433,6 +433,7 @@ function abrirAvaliacao(key) {
   if (res.cadencia_media_rpm) mItems.push(`<div class="metric"><div class="mv">${res.cadencia_media_rpm} rpm</div><div class="ml">Cad. real</div></div>`);
   if (res.cadencia_max_rpm) mItems.push(`<div class="metric"><div class="mv">${res.cadencia_max_rpm} rpm</div><div class="ml">Cad. máx</div></div>`);
   if (res.calorias) mItems.push(`<div class="metric"><div class="mv">${res.calorias}</div><div class="ml">kcal</div></div>`);
+  if (res.carga_exercicio != null) mItems.push(`<div class="metric"><div class="mv">${res.carga_exercicio}</div><div class="ml">Carga de exercício</div></div>`);
   if (res.tss_esperado != null) mItems.push(`<div class="metric"><div class="mv">${res.tss_esperado}</div><div class="ml">TSS esperado</div></div>`);
   if (res.tss_obtido != null) mItems.push(`<div class="metric"><div class="mv">${res.tss_obtido}</div><div class="ml">TSS obtido</div></div>`);
 

@@ -498,6 +498,7 @@ async def sync_atividades(semana_inicio: str) -> int:
             "cadencia_media_rpm": round(cad_media) if cad_media else None,
             "cadencia_max_rpm": round(cad_max) if cad_max else None,
             "calorias": analise.get("calorias"),
+            "carga_exercicio": round(act["activityTrainingLoad"]) if act.get("activityTrainingLoad") else None,
         }
 
         # busca treino planejado para comparação
