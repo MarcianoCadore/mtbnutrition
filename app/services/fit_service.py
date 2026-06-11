@@ -110,6 +110,33 @@ def _passos_para_texto(passos: list[dict], duracao_min: int | None) -> str:
     return (total_str + "\n" + "\n".join(linhas)).strip()
 
 
+def hrtss_ponderado(caminho: str, limiar) -> int | None:
+    """TSS estimado integrando (FC/limiar)² a cada segundo do treino.
+
+    Mais fiel que usar só a FC média: como integra o quadrado da intensidade
+    amostra a amostra, dá o peso certo a quem fez tiros de verdade (picos em Z4/Z5
+    elevam o TSS) e a quem ficou em Z2 (intensidade baixa puxa para baixo). Assume
+    ~1 amostra/segundo, como nos .fit do Garmin.
+    """
+    if not limiar:
+        return None
+    try:
+        ff = FitFile(caminho)
+        soma = 0.0
+        n = 0
+        for msg in ff.get_messages("record"):
+            hr = msg.get_value("heart_rate")
+            if hr is not None:
+                soma += (int(hr) / limiar) ** 2
+                n += 1
+    except Exception:
+        return None
+    if not n:
+        return None
+    # TSS = horas × média(IF²) × 100 = (n/3600) × (soma/n) × 100 = soma×100/3600
+    return round(soma * 100 / 3600)
+
+
 def analisar_fit(caminho: str) -> dict:
     ff = FitFile(caminho)
 

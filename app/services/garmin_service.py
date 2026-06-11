@@ -338,15 +338,18 @@ def _is_cycling(act: dict) -> bool:
     return any(k in type_key.lower() for k in ("cycl", "bike", "mtb", "mountain"))
 
 
-# Fator de intensidade típico por tipo de treino — usado para estimar o TSS
-# planejado (esperado). Aproximação razoável quando não há medidor de potência.
+# Fator de intensidade MÉDIO de sessão por tipo de treino (já contando
+# aquecimento, recuperações entre blocos e volta à calma). Usado para estimar o
+# TSS planejado (esperado). Calibrado para refletir o IF médio real da sessão —
+# por isso TIROS/VO2MAX não são altíssimos: os picos são curtos e há muita
+# recuperação no meio, o que derruba a média.
 _IF_ESPERADO = {
-    "RECUPERACAO": 0.55,
-    "Z2_LONGO":    0.68,
-    "TEMPO":       0.85,
-    "FORCA":       0.80,
-    "TIROS":       0.88,
-    "VO2MAX":      0.92,
+    "RECUPERACAO": 0.50,
+    "Z2_LONGO":    0.65,
+    "TEMPO":       0.82,
+    "FORCA":       0.78,
+    "TIROS":       0.80,
+    "VO2MAX":      0.88,
 }
 
 
@@ -364,7 +367,7 @@ def _tss_esperado(tipo, duracao_min) -> int | None:
     return round((duracao_min / 60) * fator ** 2 * 100)
 
 
-def _metricas_extra(planejado: dict, resultado: dict, limiar, avg_speed_ms=None) -> dict:
+def _metricas_extra(planejado: dict, resultado: dict, limiar, avg_speed_ms=None, fit_path=None) -> dict:
     """Velocidade média e TSS (esperado/obtido) para o modal de avaliação.
     Não são enviadas ao WhatsApp — só ficam salvas no resultado para o portal."""
     extra = {}
@@ -376,7 +379,14 @@ def _metricas_extra(planejado: dict, resultado: dict, limiar, avg_speed_ms=None)
     if vel:
         extra["velocidade_media_kmh"] = round(vel, 1)
 
-    obtido = _hrtss(resultado.get("duracao_min"), resultado.get("avg_hr"), limiar)
+    # TSS obtido: preferir o ponderado por zona (lê amostras de FC do .fit);
+    # cair no hrTSS pela FC média quando o .fit não está disponível.
+    obtido = None
+    if fit_path and limiar:
+        from app.services.fit_service import hrtss_ponderado
+        obtido = hrtss_ponderado(fit_path, limiar)
+    if obtido is None:
+        obtido = _hrtss(resultado.get("duracao_min"), resultado.get("avg_hr"), limiar)
     if obtido is not None:
         extra["tss_obtido"] = obtido
 
@@ -515,7 +525,7 @@ async def sync_atividades(semana_inicio: str) -> int:
             limiar = (await get_zonas()).get("limiar")
         except Exception:
             limiar = None
-        resultado.update(_metricas_extra(treino_planejado, resultado, limiar, act.get("averageSpeed")))
+        resultado.update(_metricas_extra(treino_planejado, resultado, limiar, act.get("averageSpeed"), fit_path))
 
         # análise IA
         try:
