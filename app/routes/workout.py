@@ -189,6 +189,64 @@ async def debug_garmin(semana_inicio: str):
     }
 
 
+@router.post("/gerar-proxima-semana/{semana_atual}")
+async def gerar_proxima_semana(semana_atual: str):
+    """Usa IA para gerar o plano da próxima semana com base na análise da atual."""
+    from app.services.plano_semana_service import gerar_proxima_semana as _gerar
+    try:
+        return await _gerar(semana_atual)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+class EnviarGarminBody(BaseModel):
+    semana_inicio: str
+    objetivo: str = ""
+    treinos: list[TreinoSemana]
+
+
+@router.post("/enviar-garmin")
+async def enviar_para_garmin(body: EnviarGarminBody):
+    """Salva semana no DB e envia cada treino para o Garmin Connect."""
+    from app.services.garmin_workout_service import upload_e_agendar
+
+    db = get_db()
+    data = {
+        "semana_inicio": body.semana_inicio,
+        "objetivo": body.objetivo,
+        "treinos": [t.model_dump() for t in body.treinos],
+    }
+    await db.semanas.replace_one(
+        {"semana_inicio": body.semana_inicio},
+        data,
+        upsert=True,
+    )
+
+    resultados = []
+    for t in body.treinos:
+        if t.tipo in ("DESCANSO",) or not t.duracao_min:
+            resultados.append({"data": t.data, "status": "pulado"})
+            continue
+
+        nome = f"{t.tipo.replace('_', ' ')} — {t.data}"
+        gid = await upload_e_agendar(
+            tipo=t.tipo,
+            duracao_min=t.duracao_min,
+            nome=nome,
+            data_iso=t.data,
+            descricao=t.descricao,
+        )
+        if gid:
+            await db.semanas.update_one(
+                {"semana_inicio": body.semana_inicio, "treinos.data": t.data},
+                {"$set": {"treinos.$.garmin_workout_id": gid}},
+            )
+        resultados.append({"data": t.data, "tipo": t.tipo, "garmin_id": gid, "status": "ok" if gid else "erro"})
+
+    enviados = sum(1 for r in resultados if r.get("status") == "ok")
+    return {"status": "ok", "semana": body.semana_inicio, "enviados": enviados, "detalhes": resultados}
+
+
 @router.post("/fit/{semana_inicio}/{data}")
 async def upload_fit(semana_inicio: str, data: str, arquivo: UploadFile = File(...)):
     if not arquivo.filename.lower().endswith(".fit"):

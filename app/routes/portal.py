@@ -120,6 +120,18 @@ HTML = """<!DOCTYPE html>
     .modal-head h3 { font-size: 1.1rem; color: var(--green); }
     .modal-head .modal-sub { font-size: .82rem; color: var(--muted); font-weight: 600; margin-bottom: 12px; }
 
+    .gen-modal-treino { background: #f7f9fc; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+    .gen-modal-treino .gmt-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 4px; }
+    .gen-modal-treino .gmt-data { font-size: .72rem; color: var(--muted); font-weight: 600; }
+    .gen-modal-treino .gmt-tipo { font-size: .8rem; font-weight: 700; color: #fff; padding: 3px 8px; border-radius: 5px; }
+    .gen-modal-treino .gmt-dur  { font-size: .75rem; color: var(--muted); }
+    .gen-modal-treino .gmt-desc { font-size: .78rem; color: var(--text); line-height: 1.4; }
+    .gen-analise { font-size: .82rem; font-style: italic; color: #555; background: #fff7e6; border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; line-height: 1.45; }
+    .gen-prog    { font-size: .8rem; color: var(--green); background: #eef9f5; border-radius: 8px; padding: 8px 12px; margin-bottom: 14px; }
+    .btn-enviar  { background: #2e7d32; color: #fff; border: none; border-radius: 10px; padding: 13px 20px; font-size: .95rem; font-weight: 700; cursor: pointer; width: 100%; margin-top: 12px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+    .btn-enviar:hover:not(:disabled) { background: #1b5e20; }
+    .btn-enviar:disabled { opacity: .55; cursor: not-allowed; }
+
     .tipo-Z2_LONGO    { background: #1565c0; }
     .tipo-TIROS       { background: #c62828; }
     .tipo-VO2MAX      { background: #6a1b9a; }
@@ -184,6 +196,7 @@ HTML = """<!DOCTYPE html>
   <div class="actions">
     <button class="btn btn-save" id="btnSave" onclick="salvar()">💾 Salvar Semana</button>
     <button class="btn btn-sec"  id="btnGarmin" onclick="sincronizarGarmin()">🔄 Sincronizar Garmin</button>
+    <button class="btn btn-test" id="btnGenSemana" onclick="gerarProximaSemana()">🤖 Gerar próxima semana</button>
     <button class="btn btn-test" id="btnTest" onclick="testar()">📲 Testar WhatsApp</button>
     <button class="btn btn-sec"  onclick="location.href='/whatsapp/'">✏️ Mensagem Manual</button>
   </div>
@@ -196,6 +209,14 @@ HTML = """<!DOCTYPE html>
     <button class="modal-close" onclick="fecharNutriModal()">✕</button>
     <div class="modal-head" id="nutriModalHead"></div>
     <div class="modal-body" id="nutriModalBody"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="genModal" onclick="fecharGenModal(event)">
+  <div class="modal" style="max-width:520px" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="fecharGenModal()">✕</button>
+    <div class="modal-head" id="genModalHead"></div>
+    <div class="modal-body" id="genModalBody"></div>
   </div>
 </div>
 
@@ -469,7 +490,7 @@ async function abrirNutriModal(key) {
 function fecharNutriModal(e) {
   document.getElementById('nutriModal').classList.remove('show');
 }
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { fecharNutriModal(); fecharAvalModal(); } });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { fecharNutriModal(); fecharAvalModal(); fecharGenModal(); } });
 
 function collect() {
   const treinos = [];
@@ -686,6 +707,115 @@ async function sincronizarGarmin() {
   } finally {
     btn.disabled = false;
     btn.innerHTML = '🔄 Sincronizar Garmin';
+  }
+}
+
+function fecharGenModal(e) {
+  document.getElementById('genModal').classList.remove('show');
+}
+
+const TIPO_CORES = {
+  Z2_LONGO:'#1565c0', TIROS:'#c62828', VO2MAX:'#6a1b9a',
+  TEMPO:'#e65100', FORCA:'#5d4037', RECUPERACAO:'#00695c', DESCANSO:'#607d8b',
+};
+const TIPO_LABELS2 = {
+  Z2_LONGO:'Z2 Longo', TIROS:'Tiros', VO2MAX:'VO2Max',
+  TEMPO:'Tempo', FORCA:'Força', RECUPERACAO:'Recuperação', DESCANSO:'Descanso',
+};
+const DIAS_PT = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+
+let _genData = null;
+
+async function gerarProximaSemana() {
+  const btn = document.getElementById('btnGenSemana');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Gerando com IA...';
+
+  const head = document.getElementById('genModalHead');
+  const body = document.getElementById('genModalBody');
+  head.innerHTML = '<h3>🤖 Próxima semana (pré-visualização)</h3><div class="modal-sub">Aguarde, analisando seus treinos...</div>';
+  body.innerHTML = '<div style="padding:28px;text-align:center;color:#888">Consultando IA...</div>';
+  document.getElementById('genModal').classList.add('show');
+
+  try {
+    const r = await fetch(`/workout/gerar-proxima-semana/${iso(monday)}`, {method: 'POST'});
+    if (!r.ok) throw new Error(await r.text());
+    const d = await r.json();
+    _genData = d;
+
+    const cards = (d.treinos || []).map(t => {
+      if (t.tipo === 'DESCANSO') {
+        const dia = new Date(t.data + 'T12:00:00');
+        return `<div class="gen-modal-treino">
+          <div class="gmt-head">
+            <span class="gmt-data">${DIAS_PT[dia.getDay()]} ${t.data.slice(5)}</span>
+            <span class="gmt-tipo" style="background:#607d8b">Descanso</span>
+          </div>
+        </div>`;
+      }
+      const dia = new Date(t.data + 'T12:00:00');
+      const durStr = t.duracao_min ? (() => { const h=Math.floor(t.duracao_min/60),m=t.duracao_min%60; return (h>0?h+'h':'')+(m>0?m+'min':''); })() : '';
+      return `<div class="gen-modal-treino">
+        <div class="gmt-head">
+          <span class="gmt-data">${DIAS_PT[dia.getDay()]} ${t.data.slice(5)}</span>
+          <span class="gmt-tipo" style="background:${TIPO_CORES[t.tipo]||'#607d8b'}">${TIPO_LABELS2[t.tipo]||t.tipo}</span>
+          ${durStr ? `<span class="gmt-dur">⏱ ${durStr}</span>` : ''}
+        </div>
+        ${t.descricao ? `<div class="gmt-desc">${t.descricao}</div>` : ''}
+      </div>`;
+    }).join('');
+
+    head.innerHTML = `<h3>🤖 Próxima semana</h3><div class="modal-sub">${d.semana_proxima}</div>`;
+    body.innerHTML = `
+      ${d.analise_semana ? `<div class="gen-analise">📊 ${d.analise_semana}</div>` : ''}
+      ${d.progressao ? `<div class="gen-prog">⬆️ ${d.progressao}</div>` : ''}
+      ${cards}
+      <button class="btn-enviar" id="btnEnviarGarmin" onclick="enviarParaGarmin()">
+        📡 Salvar + Enviar pro Garmin
+      </button>`;
+  } catch(e) {
+    body.innerHTML = `<div style="padding:16px;color:#c62828">Erro: ${e.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '🤖 Gerar próxima semana';
+  }
+}
+
+async function enviarParaGarmin() {
+  if (!_genData) return;
+  const btn = document.getElementById('btnEnviarGarmin');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Enviando pro Garmin...';
+
+  const treinos = (_genData.treinos || []).map(t => ({
+    data: t.data,
+    tipo: t.tipo,
+    duracao_min:  t.duracao_min  || null,
+    descricao:    t.descricao    || null,
+    cadencia_rpm: t.cadencia_rpm || null,
+  }));
+
+  try {
+    const r = await fetch('/workout/enviar-garmin', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        semana_inicio: _genData.semana_proxima,
+        objetivo: _genData.progressao || '',
+        treinos,
+      }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const d = await r.json();
+    fecharGenModal();
+    toast(`✅ ${d.enviados} treino(s) enviado(s) ao Garmin!`, 'ok');
+    // se o usuário estiver visualizando a próxima semana, recarrega
+    const proxData = new Date(_genData.semana_proxima + 'T12:00:00');
+    if (iso(monday) === _genData.semana_proxima) await load();
+  } catch(e) {
+    btn.disabled = false;
+    btn.innerHTML = '📡 Salvar + Enviar pro Garmin';
+    toast('❌ Erro ao enviar: ' + e.message, 'err');
   }
 }
 
