@@ -69,6 +69,8 @@ HTML = """<!DOCTYPE html>
     .rest-badge { text-align: center; padding: 22px 8px; color: var(--muted); font-size: .85rem; }
     .rest-badge .icon { font-size: 2rem; display: block; margin-bottom: 4px; }
     .tipo-badge { border-radius: 6px; padding: 6px 10px; font-size: .82rem; font-weight: 700; color: #fff; text-align: center; }
+    .periodo-sel { margin-top: 6px; }
+    .nutri-ref-obs { margin-top: 6px; font-size: .82rem; font-weight: 600; color: #8a5a00; background: #fff7e6; border-radius: 6px; padding: 6px 9px; }
     .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
     .metric  { background: #f5f5f5; border-radius: 6px; padding: 5px 8px; text-align: center; }
     .metric .mv { font-size: .85rem; font-weight: 700; color: var(--text); }
@@ -268,6 +270,7 @@ function buildCards(treinos) {
     const cad     = t.cadencia_rpm  || '';
     const desc    = t.descricao     || '';
     const fitFile = t.fit_file      || '';
+    const periodo = t.periodo       || '';
     const hide    = t.tipo === 'DESCANSO';
     const tipoLbl = (TIPOS.find(tp => tp.v === t.tipo) || {l: t.tipo}).l;
 
@@ -314,6 +317,13 @@ function buildCards(treinos) {
         <input type="hidden" id="fitfile-${key}" value="${fitFile}">
         <select id="tp-${key}" style="${hide ? 'display:none' : ''}" onchange="onTipo('${key}')">
           ${opts}
+        </select>
+        <select id="pd-${key}" class="periodo-sel" style="${hide ? 'display:none' : ''}" title="Quando você vai treinar">
+          <option value="">⏰ Quando treina?</option>
+          <option value="manha"    ${periodo==='manha'   ?'selected':''}>🌅 Manhã</option>
+          <option value="meio_dia" ${periodo==='meio_dia'?'selected':''}>☀️ Meio-dia</option>
+          <option value="tarde"    ${periodo==='tarde'   ?'selected':''}>🌇 Tarde</option>
+          <option value="noite"    ${periodo==='noite'   ?'selected':''}>🌙 Noite</option>
         </select>
 
         <div id="ex-${key}" style="${hide ? 'display:none' : ''}">
@@ -369,6 +379,8 @@ function onTipo(key) {
   const hide = tipo === 'DESCANSO';
   const sel = document.getElementById(`tp-${key}`);
   if (sel) sel.style.display = hide ? 'none' : '';
+  const pd = document.getElementById(`pd-${key}`);
+  if (pd) pd.style.display = hide ? 'none' : '';
   document.getElementById(`ex-${key}`).style.display   = hide ? 'none' : '';
   document.getElementById(`rest-${key}`).style.display = hide ? '' : 'none';
   const toggle = document.getElementById(`resttoggle-${key}`);
@@ -418,24 +430,27 @@ function fecharAvalModal(e) {
 
 async function abrirNutriModal(key) {
   const tipo = document.getElementById(`tp-${key}`)?.value || 'DESCANSO';
+  const periodo = document.getElementById(`pd-${key}`)?.value || '';
   const lbl  = (TIPOS.find(tp => tp.v === tipo) || {l: tipo}).l;
+  const pLbl = {manha:'🌅 treino de manhã', meio_dia:'☀️ treino ao meio-dia', tarde:'🌇 treino à tarde', noite:'🌙 treino à noite'}[periodo] || '';
   const head = document.getElementById('nutriModalHead');
   const body = document.getElementById('nutriModalBody');
-  head.innerHTML = `<h3>🥗 Plano alimentar do dia</h3><div class="modal-sub">${lbl}</div>`;
+  head.innerHTML = `<h3>🥗 Plano alimentar do dia</h3><div class="modal-sub">${lbl}${pLbl ? ' · ' + pLbl : ''}</div>`;
   body.innerHTML = '<div style="padding:24px;text-align:center;color:#888">Carregando…</div>';
   document.getElementById('nutriModal').classList.add('show');
 
   try {
-    const r = await fetch(`/nutrition/plano/${tipo}?data=${key}`);
+    const r = await fetch(`/nutrition/plano/${tipo}?data=${key}${periodo ? '&periodo=' + periodo : ''}`);
     const p = await r.json();
     const refs = (p.refeicoes || []).map(rf => {
       const itens = (rf.itens || []).map(i =>
         `<li><span>${i.texto}</span><span class="nk">${i.kcal} kcal · ${i.proteina_g}g P</span></li>`
       ).join('');
+      const obs = rf.observacao ? `<div class="nutri-ref-obs">${rf.observacao}</div>` : '';
       return `<div class="nutri-ref">
         <div class="nutri-ref-h"><span class="nrn">${rf.horario} · ${rf.nome}</span>
         <span class="nrt">${rf.kcal} kcal · ${rf.proteina_g}g P</span></div>
-        <ul>${itens}</ul></div>`;
+        <ul>${itens}</ul>${obs}</div>`;
     }).join('');
     const notaTreino = p.nota_treino ? `<div class="nutri-estrat" style="background:#fff7e6;color:#8a5a00">⏰ ${p.nota_treino}</div>` : '';
     body.innerHTML = `
@@ -475,6 +490,8 @@ function collect() {
       if (cad)     t.cadencia_rpm = cad.trim();
       if (desc)    t.descricao    = desc.trim();
       if (fitfile) t.fit_file     = fitfile;
+      const periodo = document.getElementById(`pd-${key}`)?.value || '';
+      if (periodo) t.periodo = periodo;
     }
     treinos.push(t);
   }

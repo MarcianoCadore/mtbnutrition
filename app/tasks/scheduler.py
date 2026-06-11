@@ -25,16 +25,17 @@ async def job_plano_diario():
         seg = hoje - timedelta(days=hoje.weekday())
         doc = await db.semanas.find_one({"semana_inicio": seg.isoformat()})
 
-        tipo = "DESCANSO"
+        tipo, periodo = "DESCANSO", None
         if doc:
             for t in doc.get("treinos", []):
                 if t.get("data") == hoje_iso:
                     tipo = t.get("tipo") or "DESCANSO"
+                    periodo = t.get("periodo")
                     break
 
         from app.services.config_service import get_horarios
         cfg = await get_horarios()
-        plano = plano_para_tipo(tipo, hoje_iso, cfg)
+        plano = plano_para_tipo(tipo, hoje_iso, cfg, periodo=periodo)
 
         # Salva versão compatível com os lembretes de refeição (PlanoAlimentar)
         await db.planos.insert_one({
@@ -47,7 +48,7 @@ async def job_plano_diario():
                     "nome": r["nome"], "horario": r["horario"],
                     "itens": [i["texto"] for i in r["itens"]],
                     "kcal_estimado": r["kcal"], "proteina_g": r["proteina_g"],
-                    "carbo_g": 0, "gordura_g": 0,
+                    "carbo_g": 0, "gordura_g": 0, "observacao": r.get("observacao"),
                 }
                 for r in plano["refeicoes"]
             ],
@@ -60,8 +61,9 @@ async def job_plano_diario():
     except Exception as e:
         print(f"[{datetime.now()}] Erro no job_plano_diario: {e}")
 
-async def _tipo_treino_hoje() -> str:
-    """Tipo do treino de hoje (a partir da semana salva); DESCANSO se não houver."""
+async def _treino_hoje() -> tuple[str, str | None]:
+    """(tipo, periodo) do treino de hoje a partir da semana salva; (DESCANSO, None)
+    se não houver."""
     db = get_db()
     hoje_iso = datetime.now(TZ).date().isoformat()
     seg = datetime.now(TZ).date() - timedelta(days=datetime.now(TZ).date().weekday())
@@ -69,8 +71,8 @@ async def _tipo_treino_hoje() -> str:
     if doc:
         for t in doc.get("treinos", []):
             if t.get("data") == hoje_iso:
-                return t.get("tipo") or "DESCANSO"
-    return "DESCANSO"
+                return (t.get("tipo") or "DESCANSO", t.get("periodo"))
+    return "DESCANSO", None
 
 
 # Refeições para lembrete (chave de horário na config -> nome no cardápio).
@@ -87,9 +89,9 @@ async def enviar_lembrete_refeicao_pre(meal_nome: str):
     """Envia, 30 min antes, o que comer na refeição do dia."""
     try:
         hoje_iso = datetime.now(TZ).date().isoformat()
-        tipo = await _tipo_treino_hoje()
+        tipo, periodo = await _treino_hoje()
         cfg = await get_horarios()
-        plano = plano_para_tipo(tipo, hoje_iso, cfg)
+        plano = plano_para_tipo(tipo, hoje_iso, cfg, periodo=periodo)
         ref = next((r for r in plano["refeicoes"] if r["nome"] == meal_nome), None)
         if ref and settings.WHATSAPP_TO:
             await send_message(settings.WHATSAPP_TO, formatar_lembrete_refeicao(ref))

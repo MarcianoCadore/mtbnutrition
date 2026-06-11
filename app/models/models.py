@@ -31,6 +31,7 @@ class ResultadoTreino(BaseModel):
 class Treino(BaseModel):
     data: Optional[datetime] = None
     tipo: TipoTreino
+    periodo: Optional[str] = None   # manha | meio_dia | tarde | noite
     duracao_min: int
     distancia_km: Optional[float] = None
     elevacao_m: Optional[float] = None

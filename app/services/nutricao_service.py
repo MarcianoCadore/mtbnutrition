@@ -188,6 +188,59 @@ def horarios_por_refeicao(cfg: dict | None = None) -> dict:
     }
 
 
+# ── Período do treino no dia ────────────────────────────────────────────────
+# O usuário escolhe, por dia, quando vai treinar. A nutrição concentra o
+# carboidrato em volta do treino: reforça o pré e marca o pós para reposição,
+# tirando uma porção de carbo de uma refeição longe do treino (mantém ~o total).
+PERIODO_FRASE = {"manha": "de manhã", "meio_dia": "ao meio-dia", "tarde": "à tarde", "noite": "à noite"}
+
+# período -> (refeição pré-treino [+carbo], pós-treino [reposição], doadora do carbo)
+PERIODO_REFEICOES = {
+    "manha":    ("Café da manhã",   "Lanche da manhã", "Jantar"),
+    "meio_dia": ("Lanche da manhã", "Almoço",          "Jantar"),
+    "tarde":    ("Almoço",          "Lanche da tarde", "Café da manhã"),
+    "noite":    ("Lanche da tarde", "Jantar",          "Café da manhã"),
+}
+
+# carboidratos que podem ser movidos entre refeições (1 porção).
+_CARBO_MOVEL = ("banana", "arroz_branco", "arroz_integral", "batata_doce",
+                "pao_frances", "pao_integral", "aveia")
+
+
+def _aplicar_periodo(refeicoes_raw: list[dict], periodo: str) -> None:
+    """Redistribui o carboidrato em volta do treino (edita refeicoes_raw in place).
+    Tira 1 porção de carbo da refeição doadora e concentra carbo rápido (banana)
+    na pré-treino; marca pré e pós com a observação correspondente."""
+    pre_nome, pos_nome, doador_nome = PERIODO_REFEICOES[periodo]
+    por_nome = {r["nome"]: r for r in refeicoes_raw}
+    doador, pre, pos = por_nome.get(doador_nome), por_nome.get(pre_nome), por_nome.get(pos_nome)
+
+    if doador:
+        for idx, (chave, qtd) in enumerate(doador["itens"]):
+            if chave in _CARBO_MOVEL:
+                if qtd > 1:
+                    doador["itens"][idx] = (chave, qtd - 1)
+                else:
+                    doador["itens"].pop(idx)
+                break
+
+    if pre is not None:
+        pre["itens"].append(("banana", 1))
+        pre["observacao"] = "⚡ Pré-treino: carbo reforçado pra energia (treino logo após)."
+    if pos is not None:
+        pos["observacao"] = "🔋 Pós-treino: capriche na proteína (whey/iogurte) + uma fruta pra repor."
+
+
+def nota_treino_periodo(periodo: str, horarios: dict) -> str:
+    """Orientação específica do período, citando as refeições pré/pós reais."""
+    pre_nome, pos_nome, _ = PERIODO_REFEICOES[periodo]
+    return (
+        f"Treino {PERIODO_FRASE[periodo]}: ~1h ANTES reforce o carboidrato do "
+        f"{pre_nome} ({horarios.get(pre_nome, '')}). LOGO APÓS, reponha no "
+        f"{pos_nome} ({horarios.get(pos_nome, '')}) com proteína + uma fruta."
+    )
+
+
 def _seed(data_iso: str | None) -> int:
     """Semente determinística a partir da data (dias diferentes → menus diferentes)."""
     if not data_iso:
@@ -198,13 +251,17 @@ def _seed(data_iso: str | None) -> int:
         return 0
 
 
-def plano_para_tipo(tipo, data_iso: str | None = None, horarios_cfg: dict | None = None) -> dict:
+def plano_para_tipo(tipo, data_iso: str | None = None, horarios_cfg: dict | None = None,
+                    periodo: str | None = None) -> dict:
     """Monta o cardápio do tipo de treino para uma data, com kcal/proteína por
     item, por refeição e total do dia.
 
     A cada dia escolhe uma combinação diferente de alternativas (variando pela
     data), mantendo as calorias-alvo. Sem data, usa um exemplo estável.
     Os horários das refeições vêm de horarios_cfg (config do usuário).
+
+    Se 'periodo' for informado (manha/meio_dia/tarde/noite), redistribui o
+    carboidrato em volta do treino (reforça o pré, marca o pós) sem mudar o tipo.
     """
     if not isinstance(tipo, TipoTreino):
         try:
@@ -215,32 +272,54 @@ def plano_para_tipo(tipo, data_iso: str | None = None, horarios_cfg: dict | None
     menu_key = TIPO_PARA_MENU[tipo]
     seed = _seed(data_iso)
     horarios = horarios_por_refeicao(horarios_cfg)
-    pos = 0
-    refeicoes = []
-    kcal_total = 0
-    prot_total = 0.0
 
+    # 1) escolhe as alternativas de cada slot (ainda como (chave, qtd))
+    pos = 0
+    refeicoes_raw = []
     for nome, horario_padrao, slots in MENUS[menu_key]:
-        horario = horarios.get(nome, horario_padrao)
-        itens_exp = []
+        escolhidos = []
         for slot in slots:
             alt = slot[(seed + pos) % len(slot)]   # escolhe 1 alternativa do slot
             pos += 1
-            for chave, qtd in alt:
-                itens_exp.append(_expandir_item(chave, qtd))
+            escolhidos.extend(alt)
+        refeicoes_raw.append({
+            "nome": nome, "horario": horarios.get(nome, horario_padrao),
+            "itens": list(escolhidos), "observacao": None,
+        })
+
+    # 2) com treino e período definido, redistribui o carbo em volta do treino
+    aplicar = periodo in PERIODO_REFEICOES and tipo != TipoTreino.DESCANSO
+    if aplicar:
+        _aplicar_periodo(refeicoes_raw, periodo)
+
+    # 3) expande os itens e soma kcal/proteína
+    refeicoes = []
+    kcal_total = 0
+    prot_total = 0.0
+    for r in refeicoes_raw:
+        itens_exp = [_expandir_item(chave, qtd) for chave, qtd in r["itens"]]
         r_kcal = sum(i["kcal"] for i in itens_exp)
         r_prot = round(sum(i["proteina_g"] for i in itens_exp), 1)
         kcal_total += r_kcal
         prot_total += r_prot
         refeicoes.append({
-            "nome": nome, "horario": horario,
+            "nome": r["nome"], "horario": r["horario"],
             "kcal": r_kcal, "proteina_g": r_prot, "itens": itens_exp,
+            "observacao": r["observacao"],
         })
+
+    if tipo == TipoTreino.DESCANSO:
+        nota = None
+    elif aplicar:
+        nota = nota_treino_periodo(periodo, horarios)
+    else:
+        nota = NOTA_TREINO
 
     return {
         "tipo": tipo.value,
+        "periodo": periodo if aplicar else None,
         "estrategia": ESTRATEGIA_POR_TIPO[tipo],
-        "nota_treino": None if tipo == TipoTreino.DESCANSO else NOTA_TREINO,
+        "nota_treino": nota,
         "kcal_total": kcal_total,
         "proteina_total_g": round(prot_total, 1),
         "refeicoes": refeicoes,
@@ -341,6 +420,8 @@ def formatar_plano_whatsapp(data_iso: str, plano: dict) -> str:
         linhas.append(f"*{r['horario']} · {r['nome']}* ({r['kcal']} kcal · {r['proteina_g']:g}g P)")
         for i in r["itens"]:
             linhas.append(f"  • {i['texto']}")
+        if r.get("observacao"):
+            linhas.append(f"  {r['observacao']}")
         linhas.append("")
 
     linhas.append("💧 Mínimo 3L de água/dia")
@@ -352,9 +433,10 @@ def formatar_lembrete_refeicao(ref: dict) -> str:
     """Mensagem de lembrete (30 min antes) com o que comer na refeição."""
     linhas = [
         f"⏰ *Daqui a 30 min — {ref['nome']} ({ref['horario']})*",
-        "",
-        "🍽️ O que comer:",
     ]
+    if ref.get("observacao"):
+        linhas += ["", ref["observacao"]]
+    linhas += ["", "🍽️ O que comer:"]
     for i in ref["itens"]:
         linhas.append(f"  • {i['texto']}")
     linhas += ["", f"_{ref['kcal']} kcal · {ref['proteina_g']:g}g proteína_", "_MTB Nutrition Bot 🤖_"]

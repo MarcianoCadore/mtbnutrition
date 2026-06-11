@@ -12,10 +12,11 @@ router = APIRouter()
 
 
 @router.get("/plano/{tipo}")
-async def plano_por_tipo(tipo: str, data: str | None = None):
-    """Cardápio do tipo de treino para uma data (varia a cada dia) — usado nos cards."""
+async def plano_por_tipo(tipo: str, data: str | None = None, periodo: str | None = None):
+    """Cardápio do tipo de treino para uma data (varia a cada dia) — usado nos cards.
+    Com 'periodo' (manha/meio_dia/tarde/noite), redistribui o carbo em volta do treino."""
     cfg = await get_horarios()
-    return plano_para_tipo(tipo, data, cfg)
+    return plano_para_tipo(tipo, data, cfg, periodo=periodo)
 
 
 class HorariosBody(BaseModel):
