@@ -231,6 +231,17 @@ def _aplicar_periodo(refeicoes_raw: list[dict], periodo: str) -> None:
         pos["observacao"] = "🔋 Pós-treino: capriche na proteína (whey/iogurte) + uma fruta pra repor."
 
 
+def periodo_de_hora(hora: int) -> str:
+    """Mapeia a hora (0-23) em que o treino foi feito para o período do dia."""
+    if 5 <= hora < 11:
+        return "manha"
+    if 11 <= hora < 14:
+        return "meio_dia"
+    if 14 <= hora < 18:
+        return "tarde"
+    return "noite"
+
+
 def nota_treino_periodo(periodo: str, horarios: dict) -> str:
     """Orientação específica do período, citando as refeições pré/pós reais."""
     pre_nome, pos_nome, _ = PERIODO_REFEICOES[periodo]

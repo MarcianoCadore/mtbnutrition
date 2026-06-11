@@ -365,9 +365,19 @@ async def sync_atividades(semana_inicio: str) -> int:
             except ValueError:
                 cad_media = None
 
+        # período do dia a partir da hora real em que o treino foi feito
+        from app.services.nutricao_service import periodo_de_hora
+        periodo_real = None
+        hora_inicio = start_local[11:16] if len(start_local) >= 16 else None
+        try:
+            periodo_real = periodo_de_hora(int(start_local[11:13]))
+        except (ValueError, IndexError):
+            pass
+
         resultado = {
             "garmin_activity_id": act_id,
             "fit_file": fit_filename,
+            "hora_inicio": hora_inicio,
             "duracao_min": analise.get("duracao_min"),
             "distancia_km": analise.get("distancia_km"),
             "elevacao_m": analise.get("elevacao_m"),
@@ -404,6 +414,7 @@ async def sync_atividades(semana_inicio: str) -> int:
                 "treinos": [{
                     "data": act_date,
                     "tipo": tipo_real,
+                    "periodo": periodo_real,
                     "resultado": resultado,
                 }],
             })
@@ -416,6 +427,9 @@ async def sync_atividades(semana_inicio: str) -> int:
                 tipo_existente = treino_planejado.get("tipo")
                 if not tipo_existente or tipo_existente == "DESCANSO":
                     set_fields["treinos.$.tipo"] = tipo_real
+                # preenche o período com a hora real do treino
+                if periodo_real:
+                    set_fields["treinos.$.periodo"] = periodo_real
                 await db.semanas.update_one(
                     {"semana_inicio": semana, "treinos.data": act_date},
                     {"$set": set_fields},
@@ -426,6 +440,7 @@ async def sync_atividades(semana_inicio: str) -> int:
                     {"$push": {"treinos": {
                         "data": act_date,
                         "tipo": tipo_real,
+                        "periodo": periodo_real,
                         "resultado": resultado,
                     }}},
                 )
