@@ -262,10 +262,22 @@ async def extrair_zonas(imagem: UploadFile = File(...)):
     conteudo = await imagem.read()
     if len(conteudo) > 8 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Imagem muito grande (máx. 8 MB).")
-    from app.services.ai_service import extrair_zonas_de_imagem
+    from app.services.ai_service import extrair_zonas_de_imagem, QuotaExcedida, _e_cota
     try:
         dados = await extrair_zonas_de_imagem(conteudo, imagem.content_type)
+    except QuotaExcedida:
+        raise HTTPException(
+            status_code=429,
+            detail="Cota diária gratuita da IA esgotada. Preencha as zonas manualmente abaixo "
+                   "ou tente a leitura por imagem novamente mais tarde.",
+        )
     except Exception as e:
+        if _e_cota(e):
+            raise HTTPException(
+                status_code=429,
+                detail="Cota da IA atingida no momento. Aguarde alguns segundos e tente de novo, "
+                       "ou preencha as zonas manualmente abaixo.",
+            )
         raise HTTPException(status_code=422, detail=f"Não consegui ler as zonas da imagem: {e}")
     return dados
 
@@ -523,10 +535,13 @@ _PAGINA_ZONAS = """<!DOCTYPE html>
       const fd = new FormData(); fd.append('imagem', inp.files[0]);
       const r = await fetch('/workout/zonas/extrair', { method:'POST', body: fd });
       const d = await r.json();
-      if (!r.ok) throw new Error(d.detail || 'Erro');
+      if (!r.ok) { const err = new Error(d.detail || 'Erro'); err.cota = (r.status === 429); throw err; }
       aplicar(d);
       st.className='status ok'; st.textContent='✅ Zonas preenchidas! Confira os valores e clique em Salvar.';
-    } catch(e) { st.className='status err'; st.textContent='❌ ' + e.message; }
+    } catch(e) {
+      if (e.cota) { st.className='status info'; st.textContent='⏳ ' + e.message; }
+      else { st.className='status err'; st.textContent='❌ ' + e.message; }
+    }
     finally { btn.disabled=false; btn.textContent='🤖 Ler zonas'; }
   }
   async function salvar() {

@@ -345,9 +345,33 @@ Responda APENAS em JSON válido, sem markdown, sem texto extra:
 
     imagem = {"mime_type": mime_type, "data": image_bytes}
 
+    # Modelos de visão em ordem de preferência. Cada modelo tem cota gratuita
+    # própria, então se um estourar (429) tentamos o próximo.
+    modelos = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"]
+
     def _call():
-        resp = client.generate_content([prompt, imagem])
-        raw = resp.text.strip().replace("```json", "").replace("```", "").strip()
-        return json.loads(raw)
+        ultimo_erro = None
+        for nome in modelos:
+            try:
+                modelo = genai.GenerativeModel(nome)
+                resp = modelo.generate_content([prompt, imagem])
+                raw = resp.text.strip().replace("```json", "").replace("```", "").strip()
+                return json.loads(raw)
+            except Exception as e:
+                ultimo_erro = e
+                if _e_cota(e):
+                    continue   # cota desse modelo esgotada — tenta o próximo
+                raise          # outro erro: propaga de imediato
+        # todos os modelos sem cota
+        raise QuotaExcedida() from ultimo_erro
 
     return await asyncio.to_thread(_call)
+
+
+class QuotaExcedida(Exception):
+    """Cota gratuita do Gemini esgotada em todos os modelos de visão."""
+
+
+def _e_cota(e: Exception) -> bool:
+    s = str(e).lower()
+    return any(t in s for t in ("429", "quota", "exceeded", "exhaust", "rate limit"))
