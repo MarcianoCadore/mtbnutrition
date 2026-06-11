@@ -274,34 +274,128 @@ async def analisar_atividade_pos_treino(planejado: dict, resultado: dict) -> dic
         linhas.append(f"- Calorias: {resultado['calorias']} kcal")
 
     if not linhas:
-        return {"resumo": "Treino concluído.", "pontos_fortes": [], "pontos_fracos": []}
+        return _fallback_pos_treino(planejado, resultado)
 
+    # Zonas reais configuradas (lidas do Garmin/tela), com defaults de segurança.
+    try:
+        from app.services.config_service import get_zonas
+        zc = await get_zonas()
+        zs = zc["zonas"]
+        zonas_txt = " | ".join(f"Z{z['zona']} {z['min']}-{z['max']}" for z in zs)
+        fc_max = zc.get("fc_max") or zs[-1]["max"]
+        limiar = zc.get("limiar")
+    except Exception:
+        zonas_txt = "Z1 123-145 | Z2 146-158 | Z3 159-165 | Z4 166-177 | Z5 178-189"
+        fc_max, limiar = 189, 172
+
+    lim_txt = f", limiar de lactato {limiar} bpm" if limiar else ""
     prompt = f"""Você é um coach de ciclismo MTB especializado em análise de desempenho.
 
-Atleta: Marciano, 34 anos, 85kg, FC máxima 192 bpm
-Zonas de FC: Z1 até 134 | Z2 135-153 | Z3 154-164 | Z4 165-177 | Z5 178+
+Atleta: Marciano, 34 anos, FC máxima {fc_max} bpm{lim_txt}
+Zonas de FC: {zonas_txt}
 Objetivo: emagrecer preservando músculo + melhorar performance MTB
 
 {chr(10).join(linhas)}
 
-Analise o treino e responda APENAS em JSON válido, sem markdown, sem texto extra:
+Compare o planejado com o realizado. Comente intensidade (zonas de FC atingidas),
+volume (duração realizada vs planejada), cadência e o que ajustar no próximo treino.
+Responda APENAS em JSON válido, sem markdown, sem texto extra:
 {{
   "resumo": "string resumindo o treino em 1-2 frases objetivas",
   "pontos_fortes": ["lista de pontos positivos observados"],
   "pontos_fracos": ["lista de pontos a melhorar"]
 }}"""
 
+    modelos = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"]
+
+    def _call():
+        ultimo_erro = None
+        for nome in modelos:
+            try:
+                modelo = genai.GenerativeModel(nome)
+                resp = modelo.generate_content(prompt)
+                raw = resp.text.strip().replace("```json", "").replace("```", "").strip()
+                data = json.loads(raw)
+                return {
+                    "resumo": data.get("resumo", ""),
+                    "pontos_fortes": data.get("pontos_fortes", []),
+                    "pontos_fracos": data.get("pontos_fracos", []),
+                }
+            except Exception as e:
+                ultimo_erro = e
+                if _e_cota(e):
+                    continue
+                raise
+        raise QuotaExcedida() from ultimo_erro
+
     try:
-        response = client.generate_content(prompt)
-        raw = response.text.strip().replace("```json", "").replace("```", "").strip()
-        data = json.loads(raw)
-        return {
-            "resumo": data.get("resumo", ""),
-            "pontos_fortes": data.get("pontos_fortes", []),
-            "pontos_fracos": data.get("pontos_fracos", []),
-        }
+        import asyncio
+        return await asyncio.to_thread(_call)
     except Exception:
-        return {"resumo": "Treino concluído.", "pontos_fortes": ["Atividade registrada"], "pontos_fracos": []}
+        # IA indisponível (cota, parse, rede): análise determinística pelos números.
+        return _fallback_pos_treino(planejado, resultado)
+
+
+def _zona_de(bpm: int, zonas: list[dict]) -> int:
+    """Número da zona em que um bpm cai (1-5)."""
+    for z in zonas:
+        if z["min"] <= bpm <= z["max"]:
+            return z["zona"]
+    return 5 if bpm > zonas[-1]["max"] else 1
+
+
+def _fallback_pos_treino(planejado: dict, resultado: dict) -> dict:
+    """Análise determinística (sem IA) a partir dos números do treino."""
+    planejado = planejado or {}
+    fortes, fracos = [], []
+
+    dur = resultado.get("duracao_min")
+    dist = resultado.get("distancia_km")
+    avg = resultado.get("avg_hr")
+    mx = resultado.get("max_hr")
+    cad = resultado.get("cadencia_media_rpm")
+    plan_dur = planejado.get("duracao_min")
+    tipo = planejado.get("tipo")
+
+    partes = []
+    if dur:
+        partes.append(f"{dur} min")
+    if dist:
+        partes.append(f"{dist} km")
+    if avg:
+        partes.append(f"FC média {avg} bpm")
+    resumo = ("Treino registrado: " + ", ".join(partes) + ".") if partes else "Treino concluído."
+
+    # volume realizado vs planejado
+    if plan_dur and dur:
+        if dur < plan_dur * 0.6:
+            fracos.append(f"Volume bem abaixo do planejado ({dur} de {plan_dur} min) — sessão encurtada.")
+        elif dur >= plan_dur * 0.9:
+            fortes.append(f"Cumpriu o volume planejado ({dur}/{plan_dur} min).")
+
+    # intensidade conforme o tipo de treino
+    if avg is not None:
+        if tipo in ("VO2MAX", "TIROS"):
+            if (mx or 0) < 170:
+                fracos.append(f"Para {tipo}, faltou intensidade: FC máx {mx or '—'} bpm não chegou na zona alta (Z4/Z5).")
+            else:
+                fortes.append(f"Atingiu intensidade alta (FC máx {mx} bpm), coerente com {tipo}.")
+        elif tipo in ("RECUPERACAO", "Z2_LONGO"):
+            if avg <= 158:
+                fortes.append("Intensidade controlada, dentro do alvo aeróbico (Z1/Z2).")
+            else:
+                fracos.append(f"FC média {avg} bpm acima do ideal para {tipo} — manter mais leve.")
+
+    # cadência
+    if cad:
+        if cad < 80:
+            fracos.append(f"Cadência média baixa ({cad} rpm) — buscar 85-95 rpm na rodagem.")
+        else:
+            fortes.append(f"Boa cadência média ({cad} rpm).")
+
+    if not fortes:
+        fortes.append("Atividade registrada e sincronizada.")
+    return {"resumo": resumo, "pontos_fortes": fortes, "pontos_fracos": fracos}
 
 
 async def gerar_plano_alimentar(treino: Treino | None = None) -> PlanoAlimentar:
