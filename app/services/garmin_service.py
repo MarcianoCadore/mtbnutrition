@@ -313,6 +313,19 @@ async def sync_atividades(semana_inicio: str) -> int:
     db = get_db()
     processadas = 0
 
+    # Backfill: atividades que já têm resultado salvo são marcadas como
+    # processadas para que NÃO sejam notificadas de novo após um restart.
+    doc_semana = await db.semanas.find_one({"semana_inicio": semana_inicio})
+    if doc_semana:
+        for t in doc_semana.get("treinos", []):
+            aid = (t.get("resultado") or {}).get("garmin_activity_id")
+            if aid:
+                await db.atividades_processadas.update_one(
+                    {"_id": aid},
+                    {"$setOnInsert": {"data": t.get("data"), "processada_em": datetime.now()}},
+                    upsert=True,
+                )
+
     for act in atividades:
         start_local = act.get("startTimeLocal") or ""
         act_date = start_local[:10]
@@ -320,6 +333,8 @@ async def sync_atividades(semana_inicio: str) -> int:
             continue
 
         act_id = str(act.get("activityId", ""))
+        if not act_id:
+            continue
         semana = _semana_de(act_date)
 
         # verifica se já foi processada — pula a atividade inteira se sim
@@ -329,6 +344,13 @@ async def sync_atividades(semana_inicio: str) -> int:
             and (t.get("resultado") or {}).get("garmin_activity_id") == act_id
             for t in doc.get("treinos", [])
         )
+        # Dedup robusto por activity_id (registro persistente). Imune ao
+        # "ping-pong" quando há mais de uma atividade no mesmo dia: o slot de
+        # resultado é por data, mas o controle de processamento é por activity_id.
+        if not ja_processada:
+            ja_processada = (
+                await db.atividades_processadas.find_one({"_id": act_id}) is not None
+            )
         if ja_processada:
             continue
 
@@ -445,18 +467,39 @@ async def sync_atividades(semana_inicio: str) -> int:
                     }}},
                 )
 
-        # WhatsApp
-        try:
-            from app.services.whatsapp_service import send_message
-            if settings.WHATSAPP_TO and resultado.get("analise_ia"):
-                msg = _formatar_pos_treino(act_date, treino_planejado, resultado)
-                await send_message(settings.WHATSAPP_TO, msg)
-        except Exception as e:
-            logger.error("WhatsApp pós-treino error: %s", e)
+        # Marca como processada ANTES de notificar — claim atômico por activity_id.
+        # Garante que o pós-treino seja enviado exatamente uma vez, mesmo que o
+        # sync rode de novo antes do WhatsApp concluir.
+        primeira_vez = await _claim_atividade(db, act_id, act_date)
+
+        # WhatsApp — só na primeira vez que esta atividade é processada
+        if primeira_vez:
+            try:
+                from app.services.whatsapp_service import send_message
+                if settings.WHATSAPP_TO and resultado.get("analise_ia"):
+                    msg = _formatar_pos_treino(act_date, treino_planejado, resultado)
+                    await send_message(settings.WHATSAPP_TO, msg)
+            except Exception as e:
+                logger.error("WhatsApp pós-treino error: %s", e)
 
         processadas += 1
 
     return processadas
+
+
+async def _claim_atividade(db, act_id: str, act_date: str) -> bool:
+    """Registra a atividade como processada de forma atômica.
+
+    Retorna True apenas na PRIMEIRA vez (quando se deve notificar); False se já
+    havia sido registrada. O upsert com $setOnInsert é atômico no MongoDB, então
+    duas execuções concorrentes do sync nunca enviam a notificação em duplicidade.
+    """
+    res = await db.atividades_processadas.update_one(
+        {"_id": act_id},
+        {"$setOnInsert": {"data": act_date, "processada_em": datetime.now()}},
+        upsert=True,
+    )
+    return res.upserted_id is not None
 
 
 def _formatar_pos_treino(data: str, planejado: dict, resultado: dict) -> str:

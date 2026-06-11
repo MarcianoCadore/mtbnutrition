@@ -122,6 +122,8 @@ async def agendar_lembretes_refeicao():
             args=[nome],
             id=f"lembrete_{chave}",
             replace_existing=True,
+            coalesce=True,
+            max_instances=1,
         )
         n += 1
     print(f"🍽️ Lembretes de refeição agendados ({n} refeições, 30 min antes)")
@@ -145,19 +147,32 @@ async def job_garmin_sync():
 
 
 def start_scheduler():
-    scheduler.add_job(job_plano_diario,     CronTrigger(hour=8,  minute=0))
-    scheduler.add_job(job_garmin_sync,      IntervalTrigger(minutes=10))
+    scheduler.add_job(
+        job_plano_diario,
+        CronTrigger(hour=8, minute=0),
+        id="plano_diario",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        job_garmin_sync,
+        IntervalTrigger(minutes=10),
+        id="garmin_sync",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
     scheduler.start()
-    # (re)agenda os lembretes de refeição: primeira vez logo após o start e
-    # depois a cada 30 min — se o banco estiver fora no boot, se auto-corrige
-    # assim que ele voltar (replace_existing torna a reexecução idempotente).
+    # Agenda os lembretes uma única vez no boot (3s de atraso para o banco subir).
+    # Re-agendamento acontece apenas quando o usuário altera os horários via /nutrition/horarios.
     scheduler.add_job(
         agendar_lembretes_refeicao,
-        IntervalTrigger(minutes=30),
-        id="reagenda_lembretes",
-        next_run_time=datetime.now(TZ) + timedelta(seconds=3),
-        misfire_grace_time=120,
+        "date",
+        id="boot_lembretes",
+        run_date=datetime.now(TZ) + timedelta(seconds=3),
         replace_existing=True,
+        misfire_grace_time=120,
     )
     print("✅ Scheduler iniciado — notificações + Garmin sync ativos")
 
