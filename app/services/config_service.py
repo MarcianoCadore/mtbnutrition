@@ -10,6 +10,7 @@ _RE_HORA = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 # Ordem natural das refeições no dia (chave -> rótulo amigável).
 ORDEM_REFEICOES = [
     ("cafe", "Café da manhã"),
+    ("lanche_manha", "Lanche da manhã"),
     ("almoco", "Almoço"),
     ("lanche_tarde", "Lanche da tarde"),
     ("jantar", "Jantar"),

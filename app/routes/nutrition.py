@@ -20,6 +20,7 @@ async def plano_por_tipo(tipo: str, data: str | None = None):
 
 class HorariosBody(BaseModel):
     cafe: str | None = None
+    lanche_manha: str | None = None
     almoco: str | None = None
     lanche_tarde: str | None = None
     jantar: str | None = None
@@ -310,6 +311,10 @@ async def config_horarios():
       <input type="time" id="cafe">
     </div>
     <div class="field">
+      <label><span class="ic">🍎</span>Lanche da manhã</label>
+      <input type="time" id="lanche_manha">
+    </div>
+    <div class="field">
       <label><span class="ic">🍽️</span>Almoço</label>
       <input type="time" id="almoco">
     </div>
@@ -326,8 +331,8 @@ async def config_horarios():
   </div>
 </main>
 <script>
-  const campos = ['cafe','almoco','lanche_tarde','jantar'];
-  const rotulos = {cafe:'Café da manhã', almoco:'Almoço', lanche_tarde:'Lanche da tarde', jantar:'Jantar'};
+  const campos = ['cafe','lanche_manha','almoco','lanche_tarde','jantar'];
+  const rotulos = {cafe:'Café da manhã', lanche_manha:'Lanche da manhã', almoco:'Almoço', lanche_tarde:'Lanche da tarde', jantar:'Jantar'};
   async function carregar() {
     const r = await fetch('/nutrition/horarios');
     const d = await r.json();

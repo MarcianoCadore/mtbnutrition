@@ -95,6 +95,7 @@ MENUS = {
     # ── DESCANSO ─ menor carbo, maior déficit, proteína mantida (~1950 kcal) ──
     "descanso": [
         ("Café da manhã", "09:00", [FIX(("ovo", 3)), FIX(("pao_integral", 1)), FIX(("queijo_minas", 1)), FIX(("leite_desnatado", 1)), FIX(("iogurte_natural", 1)), G_LANCHE]),
+        ("Lanche da manhã", "10:30", [FIX(("banana", 1)), G_LANCHE]),
         ("Almoço", "13:00", [G_CARB_1, FIX(("feijao", 1)), G_PROT_MAIN, FIX(("azeite", 1)), FIX(("banana", 1))]),
         ("Lanche da tarde", "16:30", [G_LANCHE, FIX(("pasta_amendoim", 1))]),
         ("Jantar", "20:00", [G_PROT_MAIN, G_CARB_1, FIX(("azeite", 1))]),
@@ -102,6 +103,7 @@ MENUS = {
     # ── RECUPERAÇÃO ─ leve, carbo um pouco maior que descanso (~2200 kcal) ──
     "recuperacao": [
         ("Café da manhã", "09:00", [FIX(("ovo", 2)), FIX(("pao_integral", 2)), FIX(("queijo_minas", 1)), FIX(("leite_desnatado", 1)), FIX(("iogurte_natural", 1)), G_LANCHE]),
+        ("Lanche da manhã", "10:30", [FIX(("banana", 1)), G_LANCHE]),
         ("Almoço", "13:00", [G_CARB_15, FIX(("feijao", 1)), G_PROT_MAIN, FIX(("azeite", 1)), FIX(("banana", 1))]),
         ("Lanche da tarde", "16:30", [G_LANCHE, FIX(("pasta_amendoim", 1)), FIX(("banana", 1))]),
         ("Jantar", "20:00", [G_PROT_MAIN, G_CARB_1, FIX(("azeite", 1))]),
@@ -109,6 +111,7 @@ MENUS = {
     # ── Z2 LONGO ─ carbo médio para o pedal longo (~2450 kcal) ──
     "z2": [
         ("Café da manhã", "09:00", [G_CARB_CAFE, FIX(("banana", 1)), FIX(("pao_frances", 2)), FIX(("whey", 1)), FIX(("leite_desnatado", 1)), G_LANCHE]),
+        ("Lanche da manhã", "10:30", [FIX(("banana", 1)), G_LANCHE]),
         ("Almoço", "13:00", [G_CARB_2, FIX(("feijao", 1)), G_PROT_MAIN, FIX(("azeite", 1)), FIX(("banana", 1))]),
         ("Lanche da tarde", "16:30", [FIX(("iogurte_natural", 1)), G_LANCHE, FIX(("pasta_amendoim", 1))]),
         ("Jantar", "20:00", [G_PROT_MAIN, G_CARB_15, FIX(("azeite", 1))]),
@@ -116,6 +119,7 @@ MENUS = {
     # ── MODERADO (TEMPO / FORÇA) ─ carbo médio-alto (~2650 kcal) ──
     "moderado": [
         ("Café da manhã", "09:00", [G_CARB_CAFE, FIX(("banana", 1)), FIX(("pao_frances", 2)), FIX(("ovo", 2)), FIX(("leite_desnatado", 1)), G_LANCHE]),
+        ("Lanche da manhã", "10:30", [FIX(("banana", 1)), G_LANCHE]),
         ("Almoço", "13:00", [G_CARB_2, FIX(("feijao", 1)), G_PROT_MAIN, FIX(("azeite", 1)), FIX(("banana", 1))]),
         ("Lanche da tarde", "16:30", [FIX(("iogurte_grego", 1)), G_LANCHE2, FIX(("pasta_amendoim", 1))]),
         ("Jantar", "20:00", [G_PROT_MAIN, G_CARB_1, FIX(("batata_doce", 1)), FIX(("azeite", 1))]),
@@ -123,6 +127,7 @@ MENUS = {
     # ── INTENSO (TIROS / VO2MAX) ─ carbo alto p/ alta intensidade (~3200 kcal) ──
     "intenso": [
         ("Café da manhã", "09:00", [G_CARB_CAFE15, FIX(("banana", 1)), FIX(("pao_frances", 3)), FIX(("ovo", 2)), FIX(("leite_integral", 1)), FIX(("whey", 1)), G_LANCHE]),
+        ("Lanche da manhã", "10:30", [FIX(("banana", 2)), G_LANCHE]),
         ("Almoço", "13:00", [G_CARB_25, FIX(("feijao", 1)), G_PROT_MAIN, FIX(("azeite", 1)), FIX(("banana", 2))]),
         ("Lanche da tarde", "16:30", [FIX(("iogurte_grego", 1)), G_LANCHE2, FIX(("pasta_amendoim", 1)), FIX(("banana", 1))]),
         ("Jantar", "20:00", [G_PROT_MAIN, FIX(("arroz_branco", 1)), G_CARB_15, FIX(("azeite", 1))]),
@@ -168,14 +173,15 @@ def _expandir_item(chave: str, qtd: float) -> dict:
 
 
 # Horários padrão das refeições (configuráveis pelo usuário em db.config).
-DEFAULT_HORARIOS = {"cafe": "09:00", "almoco": "13:00", "lanche_tarde": "16:30", "jantar": "20:00"}
+DEFAULT_HORARIOS = {"cafe": "09:00", "lanche_manha": "10:30", "almoco": "13:00", "lanche_tarde": "16:30", "jantar": "20:00"}
 
 
 def horarios_por_refeicao(cfg: dict | None = None) -> dict:
-    """Mapeia cada refeição ao horário configurado (4 refeições)."""
+    """Mapeia cada refeição ao horário configurado (5 refeições)."""
     c = {**DEFAULT_HORARIOS, **(cfg or {})}
     return {
         "Café da manhã":   c["cafe"],
+        "Lanche da manhã": c["lanche_manha"],
         "Almoço":          c["almoco"],
         "Lanche da tarde": c["lanche_tarde"],
         "Jantar":          c["jantar"],
@@ -263,6 +269,15 @@ REFEICOES_GUIA = [
                       "leite_desnatado", "queijo_minas", "whey", "banana"],
         "dica": "Se for treinar de manhã, reforce o carboidrato (aveia, pão ou banana) "
                 "~1h antes. Se o treino for à tarde/noite, mantenha o café normal.",
+    },
+    {
+        "nome": "Lanche da manhã",
+        "horario": "10:30",
+        "papel": "Ponte entre o café e o almoço: uma fruta para energia rápida e "
+                 "proteína (whey ou iogurte) para segurar a fome sem pesar.",
+        "alimentos": ["banana", "whey", "iogurte_grego", "iogurte_natural"],
+        "dica": "Se o treino for de manhã, este é um ótimo momento para repor logo "
+                "após: whey + banana caem bem no pós-treino.",
     },
     {
         "nome": "Almoço",
