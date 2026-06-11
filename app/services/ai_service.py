@@ -318,3 +318,36 @@ async def gerar_plano_alimentar(treino: Treino | None = None) -> PlanoAlimentar:
         proteina_total_g=data["proteina_total_g"],
         refeicoes=data["refeicoes"]
     )
+
+
+async def extrair_zonas_de_imagem(image_bytes: bytes, mime_type: str) -> dict:
+    """Lê uma captura de tela das zonas de FC do Garmin e extrai as faixas.
+
+    Retorna {"fc_max", "limiar", "zonas": [{"zona","min","max"}, ...]}.
+    Usa o Gemini em modo visão. Levanta exceção se não conseguir interpretar.
+    """
+    import asyncio
+
+    prompt = """Analise esta captura de tela das ZONAS DE FREQUÊNCIA CARDÍACA de um relógio ou app Garmin.
+
+Extraia, em batimentos por minuto (bpm):
+- O valor MÍNIMO e MÁXIMO de cada zona (Z1 a Z5).
+- A FC máxima (FCmáx) e o limiar de lactato, se aparecerem na tela.
+
+Regras:
+- Sempre devolva exatamente 5 zonas (zona 1 a 5), em ordem crescente.
+- Se uma zona mostrar só o limite inferior (ex.: "> 177" ou "177+"), use esse número como "min" e a FC máxima (ou 200 se não houver) como "max".
+- Se a zona 1 não mostrar mínimo, use um valor razoável (ex.: 50% da FCmáx).
+- Os números devem ser inteiros.
+
+Responda APENAS em JSON válido, sem markdown, sem texto extra:
+{"fc_max": number ou null, "limiar": number ou null, "zonas": [{"zona": 1, "min": number, "max": number}, {"zona": 2, ...}, {"zona": 3, ...}, {"zona": 4, ...}, {"zona": 5, ...}]}"""
+
+    imagem = {"mime_type": mime_type, "data": image_bytes}
+
+    def _call():
+        resp = client.generate_content([prompt, imagem])
+        raw = resp.text.strip().replace("```json", "").replace("```", "").strip()
+        return json.loads(raw)
+
+    return await asyncio.to_thread(_call)

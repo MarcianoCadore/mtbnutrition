@@ -5,7 +5,21 @@ from app.services.mongo_service import get_db
 from app.services.nutricao_service import DEFAULT_HORARIOS
 
 CHAVE_HORARIOS = "horarios_refeicoes"
+CHAVE_ZONAS = "zonas_fc"
 _RE_HORA = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+# Zonas de FC padrão (as configuradas hoje no Garmin do Marciano).
+DEFAULT_ZONAS = {
+    "fc_max": 190,
+    "limiar": 172,
+    "zonas": [
+        {"zona": 1, "min": 123, "max": 145},
+        {"zona": 2, "min": 146, "max": 158},
+        {"zona": 3, "min": 159, "max": 165},
+        {"zona": 4, "min": 166, "max": 177},
+        {"zona": 5, "min": 178, "max": 190},
+    ],
+}
 
 # Ordem natural das refeições no dia (chave -> rótulo amigável).
 ORDEM_REFEICOES = [
@@ -61,3 +75,62 @@ async def salvar_horarios(cfg: dict) -> dict:
         upsert=True,
     )
     return {**DEFAULT_HORARIOS, **limpo}
+
+
+# ── Zonas de frequência cardíaca ──────────────────────────────────────────────
+
+async def get_zonas() -> dict:
+    """Zonas de FC configuradas (ou os padrões)."""
+    db = get_db()
+    doc = await db.config.find_one({"chave": CHAVE_ZONAS}, {"_id": 0, "chave": 0})
+    return doc or {k: v for k, v in DEFAULT_ZONAS.items()}
+
+
+def _validar_zonas(data: dict) -> dict:
+    """Valida e normaliza as 5 zonas + fc_max/limiar. Levanta ValueError."""
+    zonas_in = data.get("zonas") or []
+    if len(zonas_in) != 5:
+        raise ValueError("São necessárias exatamente 5 zonas (Z1 a Z5).")
+
+    zonas = []
+    prev_max = None
+    for i, z in enumerate(sorted(zonas_in, key=lambda x: int(x.get("zona", 0))), start=1):
+        try:
+            mn = int(z["min"])
+            mx = int(z["max"])
+        except (KeyError, TypeError, ValueError):
+            raise ValueError(f"Zona {i}: informe min e max em bpm (números inteiros).")
+        if not (60 <= mn < mx <= 230):
+            raise ValueError(f"Zona {i}: faixa inválida ({mn}-{mx}). Use 60–230 bpm com min < max.")
+        if prev_max is not None and mn < prev_max:
+            raise ValueError(f"Zona {i} ({mn}) deve começar a partir do fim da zona anterior ({prev_max}).")
+        prev_max = mx
+        zonas.append({"zona": i, "min": mn, "max": mx})
+
+    fc_max = data.get("fc_max")
+    limiar = data.get("limiar")
+    try:
+        fc_max = int(fc_max) if fc_max not in (None, "") else zonas[-1]["max"]
+        limiar = int(limiar) if limiar not in (None, "") else None
+    except (TypeError, ValueError):
+        raise ValueError("FC máxima e limiar devem ser números inteiros.")
+
+    return {"fc_max": fc_max, "limiar": limiar, "zonas": zonas}
+
+
+async def salvar_zonas(data: dict) -> dict:
+    """Valida e persiste as zonas de FC."""
+    limpo = _validar_zonas(data)
+    db = get_db()
+    await db.config.update_one(
+        {"chave": CHAVE_ZONAS},
+        {"$set": {**limpo, "chave": CHAVE_ZONAS}},
+        upsert=True,
+    )
+    return limpo
+
+
+async def zonas_bpm_map() -> dict:
+    """Mapa {numero_da_zona: {'min': bpm, 'max': bpm}} para montar os workouts."""
+    cfg = await get_zonas()
+    return {int(z["zona"]): {"min": int(z["min"]), "max": int(z["max"])} for z in cfg["zonas"]}

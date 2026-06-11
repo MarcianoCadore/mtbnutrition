@@ -50,6 +50,39 @@ def _seg(steps: list) -> WorkoutSegment:
     return WorkoutSegment(segmentOrder=1, sportType=_CYCLING_SPORT, workoutSteps=steps)
 
 
+def _aplicar_bpm(steps: list, zonas_bpm: dict) -> None:
+    """Converte os alvos de zona (1-5) em faixas de bpm explícitas, lendo as
+    zonas configuradas pelo usuário. Os valores ficam no nível do step
+    (targetValueOne/Two), que é o formato que o Garmin espera. Recursivo para
+    entrar nos repeat groups."""
+    for step in steps:
+        filhos = getattr(step, "workoutSteps", None)
+        if filhos:
+            _aplicar_bpm(filhos, zonas_bpm)
+            continue
+        tt = getattr(step, "targetType", None)
+        if not tt or tt.get("workoutTargetTypeId") != TargetType.HEART_RATE:
+            continue
+        zona = tt.get("targetValue")
+        rng = zonas_bpm.get(zona)
+        if rng:
+            step.targetType = {
+                "workoutTargetTypeId": TargetType.HEART_RATE,
+                "workoutTargetTypeKey": "heart.rate",
+                "displayOrder": 1,
+            }
+            step.targetValueOne = float(rng["min"])
+            step.targetValueTwo = float(rng["max"])
+        else:
+            # sem faixa configurada: cai na zona do próprio dispositivo
+            step.targetType = {
+                "workoutTargetTypeId": TargetType.HEART_RATE,
+                "workoutTargetTypeKey": "heart.rate.zone",
+                "displayOrder": 1,
+                "zoneNumber": zona,
+            }
+
+
 # ── builders por TipoTreino ───────────────────────────────────────────────────
 
 def _recuperacao(duracao_min: int = 55) -> tuple[list, int]:
@@ -172,13 +205,20 @@ def build_cycling_workout(
     duracao_min: int,
     nome: str,
     descricao: str | None = None,
+    zonas_bpm: dict | None = None,
 ) -> CyclingWorkout | None:
-    """Monta um CyclingWorkout para o tipo e duração dados."""
+    """Monta um CyclingWorkout para o tipo e duração dados.
+
+    Se 'zonas_bpm' for fornecido ({zona: {'min','max'}}), os alvos de FC são
+    enviados como faixas de bpm explícitas em vez de número de zona do dispositivo.
+    """
     builder = _BUILDERS.get(tipo)
     if not builder:
         return None
 
     steps, total_s = builder(duracao_min)
+    if zonas_bpm:
+        _aplicar_bpm(steps, zonas_bpm)
     return CyclingWorkout(
         workoutName=nome,
         estimatedDurationInSecs=total_s,
@@ -196,8 +236,10 @@ async def upload_e_agendar(
 ) -> str | None:
     """Faz upload do workout e agenda para a data. Retorna o garmin_workout_id."""
     from app.services.garmin_service import get_garmin_client
+    from app.services.config_service import zonas_bpm_map
 
-    workout = build_cycling_workout(tipo, duracao_min, nome, descricao)
+    zonas_bpm = await zonas_bpm_map()
+    workout = build_cycling_workout(tipo, duracao_min, nome, descricao, zonas_bpm)
     if not workout:
         logger.warning("Tipo %s não tem builder de workout", tipo)
         return None

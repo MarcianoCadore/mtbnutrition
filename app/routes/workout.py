@@ -1,7 +1,7 @@
 import os
 import shutil
 from fastapi import APIRouter, HTTPException, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
@@ -247,6 +247,56 @@ async def enviar_para_garmin(body: EnviarGarminBody):
     return {"status": "ok", "semana": body.semana_inicio, "enviados": enviados, "detalhes": resultados}
 
 
+@router.get("/zonas/dados")
+async def ler_zonas():
+    """Zonas de FC atualmente configuradas."""
+    from app.services.config_service import get_zonas
+    return await get_zonas()
+
+
+@router.post("/zonas/extrair")
+async def extrair_zonas(imagem: UploadFile = File(...)):
+    """Recebe uma captura de tela do Garmin e extrai as zonas via IA (preview)."""
+    if not (imagem.content_type or "").startswith("image/"):
+        raise HTTPException(status_code=400, detail="Envie um arquivo de imagem (PNG/JPG).")
+    conteudo = await imagem.read()
+    if len(conteudo) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Imagem muito grande (máx. 8 MB).")
+    from app.services.ai_service import extrair_zonas_de_imagem
+    try:
+        dados = await extrair_zonas_de_imagem(conteudo, imagem.content_type)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Não consegui ler as zonas da imagem: {e}")
+    return dados
+
+
+class ZonaItem(BaseModel):
+    zona: int
+    min: int
+    max: int
+
+
+class ZonasBody(BaseModel):
+    fc_max: Optional[int] = None
+    limiar: Optional[int] = None
+    zonas: list[ZonaItem]
+
+
+@router.post("/zonas/salvar")
+async def salvar_zonas_endpoint(body: ZonasBody):
+    """Valida e salva as zonas de FC. Passam a valer nos próximos envios ao Garmin."""
+    from app.services.config_service import salvar_zonas
+    try:
+        return await salvar_zonas(body.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/zonas", response_class=HTMLResponse)
+async def pagina_zonas():
+    return _PAGINA_ZONAS
+
+
 @router.post("/fit/{semana_inicio}/{data}")
 async def upload_fit(semana_inicio: str, data: str, arquivo: UploadFile = File(...)):
     if not arquivo.filename.lower().endswith(".fit"):
@@ -340,3 +390,158 @@ async def download_fit(semana_inicio: str, data: str):
     if not os.path.exists(dest_path):
         raise HTTPException(status_code=404, detail="Arquivo não encontrado")
     return FileResponse(dest_path, media_type="application/octet-stream", filename=f"{data}.fit")
+
+
+_PAGINA_ZONAS = """<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MTB Nutrition — Zonas de FC</title>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  :root { --green:#0e8a7d; --text:#1f2937; --muted:#6b7280; --border:#e5e7eb; --bg:#f0f2f5; }
+  body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; background:var(--bg); color:var(--text); }
+  nav { background:#fff; border-bottom:1px solid var(--border); padding:14px 20px; display:flex; align-items:center; gap:10px; }
+  nav .logo { font-weight:800; color:var(--green); }
+  nav a { margin-left:auto; color:var(--muted); text-decoration:none; font-size:.9rem; font-weight:600; }
+  main { max-width:560px; margin:0 auto; padding:24px 16px 60px; }
+  h1 { font-size:1.4rem; margin-bottom:6px; }
+  .sub { color:var(--muted); margin-bottom:22px; font-size:.92rem; }
+  .card { background:#fff; border-radius:14px; padding:22px; box-shadow:0 1px 4px rgba(0,0,0,.06); margin-bottom:18px; }
+  .card h2 { font-size:1.05rem; color:var(--green); margin-bottom:6px; }
+  .card p.hint { font-size:.85rem; color:var(--muted); margin-bottom:14px; }
+  .upload-row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  input[type=file] { flex:1; min-width:180px; font-size:.85rem; }
+  .zona-row { display:grid; grid-template-columns:54px 1fr 14px 1fr; gap:10px; align-items:center; margin-bottom:12px; }
+  .zona-tag { font-weight:800; color:#fff; text-align:center; border-radius:6px; padding:6px 0; font-size:.85rem; }
+  .z1 { background:#9ca3af; } .z2 { background:#3b82f6; } .z3 { background:#10b981; }
+  .z4 { background:#f59e0b; } .z5 { background:#ef4444; }
+  .sep { text-align:center; color:var(--muted); }
+  label.fld { display:block; font-size:.72rem; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; margin-bottom:3px; }
+  input[type=number] { width:100%; border:1.5px solid var(--border); border-radius:9px; padding:10px; font-size:1rem; outline:none; font-family:inherit; }
+  input[type=number]:focus { border-color:var(--green); }
+  .duo { display:flex; gap:12px; margin-top:6px; }
+  .duo > div { flex:1; }
+  button { width:100%; padding:14px; background:var(--green); color:#fff; border:none; border-radius:10px; font-size:1rem; font-weight:700; cursor:pointer; }
+  button:hover:not(:disabled) { background:#0c7669; }
+  button:disabled { opacity:.6; cursor:not-allowed; }
+  button.sec { background:#374151; }
+  button.sec:hover:not(:disabled) { background:#1f2937; }
+  .status { margin-top:14px; padding:12px; border-radius:10px; font-size:.9rem; display:none; }
+  .ok { background:#e8f5e9; color:#2e7d32; display:block; }
+  .err { background:#fdecea; color:#c62828; display:block; }
+  .info { background:#eef6ff; color:#1d4ed8; display:block; }
+</style>
+</head>
+<body>
+<nav>
+  <span style="font-size:1.4rem">❤️</span>
+  <span class="logo">MTB Nutrition</span>
+  <a href="/portal/">← Voltar ao portal</a>
+</nav>
+<main>
+  <h1>Zonas de frequência cardíaca</h1>
+  <p class="sub">Configure as faixas de bpm de cada zona. Elas são enviadas como alvo nos treinos que vão para o Garmin.</p>
+
+  <div class="card">
+    <h2>📷 Ler da imagem do Garmin</h2>
+    <p class="hint">Tire um print da tela de zonas de FC no app/relógio Garmin e envie aqui — a IA preenche os campos automaticamente. Confira antes de salvar.</p>
+    <div class="upload-row">
+      <input type="file" id="img" accept="image/*">
+      <button class="sec" id="btnLer" style="width:auto; padding:12px 16px" onclick="lerImagem()">🤖 Ler zonas</button>
+    </div>
+    <div id="stImg" class="status"></div>
+  </div>
+
+  <div class="card">
+    <h2>✏️ Zonas (bpm)</h2>
+    <p class="hint">Min e max de cada zona. Você pode editar manualmente a qualquer momento.</p>
+    <div id="zonas"></div>
+    <div class="duo">
+      <div>
+        <label class="fld">FC máxima</label>
+        <input type="number" id="fc_max" min="100" max="230">
+      </div>
+      <div>
+        <label class="fld">Limiar de lactato</label>
+        <input type="number" id="limiar" min="100" max="230">
+      </div>
+    </div>
+    <div style="margin-top:18px">
+      <button id="btnSalvar" onclick="salvar()">💾 Salvar zonas</button>
+    </div>
+    <div id="st" class="status"></div>
+  </div>
+</main>
+<script>
+  const CORES = ['z1','z2','z3','z4','z5'];
+  function renderZonas(zonas) {
+    const box = document.getElementById('zonas');
+    box.innerHTML = '';
+    for (let i = 1; i <= 5; i++) {
+      const z = (zonas || []).find(x => Number(x.zona) === i) || {min:'', max:''};
+      const row = document.createElement('div');
+      row.className = 'zona-row';
+      row.innerHTML = `
+        <div class="zona-tag ${CORES[i-1]}">Z${i}</div>
+        <div><label class="fld">min</label><input type="number" id="z${i}_min" min="60" max="230" value="${z.min ?? ''}"></div>
+        <div class="sep">–</div>
+        <div><label class="fld">max</label><input type="number" id="z${i}_max" min="60" max="230" value="${z.max ?? ''}"></div>`;
+      box.appendChild(row);
+    }
+  }
+  function coletar() {
+    const zonas = [];
+    for (let i = 1; i <= 5; i++) {
+      zonas.push({
+        zona: i,
+        min: Number(document.getElementById(`z${i}_min`).value),
+        max: Number(document.getElementById(`z${i}_max`).value),
+      });
+    }
+    const fc = document.getElementById('fc_max').value;
+    const lim = document.getElementById('limiar').value;
+    return { fc_max: fc ? Number(fc) : null, limiar: lim ? Number(lim) : null, zonas };
+  }
+  function aplicar(d) {
+    renderZonas(d.zonas);
+    if (d.fc_max != null) document.getElementById('fc_max').value = d.fc_max;
+    if (d.limiar != null) document.getElementById('limiar').value = d.limiar;
+  }
+  async function carregar() {
+    try {
+      const r = await fetch('/workout/zonas/dados');
+      aplicar(await r.json());
+    } catch(e) { renderZonas([]); }
+  }
+  async function lerImagem() {
+    const inp = document.getElementById('img'), st = document.getElementById('stImg'), btn = document.getElementById('btnLer');
+    if (!inp.files.length) { st.className='status err'; st.textContent='⚠️ Escolha uma imagem primeiro.'; return; }
+    btn.disabled = true; btn.textContent = 'Lendo...'; st.className='status info'; st.textContent='🤖 Analisando a imagem...';
+    try {
+      const fd = new FormData(); fd.append('imagem', inp.files[0]);
+      const r = await fetch('/workout/zonas/extrair', { method:'POST', body: fd });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Erro');
+      aplicar(d);
+      st.className='status ok'; st.textContent='✅ Zonas preenchidas! Confira os valores e clique em Salvar.';
+    } catch(e) { st.className='status err'; st.textContent='❌ ' + e.message; }
+    finally { btn.disabled=false; btn.textContent='🤖 Ler zonas'; }
+  }
+  async function salvar() {
+    const btn = document.getElementById('btnSalvar'), st = document.getElementById('st');
+    btn.disabled = true; btn.textContent = 'Salvando...'; st.className='status';
+    try {
+      const r = await fetch('/workout/zonas/salvar', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(coletar()) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Erro');
+      aplicar(d);
+      st.className='status ok'; st.textContent='✅ Zonas salvas! Já valem para os próximos treinos enviados ao Garmin.';
+    } catch(e) { st.className='status err'; st.textContent='❌ ' + e.message; }
+    finally { btn.disabled=false; btn.textContent='💾 Salvar zonas'; }
+  }
+  carregar();
+</script>
+</body>
+</html>"""

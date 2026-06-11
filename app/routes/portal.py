@@ -170,6 +170,7 @@ HTML = """<!DOCTYPE html>
   </div>
   <div class="nav-links">
     <a href="/nutrition/config">⏰ Horários</a>
+    <a href="/workout/zonas">❤️ Zonas FC</a>
     <a href="/nutrition/alimentos">🍽️ Alimentos</a>
     <a href="/nutrition/guia">🥗 Nutrição</a>
     <a href="/whatsapp/">📲 WhatsApp</a>
