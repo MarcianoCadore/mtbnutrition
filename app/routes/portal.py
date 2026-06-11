@@ -120,6 +120,18 @@ HTML = """<!DOCTYPE html>
     .modal-head h3 { font-size: 1.1rem; color: var(--green); }
     .modal-head .modal-sub { font-size: .82rem; color: var(--muted); font-weight: 600; margin-bottom: 12px; }
 
+    .notas-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .info-treino { background: none; border: none; color: var(--green); font-size: .72rem; font-weight: 600; cursor: pointer; padding: 0; display: inline-flex; align-items: center; gap: 3px; opacity: .8; transition: opacity .15s; }
+    .info-treino:hover { opacity: 1; text-decoration: underline; }
+    .info-treino .ic { font-size: .82rem; }
+    .esp-obj { font-size: .86rem; color: var(--text); line-height: 1.45; margin-bottom: 14px; }
+    .esp-bloco { margin-bottom: 14px; }
+    .esp-titulo { font-size: .7rem; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); font-weight: 700; margin-bottom: 6px; }
+    .esp-lista { list-style: none; }
+    .esp-lista li { font-size: .84rem; padding: 6px 10px; background: #f7f9fc; border-radius: 7px; margin-bottom: 5px; line-height: 1.35; }
+    .esp-dica { font-size: .82rem; color: #8a5a00; background: #fff7e6; border-radius: 8px; padding: 10px 12px; line-height: 1.4; }
+    .esp-notas { font-size: .82rem; color: var(--text); line-height: 1.45; background: #f7f9fc; border-radius: 8px; padding: 10px 12px; }
+
     .gen-modal-treino { background: #f7f9fc; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
     .gen-modal-treino .gmt-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 4px; }
     .gen-modal-treino .gmt-data { font-size: .72rem; color: var(--muted); font-weight: 600; }
@@ -229,6 +241,14 @@ HTML = """<!DOCTYPE html>
   </div>
 </div>
 
+<div class="modal-overlay" id="treinoModal" onclick="fecharTreinoModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="fecharTreinoModal()">✕</button>
+    <div class="modal-head" id="treinoModalHead"></div>
+    <div class="modal-body" id="treinoModalBody"></div>
+  </div>
+</div>
+
 <script>
 const DIAS  = ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo'];
 const TIPOS = [
@@ -243,6 +263,41 @@ const TIPOS = [
 
 let monday = getMonday(new Date());
 const _resultados = {};
+const _planejado = {};
+
+// Especificação de cada tipo de treino — o que está programado e como executar.
+const ESPEC_TREINO = {
+  Z2_LONGO: {
+    obj: 'Base aeróbica. Constrói resistência e melhora a queima de gordura mantendo esforço controlado.',
+    estrutura: ['Aquecimento 15 min em Z1', 'Bloco principal contínuo em Z2 (146–158 bpm)', 'Volta à calma 15 min em Z1'],
+    dica: 'Cadência 85–95 rpm e FC estável. Sem picos — se subir para Z3, alivie.',
+  },
+  TEMPO: {
+    obj: 'Esforço de limiar. Eleva a capacidade de sustentar um ritmo forte por mais tempo.',
+    estrutura: ['Aquecimento 15 min em Z2', '3× [10 min em Z3 (159–165 bpm) + 5 min Z2]', 'Volta à calma 10 min em Z2'],
+    dica: 'Esforço moderado-alto sustentável. Respiração ritmada, ainda sob controle.',
+  },
+  FORCA: {
+    obj: 'Força específica. Recruta mais fibras musculares pedalando com cadência baixa e marcha pesada.',
+    estrutura: ['Aquecimento 15 min em Z2', '4× [6 min em Z3 com cadência 50–60 rpm + 4 min Z2]', 'Volta à calma 10 min em Z2'],
+    dica: 'Marcha pesada, empurre o pedal. Sente o trabalho nas pernas, não no fôlego.',
+  },
+  TIROS: {
+    obj: 'Tiros neuromusculares. Desenvolve potência e velocidade máxima de pedalada.',
+    estrutura: ['Aquecimento 15 min em Z2', '8× [30 s máximo em Z5 (>177 bpm) + 3,5 min Z1]', 'Volta à calma 15 min em Z2'],
+    dica: 'Cada tiro é all-out, do início ao fim. Recupere bem antes do próximo.',
+  },
+  VO2MAX: {
+    obj: 'VO2max. Eleva o teto cardiorrespiratório — o maior estímulo para a performance.',
+    estrutura: ['Aquecimento 15 min em Z2', '4× [4 min forte em Z5 (>177 bpm) + 4 min Z2]', 'Volta à calma 15 min em Z2'],
+    dica: 'Os blocos doem. O objetivo é manter a Z5 do primeiro ao último bloco.',
+  },
+  RECUPERACAO: {
+    obj: 'Recuperação ativa. Acelera a regeneração sem gerar fadiga adicional.',
+    estrutura: ['Pedal leve e contínuo em Z1 (<145 bpm)'],
+    dica: 'Bem leve mesmo. Se a FC subir, reduza o ritmo. É descanso, não treino.',
+  },
+};
 
 function getMonday(d) {
   const day = d.getDay();
@@ -296,6 +351,7 @@ function buildCards(treinos) {
     const hide    = t.tipo === 'DESCANSO';
     const tipoLbl = (TIPOS.find(tp => tp.v === t.tipo) || {l: t.tipo}).l;
 
+    _planejado[key] = {tipo: t.tipo, duracao_min: t.duracao_min, cadencia_rpm: t.cadencia_rpm, descricao: t.descricao};
     const res = t.resultado || null;
     if (res) _resultados[key] = res;
     const resHTML = res
@@ -358,7 +414,10 @@ function buildCards(treinos) {
             <div id="fitinfo-${key}">${fitInfoHTML}</div>
           </div>
           <div>
-            <label>Notas</label>
+            <div class="notas-head">
+              <label>Notas</label>
+              <button class="info-treino" onclick="abrirTreinoInfo('${key}')" title="Ver especificação do treino"><span class="ic">ⓘ</span> saber mais</button>
+            </div>
             <textarea id="desc-${key}" placeholder="Detalhes...">${desc}</textarea>
           </div>
         </div>
@@ -453,6 +512,44 @@ function abrirAvaliacao(key) {
 
 function fecharAvalModal(e) {
   document.getElementById('avalModal').classList.remove('show');
+}
+
+function abrirTreinoInfo(key) {
+  const p = _planejado[key] || {};
+  const tipo = document.getElementById(`tp-${key}`)?.value || p.tipo;
+  if (!tipo || tipo === 'DESCANSO') return;
+  const tipoInfo = TIPOS.find(tp => tp.v === tipo) || {l: tipo};
+  const esp = ESPEC_TREINO[tipo];
+
+  const cad   = document.getElementById(`cad-${key}`)?.value || p.cadencia_rpm || '';
+  const notas = document.getElementById(`desc-${key}`)?.value || p.descricao || '';
+
+  const dt = new Date(key + 'T00:00');
+  const diaLabel = `${DIAS[(dt.getDay()+6)%7]} ${key.slice(8,10)}/${key.slice(5,7)}`;
+  const meta = [diaLabel];
+  if (p.duracao_min) meta.push(`⏱ ${p.duracao_min} min`);
+  if (cad) meta.push(`🦵 ${cad} rpm`);
+
+  let corpo = '';
+  if (esp) {
+    corpo += `<div class="esp-obj">${esp.obj}</div>`;
+    corpo += `<div class="esp-bloco"><div class="esp-titulo">Como executar</div>`
+           + `<ul class="esp-lista">${esp.estrutura.map(s => `<li>${s}</li>`).join('')}</ul></div>`;
+    corpo += `<div class="esp-dica">💡 ${esp.dica}</div>`;
+  }
+  if (notas && notas.trim()) {
+    corpo += `<div class="esp-bloco" style="margin-top:14px"><div class="esp-titulo">Notas do treino</div>`
+           + `<div class="esp-notas">${notas.replace(/</g,'&lt;').replace(/\\n/g,'<br>')}</div></div>`;
+  }
+  if (!corpo) corpo = `<div class="esp-obj">Sem especificação detalhada para este treino.</div>`;
+
+  document.getElementById('treinoModalHead').innerHTML = `<h3>${tipoInfo.l}</h3><div class="modal-sub">${meta.join('  ·  ')}</div>`;
+  document.getElementById('treinoModalBody').innerHTML = corpo;
+  document.getElementById('treinoModal').classList.add('show');
+}
+
+function fecharTreinoModal(e) {
+  document.getElementById('treinoModal').classList.remove('show');
 }
 
 async function abrirNutriModal(key) {
