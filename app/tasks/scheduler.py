@@ -99,8 +99,14 @@ async def enviar_lembrete_refeicao_pre(meal_nome: str):
 
 async def agendar_lembretes_refeicao():
     """(Re)agenda os lembretes para 30 min antes de cada refeição, conforme a
-    config de horários. Chamado no start e quando o usuário muda os horários."""
-    cfg = await get_horarios()
+    config de horários. Chamado no start, periodicamente (auto-cura se o banco
+    estava fora no boot) e quando o usuário muda os horários."""
+    try:
+        cfg = await get_horarios()
+    except Exception as e:
+        print(f"[{datetime.now()}] Banco indisponível; lembretes não reagendados (tenta de novo): {e}")
+        return
+    n = 0
     for chave, nome in LEMBRETES_REFEICAO:
         try:
             h, m = map(int, cfg[chave].split(":"))
@@ -114,7 +120,8 @@ async def agendar_lembretes_refeicao():
             id=f"lembrete_{chave}",
             replace_existing=True,
         )
-    print("🍽️ Lembretes de refeição agendados (30 min antes de cada refeição)")
+        n += 1
+    print(f"🍽️ Lembretes de refeição agendados ({n} refeições, 30 min antes)")
 
 async def job_garmin_sync():
     """Roda a cada 10 min — sincroniza treinos planejados e atividades do Garmin."""
@@ -138,11 +145,16 @@ def start_scheduler():
     scheduler.add_job(job_plano_diario,     CronTrigger(hour=8,  minute=0))
     scheduler.add_job(job_garmin_sync,      IntervalTrigger(minutes=10))
     scheduler.start()
-    # agenda os lembretes de refeição a partir da config (logo após o start)
+    # (re)agenda os lembretes de refeição: primeira vez logo após o start e
+    # depois a cada 30 min — se o banco estiver fora no boot, se auto-corrige
+    # assim que ele voltar (replace_existing torna a reexecução idempotente).
     scheduler.add_job(
-        agendar_lembretes_refeicao, "date",
-        run_date=datetime.now(TZ) + timedelta(seconds=3),
+        agendar_lembretes_refeicao,
+        IntervalTrigger(minutes=30),
+        id="reagenda_lembretes",
+        next_run_time=datetime.now(TZ) + timedelta(seconds=3),
         misfire_grace_time=120,
+        replace_existing=True,
     )
     print("✅ Scheduler iniciado — notificações + Garmin sync ativos")
 
