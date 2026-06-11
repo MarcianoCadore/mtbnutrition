@@ -299,11 +299,13 @@ Objetivo: emagrecer preservando músculo + melhorar performance MTB
 
 Compare o planejado com o realizado. Comente intensidade (zonas de FC atingidas),
 volume (duração realizada vs planejada), cadência e o que ajustar no próximo treino.
+Seja CONCISO: cada ponto deve ter no máximo 1 frase curta (até ~140 caracteres),
+sem markdown (não use **). No máximo 3 pontos fortes e 3 pontos fracos.
 Responda APENAS em JSON válido, sem markdown, sem texto extra:
 {{
   "resumo": "string resumindo o treino em 1-2 frases objetivas",
-  "pontos_fortes": ["lista de pontos positivos observados"],
-  "pontos_fracos": ["lista de pontos a melhorar"]
+  "pontos_fortes": ["até 3 pontos positivos, 1 frase cada"],
+  "pontos_fracos": ["até 3 pontos a melhorar, 1 frase cada"]
 }}"""
 
     modelos = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"]

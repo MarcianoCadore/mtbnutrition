@@ -544,6 +544,17 @@ async def _claim_atividade(db, act_id: str, act_date: str) -> bool:
     return res.upserted_id is not None
 
 
+def _bullet(texto: str, lim: int = 160) -> str:
+    """Limpa markdown '**' e encurta um item para caber no WhatsApp."""
+    t = (texto or "").replace("**", "").strip()
+    if len(t) <= lim:
+        return t
+    corte = t.find(". ")
+    if 0 < corte < lim:
+        return t[: corte + 1]
+    return t[:lim].rstrip() + "…"
+
+
 def _formatar_pos_treino(data: str, planejado: dict, resultado: dict) -> str:
     d = datetime.strptime(data, "%Y-%m-%d")
     dias = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
@@ -554,18 +565,18 @@ def _formatar_pos_treino(data: str, planejado: dict, resultado: dict) -> str:
     linhas = [f"🚵 *Pós-treino — {dia}, {data_fmt}*", ""]
 
     if analise.get("resumo"):
-        linhas += [f"_{analise['resumo']}_", ""]
+        linhas += [f"_{_bullet(analise['resumo'], 240)}_", ""]
 
     if analise.get("pontos_fortes"):
         linhas.append("✅ *Pontos fortes:*")
         for p in analise["pontos_fortes"]:
-            linhas.append(f"  • {p}")
+            linhas.append(f"  • {_bullet(p)}")
         linhas.append("")
 
     if analise.get("pontos_fracos"):
         linhas.append("⚠️ *A melhorar:*")
         for p in analise["pontos_fracos"]:
-            linhas.append(f"  • {p}")
+            linhas.append(f"  • {_bullet(p)}")
         linhas.append("")
 
     dur = resultado.get("duracao_min")
@@ -590,4 +601,8 @@ def _formatar_pos_treino(data: str, planejado: dict, resultado: dict) -> str:
         linhas += ["", f"📋 Planejado: {planejado['duracao_min']} min · {planejado.get('tipo','')}"]
 
     linhas += ["", "_MTB Nutrition Bot 🤖_"]
-    return "\n".join(linhas)
+    msg = "\n".join(linhas)
+    # cinto de segurança: o WhatsApp/Twilio recusa acima de 1600 caracteres
+    if len(msg) > 1550:
+        msg = msg[:1530].rstrip() + "…\n\n_MTB Nutrition Bot 🤖_"
+    return msg
