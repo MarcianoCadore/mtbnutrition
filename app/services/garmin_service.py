@@ -338,6 +338,54 @@ def _is_cycling(act: dict) -> bool:
     return any(k in type_key.lower() for k in ("cycl", "bike", "mtb", "mountain"))
 
 
+# Fator de intensidade típico por tipo de treino — usado para estimar o TSS
+# planejado (esperado). Aproximação razoável quando não há medidor de potência.
+_IF_ESPERADO = {
+    "RECUPERACAO": 0.55,
+    "Z2_LONGO":    0.68,
+    "TEMPO":       0.85,
+    "FORCA":       0.80,
+    "TIROS":       0.88,
+    "VO2MAX":      0.92,
+}
+
+
+def _hrtss(duracao_min, avg_hr, limiar) -> int | None:
+    """TSS estimado pela FC (hrTSS): horas × (FCmédia/limiar)² × 100."""
+    if not (duracao_min and avg_hr and limiar):
+        return None
+    return round((duracao_min / 60) * (avg_hr / limiar) ** 2 * 100)
+
+
+def _tss_esperado(tipo, duracao_min) -> int | None:
+    fator = _IF_ESPERADO.get(tipo)
+    if not (fator and duracao_min):
+        return None
+    return round((duracao_min / 60) * fator ** 2 * 100)
+
+
+def _metricas_extra(planejado: dict, resultado: dict, limiar, avg_speed_ms=None) -> dict:
+    """Velocidade média e TSS (esperado/obtido) para o modal de avaliação.
+    Não são enviadas ao WhatsApp — só ficam salvas no resultado para o portal."""
+    extra = {}
+    vel = None
+    if avg_speed_ms:
+        vel = avg_speed_ms * 3.6
+    elif resultado.get("distancia_km") and resultado.get("duracao_min"):
+        vel = resultado["distancia_km"] / (resultado["duracao_min"] / 60)
+    if vel:
+        extra["velocidade_media_kmh"] = round(vel, 1)
+
+    obtido = _hrtss(resultado.get("duracao_min"), resultado.get("avg_hr"), limiar)
+    if obtido is not None:
+        extra["tss_obtido"] = obtido
+
+    esperado = _tss_esperado((planejado or {}).get("tipo"), (planejado or {}).get("duracao_min"))
+    if esperado is not None:
+        extra["tss_esperado"] = esperado
+    return extra
+
+
 async def sync_atividades(semana_inicio: str) -> int:
     """Busca atividades completadas no Garmin e salva como resultado."""
     api = get_garmin_client()
@@ -459,6 +507,14 @@ async def sync_atividades(semana_inicio: str) -> int:
                 if t.get("data") == act_date:
                     treino_planejado = t
                     break
+
+        # métricas extras do modal de avaliação (velocidade, TSS) — NÃO vão ao WhatsApp
+        try:
+            from app.services.config_service import get_zonas
+            limiar = (await get_zonas()).get("limiar")
+        except Exception:
+            limiar = None
+        resultado.update(_metricas_extra(treino_planejado, resultado, limiar, act.get("averageSpeed")))
 
         # análise IA
         try:

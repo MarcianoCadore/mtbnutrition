@@ -426,11 +426,15 @@ function abrirAvaliacao(key) {
   const mItems = [];
   if (res.duracao_min) { const h=Math.floor(res.duracao_min/60),m=res.duracao_min%60; mItems.push(`<div class="metric"><div class="mv">${h>0?h+'h':''}${m>0?m+'min':''}</div><div class="ml">Real</div></div>`); }
   if (res.distancia_km) mItems.push(`<div class="metric"><div class="mv">${res.distancia_km} km</div><div class="ml">Distância</div></div>`);
+  if (res.velocidade_media_kmh) mItems.push(`<div class="metric"><div class="mv">${res.velocidade_media_kmh} km/h</div><div class="ml">Vel. média</div></div>`);
+  if (res.elevacao_m) mItems.push(`<div class="metric"><div class="mv">${res.elevacao_m} m</div><div class="ml">Altimetria</div></div>`);
   if (res.avg_hr) mItems.push(`<div class="metric"><div class="mv">${res.avg_hr} bpm</div><div class="ml">FC média</div></div>`);
   if (res.max_hr) mItems.push(`<div class="metric"><div class="mv">${res.max_hr} bpm</div><div class="ml">FC máx</div></div>`);
   if (res.cadencia_media_rpm) mItems.push(`<div class="metric"><div class="mv">${res.cadencia_media_rpm} rpm</div><div class="ml">Cad. real</div></div>`);
   if (res.cadencia_max_rpm) mItems.push(`<div class="metric"><div class="mv">${res.cadencia_max_rpm} rpm</div><div class="ml">Cad. máx</div></div>`);
   if (res.calorias) mItems.push(`<div class="metric"><div class="mv">${res.calorias}</div><div class="ml">kcal</div></div>`);
+  if (res.tss_esperado != null) mItems.push(`<div class="metric"><div class="mv">${res.tss_esperado}</div><div class="ml">TSS esperado</div></div>`);
+  if (res.tss_obtido != null) mItems.push(`<div class="metric"><div class="mv">${res.tss_obtido}</div><div class="ml">TSS obtido</div></div>`);
 
   const fortes = (ia.pontos_fortes || []).map(p => `<li><span class="icon">✅</span>${p}</li>`).join('');
   const fracos = (ia.pontos_fracos || []).map(p => `<li><span class="icon">⚠️</span>${p}</li>`).join('');
