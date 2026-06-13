@@ -516,6 +516,56 @@ async def estimar_alimento_extra(texto: str | None = None,
     return await asyncio.to_thread(_call)
 
 
+async def interpretar_mensagem(texto: str, referencia_datas: str) -> dict:
+    """Classifica a intenção de uma mensagem de WhatsApp do ciclista e extrai os
+    dados. Retorna {"intencao", "data", "descricao", "de", "para", "resposta"}.
+
+    intencao ∈ plano_dia | treino_dia | registrar_fuga | trocar_alimento | conversa
+    """
+    import asyncio
+
+    prompt = f"""Você é o assistente de nutrição e treino de um ciclista de MTB, conversando pelo WhatsApp (responda sempre em português do Brasil, tom amigável e direto).
+
+Classifique a mensagem do usuário em UMA intenção e extraia os dados.
+
+Datas de referência (use para resolver "hoje", "amanhã", "quinta", etc.):
+{referencia_datas}
+
+Intenções:
+- "plano_dia": quer saber a alimentação/cardápio/refeições de um dia.
+- "treino_dia": quer saber o treino/pedal de um dia.
+- "registrar_fuga": disse que comeu ou bebeu algo (fora do plano).
+- "trocar_alimento": quer trocar um alimento do cardápio por outro.
+- "conversa": saudação, dúvida geral ou qualquer coisa que não se encaixe acima.
+
+Responda APENAS em JSON válido, sem markdown:
+{{"intencao":"...", "data":"YYYY-MM-DD ou null (null = hoje)", "descricao":"o que comeu — só registrar_fuga", "de":"alimento trocado — só trocar_alimento", "para":"alimento novo — só trocar_alimento", "resposta":"resposta curta e útil — só quando intencao=conversa"}}
+
+Mensagem do usuário: "{texto}"
+"""
+
+    modelos = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"]
+
+    def _call():
+        ultimo_erro = None
+        for nome in modelos:
+            try:
+                modelo = genai.GenerativeModel(nome)
+                resp = modelo.generate_content(prompt)
+                raw = resp.text.strip().replace("```json", "").replace("```", "").strip()
+                d = json.loads(raw)
+                d.setdefault("intencao", "conversa")
+                return d
+            except Exception as e:
+                ultimo_erro = e
+                if _e_cota(e):
+                    continue
+                raise
+        raise QuotaExcedida() from ultimo_erro
+
+    return await asyncio.to_thread(_call)
+
+
 class QuotaExcedida(Exception):
     """Cota gratuita do Gemini esgotada em todos os modelos de visão."""
 
