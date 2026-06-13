@@ -96,6 +96,10 @@ _CATEGORIA = {
     "arroz_branco": "arroz", "arroz_integral": "arroz",
 }
 
+# Quantidade máxima de um mesmo alimento por refeição. Pão nunca passa de 2 por
+# refeição (3+ é carboidrato demais e sem lógica).
+_MAX_QTD_REFEICAO = {"pao_frances": 2, "pao_integral": 2}
+
 # Refeição: (nome, horario, [slot, slot, ...]); slot = lista de alternativas.
 # Horários neutros (não assumem treino de manhã) — o treino pode ser manhã,
 # tarde ou noite, então a nutrição em volta dele é guiada por NOTA_TREINO.
@@ -349,7 +353,11 @@ def plano_para_tipo(tipo, data_iso: str | None = None, horarios_cfg: dict | None
     kcal_total = 0
     prot_total = 0.0
     for r in refeicoes_raw:
-        itens_exp = [_expandir_item(chave, qtd) for chave, qtd in _merge_itens(r["itens"])]
+        itens_norm = [
+            (chave, min(qtd, _MAX_QTD_REFEICAO[chave]) if chave in _MAX_QTD_REFEICAO else qtd)
+            for chave, qtd in _merge_itens(r["itens"])
+        ]
+        itens_exp = [_expandir_item(chave, qtd) for chave, qtd in itens_norm]
         r_kcal = sum(i["kcal"] for i in itens_exp)
         r_prot = round(sum(i["proteina_g"] for i in itens_exp), 1)
         kcal_total += r_kcal
