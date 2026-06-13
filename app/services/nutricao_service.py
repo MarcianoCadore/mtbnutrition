@@ -39,6 +39,7 @@ ALIMENTOS = {
     "carne_bovina":   {"nome": "Carne bovina magra (patinho)", "base": "100 g grelhada", "kcal": 190, "prot": 32.0},
     "frango":         {"nome": "Peito de frango",      "base": "100 g grelhado",     "kcal": 165, "prot": 31.0},
     "tilapia":        {"nome": "Filé de tilápia",      "base": "100 g grelhado",     "kcal": 130, "prot": 26.0},
+    "linguica":       {"nome": "Linguiça grelhada",    "base": "100 g (2 gomos)",    "kcal": 290, "prot": 16.0},
     "whey":           {"nome": "Whey protein",         "base": "1 scoop (30 g)",     "kcal": 120, "prot": 24.0},
     # laticínios
     "leite_desnatado":{"nome": "Leite desnatado",      "base": "200 ml (1 copo)",    "kcal": 70,  "prot": 7.0},
@@ -89,6 +90,10 @@ G_CARB_1    = [[("arroz_branco", 1)],   [("arroz_integral", 1)],   [("batata_doc
 G_CARB_15   = [[("arroz_branco", 1.5)], [("arroz_integral", 1.5)], [("batata_doce", 2)]]     # ~186-195
 G_CARB_2    = [[("arroz_branco", 2)],   [("arroz_integral", 2)],   [("batata_doce", 3)]]     # ~258-260
 G_CARB_25   = [[("arroz_branco", 2.5)], [("arroz_integral", 2.5)], [("batata_doce", 3.5)]]   # ~310-325
+
+# Almoço especial de domingo (churrasco). Substitui o almoço normal só no domingo.
+CHURRASCO_ALMOCO = [("carne_bovina", 1.5), ("frango", 1), ("linguica", 1),
+                    ("arroz_branco", 1), ("feijao", 1)]
 FIX = lambda *itens: [list(itens)]   # slot de alternativa única (item fixo)
 
 # Categorias de alimentos "intercambiáveis": evita dois do mesmo tipo na mesma
@@ -340,6 +345,18 @@ def plano_para_tipo(tipo, data_iso: str | None = None, horarios_cfg: dict | None
             "nome": nome, "horario": horarios.get(nome, horario_padrao),
             "itens": list(escolhidos), "observacao": None,
         })
+
+    # 1b) domingo: churrasco no almoço (carne, frango, linguiça)
+    if data_iso:
+        try:
+            if date.fromisoformat(data_iso).weekday() == 6:  # 6 = domingo
+                for r in refeicoes_raw:
+                    if r["nome"] == "Almoço":
+                        r["itens"] = list(CHURRASCO_ALMOCO)
+                        r["observacao"] = "🔥 Churrasco de domingo — aproveite! (volte ao plano na segunda)"
+                        break
+        except ValueError:
+            pass
 
     # 2) com treino e período definido, redistribui o carbo em volta do treino
     aplicar = periodo in PERIODO_REFEICOES and tipo != TipoTreino.DESCANSO
