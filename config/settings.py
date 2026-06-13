@@ -3,6 +3,12 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     MONGODB_URL: str = "mongodb://127.0.0.1:27017"
+    # Diretório onde os arquivos .fit são salvos. Em produção apontar para um
+    # disco persistente (ex.: /opt/mtbnutrition/uploads/fit). Vazio = padrão local.
+    UPLOADS_DIR: str = ""
+    # Login do portal (HTTP Basic). Em produção, definir PORTAL_PASSWORD via env.
+    PORTAL_USER: str = "marciano"
+    PORTAL_PASSWORD: str = ""
     # Z-API (WhatsApp)
     ZAPI_INSTANCE_ID: str = ""
     ZAPI_TOKEN: str = ""

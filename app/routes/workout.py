@@ -9,8 +9,11 @@ from app.models.models import Treino, TipoTreino
 from app.services.mongo_service import get_db
 from app.services.fit_service import analisar_fit
 from app.services.ai_service import classificar_tipo_treino
+from config.settings import settings
 
-UPLOADS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "uploads", "fit")
+UPLOADS_DIR = settings.UPLOADS_DIR or os.path.join(
+    os.path.dirname(__file__), "..", "..", "uploads", "fit"
+)
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 
 router = APIRouter()
