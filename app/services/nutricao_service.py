@@ -88,6 +88,14 @@ G_LANCHE      = [[("whey", 1)], [("iogurte_grego", 1)]]                         
 G_LANCHE2     = [[("whey", 1)], [("iogurte_natural", 1)]]                                   # ~100-120
 FIX = lambda *itens: [list(itens)]   # slot de alternativa única (item fixo)
 
+# Categorias de alimentos "intercambiáveis": evita dois do mesmo tipo na mesma
+# refeição (ex.: pão integral + pão francês, ou arroz branco + arroz integral).
+# Ao escolher a alternativa de um grupo, preferimos uma categoria ainda ausente.
+_CATEGORIA = {
+    "pao_frances": "pao", "pao_integral": "pao",
+    "arroz_branco": "arroz", "arroz_integral": "arroz",
+}
+
 # Refeição: (nome, horario, [slot, slot, ...]); slot = lista de alternativas.
 # Horários neutros (não assumem treino de manhã) — o treino pode ser manhã,
 # tarde ou noite, então a nutrição em volta dele é guiada por NOTA_TREINO.
@@ -304,10 +312,27 @@ def plano_para_tipo(tipo, data_iso: str | None = None, horarios_cfg: dict | None
     pos = 0
     refeicoes_raw = []
     for nome, horario_padrao, slots in MENUS[menu_key]:
+        # categorias já garantidas pelos itens fixos (slots de 1 alternativa)
+        cats = set()
+        for slot in slots:
+            if len(slot) == 1:
+                cats |= {_CATEGORIA.get(ch) for ch, _ in slot[0]} - {None}
+
         escolhidos = []
         for slot in slots:
-            alt = slot[(seed + pos) % len(slot)]   # escolhe 1 alternativa do slot
+            base = (seed + pos) % len(slot)
             pos += 1
+            alt = slot[base]
+            if len(slot) > 1:
+                # entre as alternativas (a partir da escolha do dia), prefere a
+                # primeira que não repita uma categoria já presente na refeição.
+                for k in range(len(slot)):
+                    cand = slot[(base + k) % len(slot)]
+                    cand_cats = {_CATEGORIA.get(ch) for ch, _ in cand} - {None}
+                    if not (cand_cats & cats):
+                        alt = cand
+                        break
+            cats |= {_CATEGORIA.get(ch) for ch, _ in alt} - {None}
             escolhidos.extend(alt)
         refeicoes_raw.append({
             "nome": nome, "horario": horarios.get(nome, horario_padrao),
