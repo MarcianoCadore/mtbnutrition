@@ -262,6 +262,22 @@ def _seed(data_iso: str | None) -> int:
         return 0
 
 
+def _merge_itens(itens: list[tuple]) -> list[tuple]:
+    """Soma quantidades de itens repetidos (mesma chave), preservando a ordem da
+    primeira aparição. Evita duplicação quando um item fixo coincide com o
+    sorteado de um grupo (ex.: whey fixo + whey do lanche → 2 scoops) ou quando
+    o ajuste de período adiciona um carbo já presente."""
+    out: list[list] = []
+    idx: dict = {}
+    for chave, qtd in itens:
+        if chave in idx:
+            out[idx[chave]][1] += qtd
+        else:
+            idx[chave] = len(out)
+            out.append([chave, qtd])
+    return [(c, q) for c, q in out]
+
+
 def plano_para_tipo(tipo, data_iso: str | None = None, horarios_cfg: dict | None = None,
                     periodo: str | None = None) -> dict:
     """Monta o cardápio do tipo de treino para uma data, com kcal/proteína por
@@ -308,7 +324,7 @@ def plano_para_tipo(tipo, data_iso: str | None = None, horarios_cfg: dict | None
     kcal_total = 0
     prot_total = 0.0
     for r in refeicoes_raw:
-        itens_exp = [_expandir_item(chave, qtd) for chave, qtd in r["itens"]]
+        itens_exp = [_expandir_item(chave, qtd) for chave, qtd in _merge_itens(r["itens"])]
         r_kcal = sum(i["kcal"] for i in itens_exp)
         r_prot = round(sum(i["proteina_g"] for i in itens_exp), 1)
         kcal_total += r_kcal
