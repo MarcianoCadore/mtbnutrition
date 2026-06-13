@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # Content API — template aprovado para notificações proativas (fora da janela de 24h).
     # SID no formato HX... do template "passthrough" com 1 variável {{1}}.
     TWILIO_CONTENT_SID: str = ""
+    # Valida a assinatura X-Twilio-Signature no webhook de entrada do WhatsApp.
+    # Deixe True em produção; só desligue temporariamente para depurar.
+    VALIDAR_TWILIO: bool = True
 
     class Config:
         env_file = ".env"

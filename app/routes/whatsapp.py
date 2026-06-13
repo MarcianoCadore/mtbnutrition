@@ -1,5 +1,9 @@
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import HTMLResponse
+import logging
+from xml.sax.saxutils import escape
+
+import httpx
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 from datetime import datetime
 from app.services.whatsapp_service import send_message, send_plano_diario
@@ -8,6 +12,87 @@ from app.models.models import PlanoAlimentar
 from config.settings import settings
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _twiml(mensagem: str) -> Response:
+    """Resposta TwiML que faz o WhatsApp responder com 'mensagem'."""
+    xml = (f'<?xml version="1.0" encoding="UTF-8"?>'
+           f'<Response><Message>{escape(mensagem)}</Message></Response>')
+    return Response(content=xml, media_type="application/xml")
+
+
+@router.post("/webhook")
+async def whatsapp_webhook(request: Request):
+    """Recebe mensagens de entrada do WhatsApp (Twilio). Se o usuário descrever
+    ou fotografar algo que comeu fora do plano, registra a fuga de HOJE, reajusta
+    o cardápio e responde com o plano atualizado."""
+    form = await request.form()
+
+    # 1) valida a assinatura da Twilio (segurança — o webhook é público)
+    if settings.VALIDAR_TWILIO and settings.TWILIO_AUTH_TOKEN:
+        try:
+            from twilio.request_validator import RequestValidator
+            validator = RequestValidator(settings.TWILIO_AUTH_TOKEN)
+            assinatura = request.headers.get("X-Twilio-Signature", "")
+            if not validator.validate(str(request.url), dict(form), assinatura):
+                logger.warning("Webhook WhatsApp: assinatura Twilio inválida (url=%s)", request.url)
+                return Response(status_code=403, content="assinatura inválida")
+        except Exception as e:
+            logger.error("Webhook WhatsApp: erro na validação: %s", e)
+            return Response(status_code=403, content="erro de validação")
+
+    body = (form.get("Body") or "").strip()
+    try:
+        num_media = int(form.get("NumMedia") or 0)
+    except ValueError:
+        num_media = 0
+
+    # 2) baixa a foto, se houver
+    img_bytes = mime = None
+    if num_media > 0 and form.get("MediaUrl0"):
+        mime = form.get("MediaContentType0")
+        try:
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as cli:
+                r = await cli.get(form.get("MediaUrl0"),
+                                  auth=(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN))
+                r.raise_for_status()
+                img_bytes = r.content
+        except Exception as e:
+            logger.error("Webhook WhatsApp: falha ao baixar mídia: %s", e)
+
+    if not body and not img_bytes:
+        return _twiml("🍔 Me diga o que você comeu fora do plano (texto ou foto) "
+                      "que eu ajusto teu cardápio de hoje.")
+
+    # 3) estima as calorias com a IA
+    from app.services.ai_service import estimar_alimento_extra, QuotaExcedida
+    try:
+        extra = await estimar_alimento_extra(body or None, img_bytes, mime)
+    except QuotaExcedida:
+        return _twiml("⚠️ A IA está sem cota agora. Tente mais tarde ou registre pelo portal.")
+    except Exception as e:
+        logger.error("Webhook WhatsApp: estimativa falhou: %s", e)
+        return _twiml("Não consegui calcular as calorias disso. Tenta descrever de outro jeito?")
+
+    if extra["kcal"] <= 0 and not img_bytes:
+        return _twiml("Não entendi como comida. Ex.: '2 fatias de pizza' ou '1 pão de queijo'.")
+
+    # 4) registra a fuga de hoje e reajusta o cardápio
+    from app.services.config_service import adicionar_extra_dia, extras_do_dia, get_horarios
+    from app.services.nutricao_service import plano_para_tipo, formatar_plano_whatsapp
+    from app.routes.nutrition import _tipo_periodo_do_dia
+
+    data = datetime.now().date().isoformat()
+    await adicionar_extra_dia(data, extra)
+    cfg = await get_horarios()
+    tipo, periodo = await _tipo_periodo_do_dia(data)
+    extras = await extras_do_dia(data)
+    plano = plano_para_tipo(tipo, data, cfg, periodo=periodo, extras=extras)
+
+    cabecalho = (f"🍔 Registrei: {extra['resumo']} (~{int(extra['kcal'])} kcal)\n"
+                 f"Ajustei teu cardápio de hoje (cortei carbo) pra manter o total:\n\n")
+    return _twiml(cabecalho + formatar_plano_whatsapp(data, plano))
 
 
 class MensagemBody(BaseModel):

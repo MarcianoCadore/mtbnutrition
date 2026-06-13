@@ -23,8 +23,8 @@ app = FastAPI(
 )
 
 
-# Paths liberados sem login (health check + a própria tela de login).
-_PUBLIC_PATHS = {"/health", "/login", "/logout"}
+# Paths liberados sem login (health check, tela de login e webhook da Twilio).
+_PUBLIC_PATHS = {"/health", "/login", "/logout", "/whatsapp/webhook"}
 _COOKIE = "mtb_auth"
 
 
