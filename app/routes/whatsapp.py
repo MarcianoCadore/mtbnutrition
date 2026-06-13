@@ -22,6 +22,48 @@ def _twiml(mensagem: str) -> Response:
     return Response(content=xml, media_type="application/xml")
 
 
+def _resolver_data_texto(texto: str) -> str | None:
+    """Resolve deterministicamente a data citada na mensagem (hoje/amanhã/ontem,
+    anteontem/depois de amanhã e dias da semana), sem depender do cálculo da IA —
+    que às vezes erra por 1 dia. Retorna ISO date (YYYY-MM-DD) ou None se não
+    houver menção temporal na mensagem."""
+    import re
+    from datetime import date, timedelta
+
+    t = " " + texto.lower() + " "
+    hoje = date.today()
+
+    if "depois de amanh" in t:
+        return (hoje + timedelta(days=2)).isoformat()
+    if "anteontem" in t:
+        return (hoje - timedelta(days=2)).isoformat()
+    if "amanh" in t:          # amanhã / amanha
+        return (hoje + timedelta(days=1)).isoformat()
+    if "ontem" in t:
+        return (hoje - timedelta(days=1)).isoformat()
+
+    dias = {"segunda": 0, "terça": 1, "terca": 1, "quarta": 2, "quinta": 3,
+            "sexta": 4, "sábado": 5, "sabado": 5, "domingo": 6}
+    for nome, idx in dias.items():
+        if re.search(rf"\b{nome}\b", t):
+            seg = hoje - timedelta(days=hoje.weekday())   # segunda desta semana
+            alvo = seg + timedelta(days=idx)
+            # ajusta a semana conforme o tempo verbal/contexto da frase
+            if "que vem" in t or "próxim" in t or "proxim" in t:
+                alvo += timedelta(days=7)
+            elif "passad" in t:                            # "segunda passada"
+                alvo -= timedelta(days=7)
+            elif re.search(r"\b(fiz|comi|foi|fui|treinei|pedalei|comeu)\b", t) and alvo > hoje:
+                alvo -= timedelta(days=7)                   # passado mas cairia no futuro
+            elif re.search(r"\b(vou|terei|ter[áa]|farei)\b", t) and alvo < hoje:
+                alvo += timedelta(days=7)                   # futuro mas cairia no passado
+            return alvo.isoformat()
+
+    if "hoje" in t:
+        return hoje.isoformat()
+    return None
+
+
 def _ref_datas() -> str:
     """Texto com as datas de referência (hoje/amanhã/ontem + dias da semana atual)
     para a IA resolver expressões como 'quinta' ou 'amanhã'."""
@@ -37,14 +79,38 @@ def _ref_datas() -> str:
     return "\n".join(linhas)
 
 
-async def _plano_do_dia_msg(data: str) -> str:
+# palavra-chave na mensagem → nome da refeição (como aparece no plano)
+_REFEICOES_KW = [
+    (("janta", "jantar", "à noite", "a noite", "ceia"), "Jantar"),
+    (("almoç", "almoc"), "Almoço"),
+    (("lanche", "tarde"), "Lanche da tarde"),
+    (("café da manhã", "cafe da manha", "café", "cafe", "manhã", "manha", "desjejum"), "Café da manhã"),
+]
+
+
+def _refeicao_pedida(texto: str) -> str | None:
+    """Detecta se a mensagem pede UMA refeição específica (jantar, almoço...).
+    Retorna o nome da refeição ou None (= dia todo)."""
+    t = texto.lower()
+    for kws, nome in _REFEICOES_KW:
+        if any(k in t for k in kws):
+            return nome
+    return None
+
+
+async def _plano_do_dia_msg(data: str, refeicao: str | None = None) -> str:
     from app.services.config_service import get_horarios, extras_do_dia
-    from app.services.nutricao_service import plano_para_tipo, formatar_plano_whatsapp
+    from app.services.nutricao_service import (
+        plano_para_tipo, formatar_plano_whatsapp, formatar_refeicao_whatsapp)
     from app.routes.nutrition import _tipo_periodo_do_dia
     cfg = await get_horarios()
     tipo, periodo = await _tipo_periodo_do_dia(data)
     extras = await extras_do_dia(data)
     plano = plano_para_tipo(tipo, data, cfg, periodo=periodo, extras=extras)
+    if refeicao:
+        msg = formatar_refeicao_whatsapp(data, plano, refeicao)
+        if msg:
+            return msg
     return formatar_plano_whatsapp(data, plano)
 
 
@@ -141,18 +207,21 @@ async def whatsapp_webhook(request: Request):
         return _twiml("Não entendi bem 🤔 Ex.: 'cardápio de hoje', 'treino de quinta', 'comi um pão de queijo'.")
 
     intencao = interp.get("intencao", "conversa")
-    # a IA às vezes devolve a data como o texto "null" ou em formato inválido
-    data = interp.get("data")
-    if not data or str(data).lower() == "null":
-        data = hoje
-    else:
-        try:
-            datetime.fromisoformat(data)
-        except (ValueError, TypeError):
+    # 1) resolução determinística pelo texto (a IA erra dias da semana por 1 dia)
+    data = _resolver_data_texto(body)
+    # 2) fallback: data devolvida pela IA (que às vezes vem "null" ou inválida)
+    if not data:
+        data = interp.get("data")
+        if not data or str(data).lower() == "null":
             data = hoje
+        else:
+            try:
+                datetime.fromisoformat(data)
+            except (ValueError, TypeError):
+                data = hoje
 
     if intencao == "plano_dia":
-        return _twiml(await _plano_do_dia_msg(data))
+        return _twiml(await _plano_do_dia_msg(data, _refeicao_pedida(body)))
     if intencao == "treino_dia":
         return _twiml(await _treino_do_dia_msg(data))
     if intencao in ("registrar_fuga", "trocar_alimento"):

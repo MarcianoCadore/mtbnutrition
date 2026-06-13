@@ -544,6 +544,29 @@ def formatar_plano_whatsapp(data_iso: str, plano: dict) -> str:
     return "\n".join(linhas)
 
 
+def formatar_refeicao_whatsapp(data_iso: str, plano: dict, nome_refeicao: str) -> str | None:
+    """Monta a mensagem de UMA refeição específica do dia (ex.: só o jantar).
+    Retorna None se a refeição não existir no plano do dia."""
+    from datetime import datetime
+    ref = next((r for r in plano["refeicoes"]
+                if r["nome"].lower() == nome_refeicao.lower()), None)
+    if not ref:
+        return None
+    d = datetime.strptime(data_iso, "%Y-%m-%d")
+    dias = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
+    linhas = [
+        f"🍽️ *{ref['nome']} — {dias[d.weekday()]}, {d.strftime('%d/%m')}*",
+        f"⏰ {ref['horario']} · {ref['kcal']} kcal · {ref['proteina_g']:g}g proteína",
+        "",
+    ]
+    for i in ref["itens"]:
+        linhas.append(f"  • {i['texto']}")
+    if ref.get("observacao"):
+        linhas += ["", ref["observacao"]]
+    linhas += ["", "_MTB Nutrition Bot 🤖_"]
+    return "\n".join(linhas)
+
+
 def formatar_lembrete_refeicao(ref: dict) -> str:
     """Mensagem de lembrete (30 min antes) com o que comer na refeição."""
     linhas = [
