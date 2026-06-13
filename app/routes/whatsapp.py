@@ -141,7 +141,15 @@ async def whatsapp_webhook(request: Request):
         return _twiml("Não entendi bem 🤔 Ex.: 'cardápio de hoje', 'treino de quinta', 'comi um pão de queijo'.")
 
     intencao = interp.get("intencao", "conversa")
-    data = interp.get("data") or hoje
+    # a IA às vezes devolve a data como o texto "null" ou em formato inválido
+    data = interp.get("data")
+    if not data or str(data).lower() == "null":
+        data = hoje
+    else:
+        try:
+            datetime.fromisoformat(data)
+        except (ValueError, TypeError):
+            data = hoje
 
     if intencao == "plano_dia":
         return _twiml(await _plano_do_dia_msg(data))
