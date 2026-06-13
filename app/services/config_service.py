@@ -134,3 +134,34 @@ async def zonas_bpm_map() -> dict:
     """Mapa {numero_da_zona: {'min': bpm, 'max': bpm}} para montar os workouts."""
     cfg = await get_zonas()
     return {int(z["zona"]): {"min": int(z["min"]), "max": int(z["max"])} for z in cfg["zonas"]}
+
+
+# ── Ajustes de "fuga" do plano (o que comi fora, por dia) ─────────────────────
+
+async def extras_do_dia(data: str) -> list:
+    """Lista de itens comidos fora do plano numa data (ISO YYYY-MM-DD)."""
+    db = get_db()
+    doc = await db.ajustes_dia.find_one({"_id": data})
+    return (doc or {}).get("extras", [])
+
+
+async def adicionar_extra_dia(data: str, extra: dict) -> list:
+    """Acrescenta um item comido fora do plano ao dia. Retorna a lista atualizada."""
+    item = {
+        "resumo": str(extra.get("resumo", "")).strip() or "Alimento fora do plano",
+        "kcal": max(0, int(extra.get("kcal", 0))),
+        "proteina_g": round(float(extra.get("proteina_g", 0)), 1),
+    }
+    db = get_db()
+    await db.ajustes_dia.update_one(
+        {"_id": data},
+        {"$push": {"extras": item}, "$set": {"data": data}},
+        upsert=True,
+    )
+    return await extras_do_dia(data)
+
+
+async def remover_ajuste_dia(data: str) -> None:
+    """Remove todos os ajustes (extras) de um dia — volta ao plano original."""
+    db = get_db()
+    await db.ajustes_dia.delete_one({"_id": data})

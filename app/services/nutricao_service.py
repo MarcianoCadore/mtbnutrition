@@ -293,8 +293,35 @@ def _merge_itens(itens: list[tuple]) -> list[tuple]:
     return [(c, q) for c, q in out]
 
 
+def _reduzir_carbo(refeicoes_raw: list[dict], kcal_alvo: float) -> None:
+    """Reduz porções de carboidrato (preservando proteína) para remover ~kcal_alvo
+    do dia, começando pelas refeições mais tarde (jantar → café). Edita in place."""
+    if kcal_alvo <= 0:
+        return
+    restante = kcal_alvo
+    por_nome = {r["nome"]: r for r in refeicoes_raw}
+    for nome in ("Jantar", "Lanche da tarde", "Almoço", "Café da manhã"):
+        ref = por_nome.get(nome)
+        if not ref or restante <= 0:
+            continue
+        novos = []
+        for chave, qtd in ref["itens"]:
+            if restante > 0 and chave in _CARBO_MOVEL and chave in ALIMENTOS:
+                kcal_un = ALIMENTOS[chave]["kcal"]
+                while qtd > 0 and restante > 0:
+                    passo = 1 if qtd >= 1 else qtd
+                    corte = kcal_un * passo
+                    if corte > 2 * restante:   # cortar ultrapassaria demais o alvo
+                        break
+                    qtd = round(qtd - passo, 2)
+                    restante -= corte
+            if qtd > 0:
+                novos.append((chave, qtd))
+        ref["itens"] = novos
+
+
 def plano_para_tipo(tipo, data_iso: str | None = None, horarios_cfg: dict | None = None,
-                    periodo: str | None = None) -> dict:
+                    periodo: str | None = None, extras: list | None = None) -> dict:
     """Monta o cardápio do tipo de treino para uma data, com kcal/proteína por
     item, por refeição e total do dia.
 
@@ -363,6 +390,11 @@ def plano_para_tipo(tipo, data_iso: str | None = None, horarios_cfg: dict | None
     if aplicar:
         _aplicar_periodo(refeicoes_raw, periodo)
 
+    # 2b) "fuga" do plano: corta carbo do dia p/ compensar o que foi comido fora
+    extras_kcal = sum(int(e.get("kcal", 0)) for e in (extras or []))
+    if extras_kcal > 0:
+        _reduzir_carbo(refeicoes_raw, extras_kcal)
+
     # 3) expande os itens e soma kcal/proteína
     refeicoes = []
     kcal_total = 0
@@ -382,6 +414,23 @@ def plano_para_tipo(tipo, data_iso: str | None = None, horarios_cfg: dict | None
             "kcal": r_kcal, "proteina_g": r_prot, "itens": itens_exp,
             "observacao": r["observacao"],
         })
+
+    # 3b) anexa os itens comidos fora do plano (já com o carbo do dia reduzido)
+    if extras:
+        itens_ex = [{
+            "texto": e.get("resumo") or e.get("texto") or "Alimento fora do plano",
+            "kcal": int(e.get("kcal", 0)),
+            "proteina_g": round(float(e.get("proteina_g", 0)), 1),
+        } for e in extras]
+        ex_kcal = sum(i["kcal"] for i in itens_ex)
+        ex_prot = round(sum(i["proteina_g"] for i in itens_ex), 1)
+        refeicoes.append({
+            "nome": "Fora do plano", "horario": "",
+            "kcal": ex_kcal, "proteina_g": ex_prot, "itens": itens_ex,
+            "observacao": "Você comeu isto fora do plano — o carboidrato do dia foi reduzido pra manter o total de calorias.",
+        })
+        kcal_total += ex_kcal
+        prot_total += ex_prot
 
     if tipo == TipoTreino.DESCANSO:
         nota = None

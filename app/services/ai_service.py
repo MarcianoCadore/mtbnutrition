@@ -464,6 +464,58 @@ Responda APENAS em JSON válido, sem markdown, sem texto extra:
     return await asyncio.to_thread(_call)
 
 
+async def estimar_alimento_extra(texto: str | None = None,
+                                 image_bytes: bytes | None = None,
+                                 mime_type: str | None = None) -> dict:
+    """Estima calorias e proteína de algo comido fora do plano, a partir de uma
+    descrição em texto e/ou de uma foto do alimento.
+
+    Retorna {"resumo": str, "kcal": int, "proteina_g": float}.
+    Levanta QuotaExcedida se a cota gratuita acabar em todos os modelos.
+    """
+    import asyncio
+
+    prompt = (
+        "Você é um nutricionista. Estime o TOTAL de calorias (kcal) e de proteína "
+        "(g) do que a pessoa comeu/bebeu FORA do plano, descrito abaixo e/ou na "
+        "imagem. Considere porções típicas brasileiras.\n"
+    )
+    if texto:
+        prompt += f'\nDescrição do que comeu: "{texto}"\n'
+    prompt += (
+        '\nResponda APENAS em JSON válido, sem markdown:\n'
+        '{"resumo": "breve descrição do que foi consumido", "kcal": number, "proteina_g": number}'
+    )
+
+    conteudo = [prompt]
+    if image_bytes and mime_type:
+        conteudo.append({"mime_type": mime_type, "data": image_bytes})
+
+    modelos = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"]
+
+    def _call():
+        ultimo_erro = None
+        for nome in modelos:
+            try:
+                modelo = genai.GenerativeModel(nome)
+                resp = modelo.generate_content(conteudo)
+                raw = resp.text.strip().replace("```json", "").replace("```", "").strip()
+                d = json.loads(raw)
+                return {
+                    "resumo": str(d.get("resumo") or (texto or "Alimento fora do plano")),
+                    "kcal": max(0, int(round(float(d.get("kcal") or 0)))),
+                    "proteina_g": max(0.0, round(float(d.get("proteina_g") or 0), 1)),
+                }
+            except Exception as e:
+                ultimo_erro = e
+                if _e_cota(e):
+                    continue
+                raise
+        raise QuotaExcedida() from ultimo_erro
+
+    return await asyncio.to_thread(_call)
+
+
 class QuotaExcedida(Exception):
     """Cota gratuita do Gemini esgotada em todos os modelos de visão."""
 

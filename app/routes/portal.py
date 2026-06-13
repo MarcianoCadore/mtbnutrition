@@ -206,6 +206,7 @@ HTML = """<!DOCTYPE html>
     <a href="/workout/zonas">❤️ Zonas FC</a>
     <a href="/nutrition/alimentos">🍽️ Alimentos</a>
     <a href="/nutrition/guia">🥗 Nutrição</a>
+    <a href="/nutrition/ajuste">🍔 Fuga do plano</a>
     <a href="/logout">🚪 Sair</a>
   </div>
 </nav>
