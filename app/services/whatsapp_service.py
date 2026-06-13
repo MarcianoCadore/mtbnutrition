@@ -83,6 +83,55 @@ def format_plano_whatsapp(plano: PlanoAlimentar) -> str:
 
     return "\n".join(linhas)
 
+_TREINO_LABELS = {
+    "Z2_LONGO": "Z2 Longo", "TIROS": "Tiros", "VO2MAX": "VO2 Máx",
+    "TEMPO": "Tempo", "FORCA": "Força", "RECUPERACAO": "Recuperação",
+    "DESCANSO": "Descanso",
+}
+
+
+def format_semana_treinos_whatsapp(semana_inicio: str, treinos: list[dict]) -> str:
+    """Resumo da semana de treinos para o WhatsApp (1 linha por dia)."""
+    from datetime import datetime, timedelta
+    dias = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
+    d0 = datetime.strptime(semana_inicio, "%Y-%m-%d").date()
+    fim = d0 + timedelta(days=6)
+    linhas = [f"🚴 *Treinos da semana — {d0.strftime('%d/%m')} a {fim.strftime('%d/%m')}*", ""]
+
+    for t in sorted(treinos, key=lambda x: x.get("data", "")):
+        try:
+            dd = datetime.strptime(t["data"], "%Y-%m-%d").date()
+            nome_dia, dstr = dias[dd.weekday()], dd.strftime("%d/%m")
+        except Exception:
+            nome_dia, dstr = "", t.get("data", "")
+        tipo = t.get("tipo", "DESCANSO")
+        if tipo == "DESCANSO" or not t.get("duracao_min"):
+            linhas.append(f"*{nome_dia} {dstr}* — 🛌 Descanso")
+            continue
+        cab = f"*{nome_dia} {dstr}* — {_TREINO_LABELS.get(tipo, tipo)}"
+        extras = []
+        if t.get("duracao_min"):
+            extras.append(f"⏱️ {t['duracao_min']} min")
+        if t.get("cadencia_rpm"):
+            extras.append(f"🔄 {t['cadencia_rpm']} rpm")
+        if extras:
+            cab += " · " + " · ".join(extras)
+        linhas.append(cab)
+        desc = (t.get("descricao") or "").strip()
+        if desc:
+            if len(desc) > 140:
+                desc = desc[:137].rstrip() + "…"
+            linhas.append(f"  _{desc}_")
+
+    linhas += ["", "_MTB Nutrition Bot 🤖_"]
+    return "\n".join(linhas)
+
+
+async def send_semana_treinos(semana_inicio: str, treinos: list[dict]) -> dict:
+    return await send_message(settings.WHATSAPP_TO,
+                              format_semana_treinos_whatsapp(semana_inicio, treinos))
+
+
 async def send_plano_diario(plano: PlanoAlimentar):
     return await send_message(settings.WHATSAPP_TO, format_plano_whatsapp(plano))
 

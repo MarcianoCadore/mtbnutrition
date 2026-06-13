@@ -1,5 +1,6 @@
 import os
 import shutil
+import logging
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
@@ -17,6 +18,7 @@ UPLOADS_DIR = settings.UPLOADS_DIR or os.path.join(
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class TreinoSemana(BaseModel):
@@ -247,7 +249,19 @@ async def enviar_para_garmin(body: EnviarGarminBody):
         resultados.append({"data": t.data, "tipo": t.tipo, "garmin_id": gid, "status": "ok" if gid else "erro"})
 
     enviados = sum(1 for r in resultados if r.get("status") == "ok")
-    return {"status": "ok", "semana": body.semana_inicio, "enviados": enviados, "detalhes": resultados}
+
+    # Avisa no WhatsApp com o resumo dos treinos da semana recém-gerada.
+    whatsapp_ok = False
+    if settings.WHATSAPP_TO:
+        try:
+            from app.services.whatsapp_service import send_semana_treinos
+            await send_semana_treinos(body.semana_inicio, [t.model_dump() for t in body.treinos])
+            whatsapp_ok = True
+        except Exception as e:
+            logger.error("Falha ao enviar treinos da semana no WhatsApp: %s", e)
+
+    return {"status": "ok", "semana": body.semana_inicio, "enviados": enviados,
+            "whatsapp": whatsapp_ok, "detalhes": resultados}
 
 
 @router.get("/zonas/dados")
