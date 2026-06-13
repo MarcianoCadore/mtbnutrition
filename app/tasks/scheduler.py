@@ -118,7 +118,7 @@ async def agendar_lembretes_refeicao():
         total = (h * 60 + m - 30) % (24 * 60)   # 30 min antes
         scheduler.add_job(
             enviar_lembrete_refeicao_pre,
-            CronTrigger(hour=total // 60, minute=total % 60),
+            CronTrigger(hour=total // 60, minute=total % 60, timezone=TZ),
             args=[nome],
             id=f"lembrete_{chave}",
             replace_existing=True,
@@ -149,7 +149,7 @@ async def job_garmin_sync():
 def start_scheduler():
     scheduler.add_job(
         job_plano_diario,
-        CronTrigger(hour=8, minute=0),
+        CronTrigger(hour=8, minute=0, timezone=TZ),
         id="plano_diario",
         replace_existing=True,
         coalesce=True,
