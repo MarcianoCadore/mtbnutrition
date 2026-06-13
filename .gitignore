@@ -15,6 +15,10 @@ uploads/
 # Garmin tokens
 ~/.garth_mtb
 
+# Chaves privadas (SSH/EC2) — nunca versionar
+*.pem
+*.key
+
 # macOS
 .DS_Store
 
