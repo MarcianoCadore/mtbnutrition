@@ -23,6 +23,7 @@ HTML = """<!DOCTYPE html>
     nav .nav-links { margin-left: auto; display: flex; gap: 16px; }
     nav .nav-links a { color: #fff; text-decoration: none; font-size: 0.88rem; opacity: .85; white-space: nowrap; }
     nav .nav-links a:hover { opacity: 1; text-decoration: underline; }
+    nav .nav-toggle { display: none; margin-left: auto; background: rgba(255,255,255,.15); border: none; color: #fff; font-size: 1.4rem; line-height: 1; width: 42px; height: 42px; border-radius: 8px; cursor: pointer; }
 
     main { max-width: 1400px; margin: 0 auto; padding: 24px 20px 80px; }
 
@@ -39,8 +40,8 @@ HTML = """<!DOCTYPE html>
 
     .days-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; margin-bottom: 24px; }
     @media(max-width:1000px){ .days-grid { grid-template-columns: repeat(4,1fr); } }
-    @media(max-width:640px) { .days-grid { grid-template-columns: repeat(2,1fr); } }
-    @media(max-width:360px) { .days-grid { grid-template-columns: 1fr; } }
+    @media(max-width:760px) { .days-grid { grid-template-columns: repeat(2,1fr); } }
+    @media(max-width:560px) { .days-grid { grid-template-columns: 1fr; } }
 
     .day-card { background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.08); transition: box-shadow .2s; }
     .day-card:hover { box-shadow: 0 4px 14px rgba(0,0,0,.13); }
@@ -170,6 +171,25 @@ HTML = """<!DOCTYPE html>
     .toast.ok  { background: #2e7d32; color: #fff; }
     .toast.err { background: #c62828; color: #fff; }
     .toast.info{ background: #323232; color: #fff; }
+
+    /* Ajustes para celular */
+    @media(max-width:640px) {
+      nav { flex-wrap: wrap; padding: 12px 16px; gap: 8px; }
+      nav .nav-toggle { display: block; }
+      nav .nav-links {
+        display: none; width: 100%; flex-direction: column; gap: 0;
+        margin-left: 0; margin-top: 8px;
+      }
+      nav.open .nav-links { display: flex; }
+      nav .nav-links a {
+        font-size: 1rem; opacity: 1; padding: 13px 6px;
+        border-top: 1px solid rgba(255,255,255,.18);
+      }
+      main { padding: 16px 12px 80px; }
+      .card { padding: 16px; }
+      .week-label { font-size: .95rem; }
+      .toast { white-space: normal; max-width: 90vw; text-align: center; }
+    }
   </style>
 </head>
 <body>
@@ -180,13 +200,13 @@ HTML = """<!DOCTYPE html>
     <div class="logo">MTB Nutrition</div>
     <div class="sub">Portal de Treinos</div>
   </div>
+  <button class="nav-toggle" aria-label="Abrir menu" onclick="this.closest('nav').classList.toggle('open')">☰</button>
   <div class="nav-links">
     <a href="/nutrition/config">⏰ Horários</a>
     <a href="/workout/zonas">❤️ Zonas FC</a>
     <a href="/nutrition/alimentos">🍽️ Alimentos</a>
     <a href="/nutrition/guia">🥗 Nutrição</a>
-    <a href="/whatsapp/">📲 WhatsApp</a>
-    <a href="/docs">📖 API Docs</a>
+    <a href="/logout">🚪 Sair</a>
   </div>
 </nav>
 
