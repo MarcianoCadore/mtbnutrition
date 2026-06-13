@@ -11,7 +11,9 @@ Estratégia nutricional (fuel for the work required):
 Tudo é calculado a partir de uma tabela de alimentos básicos, então o total de
 kcal/proteína de cada refeição é transparente ("calorias por alimento").
 
-Perfil: Marciano, 85 kg → meta 78 kg, 1,81 m, 34 anos. Meta proteína ~187 g/dia.
+Perfil: Marciano, 84 kg → meta < 80 kg (melhorar W/kg p/ subir mais rápido),
+1,81 m, 35 anos. Meta proteína ~170 g/dia. 4 refeições/dia (sem lanche da manhã),
+no máx. 2 scoops de whey/dia.
 """
 import re
 from datetime import date
@@ -36,10 +38,12 @@ ALIMENTOS = {
     "ovo":            {"nome": "Ovo",                  "base": "1 unidade",          "kcal": 72,  "prot": 6.0},
     "carne_bovina":   {"nome": "Carne bovina magra (patinho)", "base": "100 g grelhada", "kcal": 190, "prot": 32.0},
     "frango":         {"nome": "Peito de frango",      "base": "100 g grelhado",     "kcal": 165, "prot": 31.0},
+    "tilapia":        {"nome": "Filé de tilápia",      "base": "100 g grelhado",     "kcal": 130, "prot": 26.0},
     "whey":           {"nome": "Whey protein",         "base": "1 scoop (30 g)",     "kcal": 120, "prot": 24.0},
     # laticínios
     "leite_desnatado":{"nome": "Leite desnatado",      "base": "200 ml (1 copo)",    "kcal": 70,  "prot": 7.0},
     "leite_integral": {"nome": "Leite integral",       "base": "200 ml (1 copo)",    "kcal": 120, "prot": 6.0},
+    "cafe_com_leite": {"nome": "Café com leite (sem açúcar)", "base": "1 xícara (200 ml)", "kcal": 110, "prot": 6.5},
     "iogurte_natural":{"nome": "Iogurte natural",      "base": "170 g (1 pote)",     "kcal": 100, "prot": 10.0},
     "iogurte_grego":  {"nome": "Iogurte grego",        "base": "130 g",              "kcal": 120, "prot": 11.0},
     "queijo_minas":   {"nome": "Queijo minas",         "base": "1 fatia (30 g)",     "kcal": 80,  "prot": 5.0},
@@ -77,15 +81,14 @@ def _qtd_label(qtd: float, base: str) -> str:
 # O cardápio escolhe UMA alternativa por slot a cada dia (variando pela data),
 # então o menu muda diariamente sem sair da meta calórica.
 # Estrutura: slot = lista de alternativas; alternativa = lista de (alimento, qtd).
-G_PROT_MAIN   = [[("carne_bovina", 1.5)], [("frango", 1.7)], [("ovo", 4)]]            # ~285 / 281 / 288 kcal
-G_CARB_1      = [[("arroz_branco", 1)], [("arroz_integral", 1)], [("batata_doce", 1.5)]]   # ~130
-G_CARB_15     = [[("arroz_branco", 1.5)], [("arroz_integral", 1.5)], [("batata_doce", 2)]] # ~186-195
-G_CARB_2      = [[("arroz_branco", 2)], [("arroz_integral", 2)], [("batata_doce", 3)]]      # ~260
-G_CARB_25     = [[("arroz_branco", 2.5)], [("arroz_integral", 2.5)], [("batata_doce", 3.5)]]# ~310-325
-G_CARB_CAFE   = [[("aveia", 1)], [("pao_frances", 1)], [("pao_integral", 2)]]               # ~130-150
-G_CARB_CAFE15 = [[("aveia", 1.5)], [("pao_frances", 2)], [("pao_integral", 3)]]             # ~195-280
-G_LANCHE      = [[("whey", 1)], [("iogurte_grego", 1)]]                                     # ~120
-G_LANCHE2     = [[("whey", 1)], [("iogurte_natural", 1)]]                                   # ~100-120
+PROT_ALMOCO = [[("frango", 1.5)], [("carne_bovina", 1.5)], [("tilapia", 1.8)]]  # ~234-285 · 46-48g P
+PROT_JANTAR = [[("frango", 1.3)], [("carne_bovina", 1.2)], [("tilapia", 1.5)]]  # ~195-228 · 38-40g P
+LEITE       = [[("cafe_com_leite", 1)], [("leite_desnatado", 1)], [("iogurte_natural", 1)]]  # bebida do café (rodízio)
+CAFE_CARB   = [[("aveia", 1)], [("pao_frances", 1)], [("pao_integral", 2)]]   # ~130-150
+G_CARB_1    = [[("arroz_branco", 1)],   [("arroz_integral", 1)],   [("batata_doce", 1.5)]]   # ~130
+G_CARB_15   = [[("arroz_branco", 1.5)], [("arroz_integral", 1.5)], [("batata_doce", 2)]]     # ~186-195
+G_CARB_2    = [[("arroz_branco", 2)],   [("arroz_integral", 2)],   [("batata_doce", 3)]]     # ~258-260
+G_CARB_25   = [[("arroz_branco", 2.5)], [("arroz_integral", 2.5)], [("batata_doce", 3.5)]]   # ~310-325
 FIX = lambda *itens: [list(itens)]   # slot de alternativa única (item fixo)
 
 # Categorias de alimentos "intercambiáveis": evita dois do mesmo tipo na mesma
@@ -104,45 +107,40 @@ _MAX_QTD_REFEICAO = {"pao_frances": 2, "pao_integral": 2}
 # Horários neutros (não assumem treino de manhã) — o treino pode ser manhã,
 # tarde ou noite, então a nutrição em volta dele é guiada por NOTA_TREINO.
 MENUS = {
-    # ── DESCANSO ─ menor carbo, maior déficit, proteína mantida (~1950 kcal) ──
+    # ── DESCANSO ─ menor carbo, déficit maior, proteína mantida (~1950 kcal) ──
     "descanso": [
-        ("Café da manhã", "09:00", [FIX(("ovo", 3)), FIX(("pao_integral", 1)), FIX(("queijo_minas", 1)), FIX(("leite_desnatado", 1)), FIX(("iogurte_natural", 1)), G_LANCHE]),
-        ("Lanche da manhã", "10:30", [FIX(("banana", 1)), G_LANCHE]),
-        ("Almoço", "13:00", [G_CARB_1, FIX(("feijao", 1)), G_PROT_MAIN, FIX(("azeite", 1)), FIX(("banana", 1))]),
-        ("Lanche da tarde", "16:30", [G_LANCHE, FIX(("pasta_amendoim", 1))]),
-        ("Jantar", "20:00", [G_PROT_MAIN, G_CARB_1, FIX(("azeite", 1))]),
+        ("Café da manhã", "09:00", [FIX(("ovo", 3)), CAFE_CARB, FIX(("queijo_minas", 1)), LEITE]),
+        ("Almoço", "13:00", [G_CARB_1, FIX(("feijao", 1)), PROT_ALMOCO, FIX(("azeite", 1))]),
+        ("Lanche da tarde", "16:30", [FIX(("whey", 1)), FIX(("iogurte_grego", 1)), FIX(("pasta_amendoim", 1))]),
+        ("Jantar", "20:00", [PROT_JANTAR, G_CARB_1, FIX(("azeite", 1))]),
     ],
-    # ── RECUPERAÇÃO ─ leve, carbo um pouco maior que descanso (~2200 kcal) ──
+    # ── RECUPERAÇÃO ─ leve, carbo um pouco maior que descanso (~2250 kcal) ──
     "recuperacao": [
-        ("Café da manhã", "09:00", [FIX(("ovo", 2)), FIX(("pao_integral", 2)), FIX(("queijo_minas", 1)), FIX(("leite_desnatado", 1)), FIX(("iogurte_natural", 1)), G_LANCHE]),
-        ("Lanche da manhã", "10:30", [FIX(("banana", 1)), G_LANCHE]),
-        ("Almoço", "13:00", [G_CARB_15, FIX(("feijao", 1)), G_PROT_MAIN, FIX(("azeite", 1)), FIX(("banana", 1))]),
-        ("Lanche da tarde", "16:30", [G_LANCHE, FIX(("pasta_amendoim", 1)), FIX(("banana", 1))]),
-        ("Jantar", "20:00", [G_PROT_MAIN, G_CARB_1, FIX(("azeite", 1))]),
+        ("Café da manhã", "09:00", [FIX(("ovo", 2)), CAFE_CARB, FIX(("queijo_minas", 1)), LEITE, FIX(("banana", 1))]),
+        ("Almoço", "13:00", [G_CARB_15, FIX(("feijao", 1)), PROT_ALMOCO, FIX(("azeite", 1))]),
+        ("Lanche da tarde", "16:30", [FIX(("whey", 1)), FIX(("iogurte_grego", 1)), FIX(("banana", 1))]),
+        ("Jantar", "20:00", [PROT_JANTAR, G_CARB_15, FIX(("azeite", 1))]),
     ],
-    # ── Z2 LONGO ─ carbo médio para o pedal longo (~2450 kcal) ──
+    # ── Z2 LONGO ─ carbo alto para o pedal longo (~2900 kcal) ──
     "z2": [
-        ("Café da manhã", "09:00", [G_CARB_CAFE, FIX(("banana", 1)), FIX(("pao_frances", 2)), FIX(("whey", 1)), FIX(("leite_desnatado", 1)), G_LANCHE]),
-        ("Lanche da manhã", "10:30", [FIX(("banana", 1)), G_LANCHE]),
-        ("Almoço", "13:00", [G_CARB_2, FIX(("feijao", 1)), G_PROT_MAIN, FIX(("azeite", 1)), FIX(("banana", 1))]),
-        ("Lanche da tarde", "16:30", [FIX(("iogurte_natural", 1)), G_LANCHE, FIX(("pasta_amendoim", 1))]),
-        ("Jantar", "20:00", [G_PROT_MAIN, G_CARB_15, FIX(("azeite", 1))]),
+        ("Café da manhã", "09:00", [FIX(("pao_frances", 2)), FIX(("ovo", 2)), FIX(("whey", 1)), LEITE, FIX(("banana", 2))]),
+        ("Almoço", "13:00", [G_CARB_25, FIX(("feijao", 1)), PROT_ALMOCO, FIX(("azeite", 1)), FIX(("banana", 1))]),
+        ("Lanche da tarde", "16:30", [FIX(("iogurte_grego", 1)), FIX(("aveia", 1)), FIX(("pasta_amendoim", 1)), FIX(("banana", 1))]),
+        ("Jantar", "20:00", [PROT_JANTAR, G_CARB_25, FIX(("azeite", 1))]),
     ],
-    # ── MODERADO (TEMPO / FORÇA) ─ carbo médio-alto (~2650 kcal) ──
+    # ── MODERADO (TEMPO / FORÇA) ─ carbo médio-alto (~2700 kcal) ──
     "moderado": [
-        ("Café da manhã", "09:00", [G_CARB_CAFE, FIX(("banana", 1)), FIX(("pao_frances", 2)), FIX(("ovo", 2)), FIX(("leite_desnatado", 1)), G_LANCHE]),
-        ("Lanche da manhã", "10:30", [FIX(("banana", 1)), G_LANCHE]),
-        ("Almoço", "13:00", [G_CARB_2, FIX(("feijao", 1)), G_PROT_MAIN, FIX(("azeite", 1)), FIX(("banana", 1))]),
-        ("Lanche da tarde", "16:30", [FIX(("iogurte_grego", 1)), G_LANCHE2, FIX(("pasta_amendoim", 1))]),
-        ("Jantar", "20:00", [G_PROT_MAIN, G_CARB_1, FIX(("batata_doce", 1)), FIX(("azeite", 1))]),
+        ("Café da manhã", "09:00", [CAFE_CARB, FIX(("ovo", 2)), FIX(("whey", 1)), LEITE, FIX(("banana", 1))]),
+        ("Almoço", "13:00", [G_CARB_25, FIX(("feijao", 1)), PROT_ALMOCO, FIX(("azeite", 1)), FIX(("banana", 1))]),
+        ("Lanche da tarde", "16:30", [FIX(("iogurte_grego", 1)), FIX(("whey", 1)), FIX(("pasta_amendoim", 1)), FIX(("banana", 1))]),
+        ("Jantar", "20:00", [PROT_JANTAR, G_CARB_2, FIX(("azeite", 1))]),
     ],
-    # ── INTENSO (TIROS / VO2MAX) ─ carbo alto p/ alta intensidade (~3200 kcal) ──
+    # ── INTENSO (TIROS / VO2MAX) ─ carbo alto p/ alta intensidade (~2900 kcal) ──
     "intenso": [
-        ("Café da manhã", "09:00", [G_CARB_CAFE15, FIX(("banana", 1)), FIX(("pao_frances", 3)), FIX(("ovo", 2)), FIX(("leite_integral", 1)), FIX(("whey", 1)), G_LANCHE]),
-        ("Lanche da manhã", "10:30", [FIX(("banana", 2)), G_LANCHE]),
-        ("Almoço", "13:00", [G_CARB_25, FIX(("feijao", 1)), G_PROT_MAIN, FIX(("azeite", 1)), FIX(("banana", 2))]),
-        ("Lanche da tarde", "16:30", [FIX(("iogurte_grego", 1)), G_LANCHE2, FIX(("pasta_amendoim", 1)), FIX(("banana", 1))]),
-        ("Jantar", "20:00", [G_PROT_MAIN, FIX(("arroz_branco", 1)), G_CARB_15, FIX(("azeite", 1))]),
+        ("Café da manhã", "09:00", [FIX(("pao_frances", 2)), FIX(("ovo", 2)), FIX(("whey", 1)), LEITE, FIX(("banana", 2))]),
+        ("Almoço", "13:00", [G_CARB_25, FIX(("feijao", 1)), PROT_ALMOCO, FIX(("azeite", 1)), FIX(("banana", 1))]),
+        ("Lanche da tarde", "16:30", [FIX(("iogurte_grego", 1)), FIX(("whey", 1)), FIX(("pasta_amendoim", 1)), FIX(("banana", 1))]),
+        ("Jantar", "20:00", [PROT_JANTAR, G_CARB_25, FIX(("azeite", 1))]),
     ],
 }
 
@@ -208,10 +206,10 @@ PERIODO_FRASE = {"manha": "de manhã", "meio_dia": "ao meio-dia", "tarde": "à t
 
 # período -> (refeição pré-treino [+carbo], pós-treino [reposição], doadora do carbo)
 PERIODO_REFEICOES = {
-    "manha":    ("Café da manhã",   "Lanche da manhã", "Jantar"),
-    "meio_dia": ("Lanche da manhã", "Almoço",          "Jantar"),
-    "tarde":    ("Almoço",          "Lanche da tarde", "Café da manhã"),
-    "noite":    ("Lanche da tarde", "Jantar",          "Café da manhã"),
+    "manha":    ("Café da manhã", "Almoço",          "Jantar"),
+    "meio_dia": ("Café da manhã", "Almoço",          "Jantar"),
+    "tarde":    ("Almoço",        "Lanche da tarde", "Café da manhã"),
+    "noite":    ("Lanche da tarde", "Jantar",        "Café da manhã"),
 }
 
 # carboidratos que podem ser movidos entre refeições (1 porção).
@@ -408,15 +406,6 @@ REFEICOES_GUIA = [
                       "leite_desnatado", "queijo_minas", "whey", "banana"],
         "dica": "Se for treinar de manhã, reforce o carboidrato (aveia, pão ou banana) "
                 "~1h antes. Se o treino for à tarde/noite, mantenha o café normal.",
-    },
-    {
-        "nome": "Lanche da manhã",
-        "horario": "10:30",
-        "papel": "Ponte entre o café e o almoço: uma fruta para energia rápida e "
-                 "proteína (whey ou iogurte) para segurar a fome sem pesar.",
-        "alimentos": ["banana", "whey", "iogurte_grego", "iogurte_natural"],
-        "dica": "Se o treino for de manhã, este é um ótimo momento para repor logo "
-                "após: whey + banana caem bem no pós-treino.",
     },
     {
         "nome": "Almoço",

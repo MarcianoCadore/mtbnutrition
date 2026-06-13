@@ -78,7 +78,6 @@ async def _treino_hoje() -> tuple[str, str | None]:
 # Refeições para lembrete (chave de horário na config -> nome no cardápio).
 LEMBRETES_REFEICAO = [
     ("cafe", "Café da manhã"),
-    ("lanche_manha", "Lanche da manhã"),
     ("almoco", "Almoço"),
     ("lanche_tarde", "Lanche da tarde"),
     ("jantar", "Jantar"),
