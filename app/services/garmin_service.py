@@ -334,8 +334,12 @@ _CYCLING_TYPES = {
 
 
 def _is_cycling(act: dict) -> bool:
-    type_key = (act.get("activityType") or {}).get("typeKey", "")
-    return any(k in type_key.lower() for k in ("cycl", "bike", "mtb", "mountain"))
+    type_key = (act.get("activityType") or {}).get("typeKey", "").lower()
+    if type_key in _CYCLING_TYPES:
+        return True
+    # Fallback por substring para variações novas do Garmin. Usa "bik" (e não
+    # "bike") porque road_biking/mountain_biking contêm "biking", não "bike".
+    return any(k in type_key for k in ("cycl", "bik", "mtb"))
 
 
 # Fator de intensidade MÉDIO de sessão por tipo de treino (já contando
