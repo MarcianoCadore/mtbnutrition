@@ -92,6 +92,37 @@ async def zonas_do_garmin(sport: str = "CYCLING") -> dict:
     }
 
 
+async def enviar_zonas_para_garmin(zonas_app: dict) -> dict:
+    """Empurra as zonas de FC do app para o Garmin, atualizando TODOS os perfis
+    (CYCLING, DEFAULT, etc.) para ficarem iguais ao app. `zonas_app` no formato
+    de config_service.get_zonas(). Retorna {"ok": bool, "status": int|None}."""
+    floors = [int(z["min"]) for z in zonas_app["zonas"]]
+    fc_max = int(zonas_app["fc_max"])
+    limiar = int(zonas_app.get("limiar") or fc_max)
+
+    def _push():
+        api = get_garmin_client()
+        atual = api.connectapi("/biometric-service/heartRateZones") or []
+        for prof in atual:
+            for i in range(5):
+                prof[f"zone{i + 1}Floor"] = floors[i]
+            prof["maxHeartRateUsed"] = fc_max
+            prof["lactateThresholdHeartRateUsed"] = limiar
+            prof["changeState"] = "CHANGED"
+        resp = api.client.put(
+            "connectapi", "/biometric-service/heartRateZones", json=atual, api=False
+        )
+        return getattr(resp, "status_code", None)
+
+    status = await asyncio.to_thread(_push)
+    ok = status in (200, 204)
+    if not ok:
+        logger.error("Falha ao enviar zonas ao Garmin: status %s", status)
+    else:
+        logger.info("Zonas de FC enviadas ao Garmin (status %s)", status)
+    return {"ok": ok, "status": status}
+
+
 def _extrair_fit_do_zip(data: bytes) -> bytes | None:
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as z:

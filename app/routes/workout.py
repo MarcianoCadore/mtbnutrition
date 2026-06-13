@@ -309,12 +309,24 @@ class ZonasBody(BaseModel):
 
 @router.post("/zonas/salvar")
 async def salvar_zonas_endpoint(body: ZonasBody):
-    """Valida e salva as zonas de FC. Passam a valer nos próximos envios ao Garmin."""
+    """Valida e salva as zonas de FC. Após salvar, sincroniza automaticamente
+    com o Garmin (todos os perfis) — best-effort, não quebra o salvamento."""
     from app.services.config_service import salvar_zonas
     try:
-        return await salvar_zonas(body.model_dump())
+        salvo = await salvar_zonas(body.model_dump())
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    garmin = {"ok": False, "status": None}
+    try:
+        from app.services.garmin_service import enviar_zonas_para_garmin
+        garmin = await enviar_zonas_para_garmin(salvo)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error("Auto-sync de zonas com Garmin falhou: %s", e)
+
+    salvo["garmin_sync"] = garmin
+    return salvo
 
 
 @router.get("/zonas", response_class=HTMLResponse)
@@ -585,7 +597,11 @@ _PAGINA_ZONAS = """<!DOCTYPE html>
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || 'Erro');
       aplicar(d);
-      st.className='status ok'; st.textContent='✅ Zonas salvas! Já valem para os próximos treinos enviados ao Garmin.';
+      const sync = (d.garmin_sync && d.garmin_sync.ok)
+        ? ' e sincronizadas com o Garmin 📤'
+        : ' (não consegui sincronizar com o Garmin agora — tente de novo)';
+      st.className = (d.garmin_sync && d.garmin_sync.ok) ? 'status ok' : 'status err';
+      st.textContent = '✅ Zonas salvas' + sync;
     } catch(e) { st.className='status err'; st.textContent='❌ ' + e.message; }
     finally { btn.disabled=false; btn.textContent='💾 Salvar zonas'; }
   }
