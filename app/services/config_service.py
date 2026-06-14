@@ -1,11 +1,14 @@
-"""Configurações editáveis pelo usuário, persistidas em db.config."""
+"""Configurações por usuário: horários de refeição e zonas de FC, armazenados no
+doc do usuário em db.users (campos 'horarios' e 'zonas').
+
+Ajustes de fuga do plano (coleção db.ajustes_dia) são escopados por user_id
+usando o filtro {"user_id": user_id, "data": data}.
+"""
 import re
 
 from app.services.mongo_service import get_db
 from app.services.nutricao_service import DEFAULT_HORARIOS
 
-CHAVE_HORARIOS = "horarios_refeicoes"
-CHAVE_ZONAS = "zonas_fc"
 _RE_HORA = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 # Zonas de FC padrão (as configuradas hoje no Garmin do Marciano).
@@ -50,15 +53,20 @@ def _validar_ordem(cfg: dict) -> None:
         prev_min, prev_nome, prev_hora = atual, nome, cfg[chave]
 
 
-async def get_horarios() -> dict:
-    """Horários das refeições configurados (ou os padrões)."""
-    db = get_db()
-    doc = await db.config.find_one({"chave": CHAVE_HORARIOS}, {"_id": 0, "chave": 0})
-    return {**DEFAULT_HORARIOS, **(doc or {})}
+# ── Horários das refeições (por usuário) ─────────────────────────────────────
+
+async def get_horarios(user_id: str) -> dict:
+    """Horários das refeições do usuário (ou os padrões se não configurado)."""
+    from app.services.user_service import get_por_id
+    user = await get_por_id(user_id)
+    if user and user.get("horarios"):
+        return {**DEFAULT_HORARIOS, **user["horarios"]}
+    return dict(DEFAULT_HORARIOS)
 
 
-async def salvar_horarios(cfg: dict) -> dict:
-    """Valida e salva os horários (HH:MM). Ignora chaves desconhecidas."""
+async def salvar_horarios(user_id: str, cfg: dict) -> dict:
+    """Valida e salva os horários (HH:MM) no doc do usuário. Ignora chaves desconhecidas."""
+    from app.services.user_service import atualizar_usuario
     limpo = {}
     for k in DEFAULT_HORARIOS:
         v = (cfg.get(k) or "").strip()
@@ -68,22 +76,20 @@ async def salvar_horarios(cfg: dict) -> dict:
             limpo[k] = v
     # valida a ordem do dia já com os defaults aplicados (campos não enviados)
     _validar_ordem({**DEFAULT_HORARIOS, **limpo})
-    db = get_db()
-    await db.config.update_one(
-        {"chave": CHAVE_HORARIOS},
-        {"$set": {**limpo, "chave": CHAVE_HORARIOS}},
-        upsert=True,
-    )
-    return {**DEFAULT_HORARIOS, **limpo}
+    horarios_completos = {**DEFAULT_HORARIOS, **limpo}
+    await atualizar_usuario(user_id, {"horarios": horarios_completos})
+    return horarios_completos
 
 
-# ── Zonas de frequência cardíaca ──────────────────────────────────────────────
+# ── Zonas de frequência cardíaca (por usuário) ────────────────────────────────
 
-async def get_zonas() -> dict:
-    """Zonas de FC configuradas (ou os padrões)."""
-    db = get_db()
-    doc = await db.config.find_one({"chave": CHAVE_ZONAS}, {"_id": 0, "chave": 0})
-    return doc or {k: v for k, v in DEFAULT_ZONAS.items()}
+async def get_zonas(user_id: str) -> dict:
+    """Zonas de FC do usuário (ou os padrões se não configurado)."""
+    from app.services.user_service import get_por_id
+    user = await get_por_id(user_id)
+    if user and user.get("zonas"):
+        return user["zonas"]
+    return {k: v for k, v in DEFAULT_ZONAS.items()}
 
 
 def _validar_zonas(data: dict) -> dict:
@@ -118,34 +124,31 @@ def _validar_zonas(data: dict) -> dict:
     return {"fc_max": fc_max, "limiar": limiar, "zonas": zonas}
 
 
-async def salvar_zonas(data: dict) -> dict:
-    """Valida e persiste as zonas de FC."""
+async def salvar_zonas(user_id: str, data: dict) -> dict:
+    """Valida e persiste as zonas de FC no doc do usuário."""
+    from app.services.user_service import atualizar_usuario
     limpo = _validar_zonas(data)
-    db = get_db()
-    await db.config.update_one(
-        {"chave": CHAVE_ZONAS},
-        {"$set": {**limpo, "chave": CHAVE_ZONAS}},
-        upsert=True,
-    )
+    await atualizar_usuario(user_id, {"zonas": limpo})
     return limpo
 
 
-async def zonas_bpm_map() -> dict:
+async def zonas_bpm_map(user_id: str) -> dict:
     """Mapa {numero_da_zona: {'min': bpm, 'max': bpm}} para montar os workouts."""
-    cfg = await get_zonas()
+    cfg = await get_zonas(user_id)
     return {int(z["zona"]): {"min": int(z["min"]), "max": int(z["max"])} for z in cfg["zonas"]}
 
 
 # ── Ajustes de "fuga" do plano (o que comi fora, por dia) ─────────────────────
+# A partir da Fase 1 multiusuário, escopados por {"user_id": user_id, "data": data}.
 
-async def extras_do_dia(data: str) -> list:
+async def extras_do_dia(user_id: str, data: str) -> list:
     """Lista de itens comidos fora do plano numa data (ISO YYYY-MM-DD)."""
     db = get_db()
-    doc = await db.ajustes_dia.find_one({"_id": data})
+    doc = await db.ajustes_dia.find_one({"user_id": user_id, "data": data})
     return (doc or {}).get("extras", [])
 
 
-async def adicionar_extra_dia(data: str, extra: dict) -> list:
+async def adicionar_extra_dia(user_id: str, data: str, extra: dict) -> list:
     """Acrescenta um item comido fora do plano ao dia. Retorna a lista atualizada."""
     item = {
         "resumo": str(extra.get("resumo", "")).strip() or "Alimento fora do plano",
@@ -154,31 +157,31 @@ async def adicionar_extra_dia(data: str, extra: dict) -> list:
     }
     db = get_db()
     await db.ajustes_dia.update_one(
-        {"_id": data},
-        {"$push": {"extras": item}, "$set": {"data": data}},
+        {"user_id": user_id, "data": data},
+        {"$push": {"extras": item}, "$set": {"user_id": user_id, "data": data}},
         upsert=True,
     )
-    return await extras_do_dia(data)
+    return await extras_do_dia(user_id, data)
 
 
-async def remover_ajuste_dia(data: str) -> None:
+async def remover_ajuste_dia(user_id: str, data: str) -> None:
     """Remove todos os ajustes (extras) de um dia — volta ao plano original."""
     db = get_db()
-    await db.ajustes_dia.delete_one({"_id": data})
+    await db.ajustes_dia.delete_one({"user_id": user_id, "data": data})
 
 
-async def adicionar_corte_dia(data: str, kcal: float) -> None:
+async def adicionar_corte_dia(user_id: str, data: str, kcal: float) -> None:
     """Acumula kcal de corte de carboidrato no dia (débito de fuga).
     Usa $inc para somar ao valor existente (múltiplas fugas acumulam corretamente)."""
     db = get_db()
     await db.ajustes_dia.update_one(
-        {"_id": data},
-        {"$inc": {"corte_kcal": int(round(kcal))}, "$set": {"data": data}},
+        {"user_id": user_id, "data": data},
+        {"$inc": {"corte_kcal": int(round(kcal))}, "$set": {"user_id": user_id, "data": data}},
         upsert=True,
     )
 
 
-async def corte_do_dia(data: str) -> int | None:
+async def corte_do_dia(user_id: str, data: str) -> int | None:
     """Retorna o corte de kcal de carboidrato registrado para o dia.
 
     Semântica especial para retrocompatibilidade com docs legados:
@@ -188,7 +191,7 @@ async def corte_do_dia(data: str) -> int | None:
     - Sem doc → retorna None (idem: fallback de extras).
     """
     db = get_db()
-    doc = await db.ajustes_dia.find_one({"_id": data})
+    doc = await db.ajustes_dia.find_one({"user_id": user_id, "data": data})
     if doc is None:
         return None
     if "corte_kcal" not in doc:
@@ -198,11 +201,11 @@ async def corte_do_dia(data: str) -> int | None:
     return int(doc["corte_kcal"])
 
 
-async def ajuste_do_dia(data: str) -> dict:
+async def ajuste_do_dia(user_id: str, data: str) -> dict:
     """Lê extras e corte_kcal numa única consulta ao banco.
     Útil para callers que precisam dos dois campos (reduz round-trips)."""
     db = get_db()
-    doc = await db.ajustes_dia.find_one({"_id": data}) or {}
+    doc = await db.ajustes_dia.find_one({"user_id": user_id, "data": data}) or {}
     corte = doc.get("corte_kcal")
     return {
         "extras": doc.get("extras", []),

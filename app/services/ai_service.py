@@ -240,7 +240,7 @@ DESCANSO - sem treino efetivo"""
         return analise.get("tipo", "Z2_LONGO")
 
 
-async def analisar_atividade_pos_treino(planejado: dict, resultado: dict) -> dict:
+async def analisar_atividade_pos_treino(planejado: dict, resultado: dict, user_id: str | None = None) -> dict:
     """Compara planejado vs realizado e retorna análise com pontos fortes e fracos."""
     linhas = []
 
@@ -278,8 +278,8 @@ async def analisar_atividade_pos_treino(planejado: dict, resultado: dict) -> dic
 
     # Zonas reais configuradas (lidas do Garmin/tela), com defaults de segurança.
     try:
-        from app.services.config_service import get_zonas
-        zc = await get_zonas()
+        from app.services.config_service import get_zonas, DEFAULT_ZONAS
+        zc = await get_zonas(user_id) if user_id else dict(DEFAULT_ZONAS)
         zs = zc["zonas"]
         zonas_txt = " | ".join(f"Z{z['zona']} {z['min']}-{z['max']}" for z in zs)
         fc_max = zc.get("fc_max") or zs[-1]["max"]

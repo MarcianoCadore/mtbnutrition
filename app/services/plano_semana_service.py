@@ -102,10 +102,10 @@ def _resumo_treino(t: dict) -> str:
     return "\n".join(linhas)
 
 
-async def gerar_proxima_semana(semana_atual: str) -> dict:
+async def gerar_proxima_semana(user_id: str, semana_atual: str) -> dict:
     """Gera o plano da próxima semana com base na análise da semana atual."""
     db = get_db()
-    doc = await db.semanas.find_one({"semana_inicio": semana_atual})
+    doc = await db.semanas.find_one({"semana_inicio": semana_atual, "user_id": user_id})
     if not doc:
         raise ValueError(f"Semana {semana_atual} não encontrada")
 

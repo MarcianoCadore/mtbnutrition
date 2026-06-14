@@ -127,8 +127,8 @@ def format_semana_treinos_whatsapp(semana_inicio: str, treinos: list[dict]) -> s
     return "\n".join(linhas)
 
 
-async def send_semana_treinos(semana_inicio: str, treinos: list[dict]) -> dict:
-    return await send_message(settings.WHATSAPP_TO,
+async def send_semana_treinos(semana_inicio: str, treinos: list[dict], to: str | None = None) -> dict:
+    return await send_message(to or settings.WHATSAPP_TO,
                               format_semana_treinos_whatsapp(semana_inicio, treinos))
 
 

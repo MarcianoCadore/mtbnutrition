@@ -1,3 +1,5 @@
+import logging
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
@@ -12,18 +14,28 @@ from config.settings import settings
 
 TZ = pytz.timezone("America/Sao_Paulo")
 scheduler = AsyncIOScheduler(timezone=TZ)
+logger = logging.getLogger(__name__)
 
 async def job_plano_diario():
     """Roda às 8h — envia o plano alimentar fixo do treino de hoje."""
+    # TODO Fase 2: iterar user_service.listar_usuarios()
     print(f"[{datetime.now()}] Enviando plano alimentar do dia...")
     try:
+        from app.services.user_service import get_por_login
+        u = await get_por_login(settings.PORTAL_USER)
+        if not u:
+            logger.warning("scheduler: usuário %s não encontrado, pulando", settings.PORTAL_USER)
+            return
+        user_id = str(u["_id"])
+        telefone = u.get("telefone") or settings.WHATSAPP_TO
+
         db = get_db()
 
         # Tipo do treino de hoje a partir da semana salva (db.semanas)
         hoje = datetime.now(TZ).date()
         hoje_iso = hoje.isoformat()
         seg = hoje - timedelta(days=hoje.weekday())
-        doc = await db.semanas.find_one({"semana_inicio": seg.isoformat()})
+        doc = await db.semanas.find_one({"semana_inicio": seg.isoformat(), "user_id": user_id})
 
         tipo, periodo = "DESCANSO", None
         if doc:
@@ -34,8 +46,8 @@ async def job_plano_diario():
                     break
 
         from app.services.config_service import get_horarios, ajuste_do_dia
-        cfg = await get_horarios()
-        ajuste = await ajuste_do_dia(hoje_iso)
+        cfg = await get_horarios(user_id)
+        ajuste = await ajuste_do_dia(user_id, hoje_iso)
         extras = ajuste["extras"]
         corte = ajuste["corte_kcal"]   # None = doc legado → usa fallback de extras
         plano = plano_para_tipo(tipo, hoje_iso, cfg, periodo=periodo, extras=extras, corte_kcal=corte)
@@ -43,6 +55,7 @@ async def job_plano_diario():
         # Salva versão compatível com os lembretes de refeição (PlanoAlimentar)
         await db.planos.insert_one({
             "data": datetime.now(),
+            "user_id": user_id,
             "tipo_dia": plano["tipo"],
             "kcal_total": plano["kcal_total"],
             "proteina_total_g": plano["proteina_total_g"],
@@ -57,20 +70,20 @@ async def job_plano_diario():
             ],
         })
 
-        if settings.WHATSAPP_TO:
-            await send_message(settings.WHATSAPP_TO, formatar_plano_whatsapp(hoje_iso, plano))
+        if telefone:
+            await send_message(telefone, formatar_plano_whatsapp(hoje_iso, plano))
         print(f"[{datetime.now()}] Plano ({tipo}) enviado com sucesso!")
 
     except Exception as e:
         print(f"[{datetime.now()}] Erro no job_plano_diario: {e}")
 
-async def _treino_hoje() -> tuple[str, str | None]:
+async def _treino_hoje(user_id: str) -> tuple[str, str | None]:
     """(tipo, periodo) do treino de hoje a partir da semana salva; (DESCANSO, None)
     se não houver."""
     db = get_db()
     hoje_iso = datetime.now(TZ).date().isoformat()
     seg = datetime.now(TZ).date() - timedelta(days=datetime.now(TZ).date().weekday())
-    doc = await db.semanas.find_one({"semana_inicio": seg.isoformat()})
+    doc = await db.semanas.find_one({"semana_inicio": seg.isoformat(), "user_id": user_id})
     if doc:
         for t in doc.get("treinos", []):
             if t.get("data") == hoje_iso:
@@ -89,14 +102,23 @@ LEMBRETES_REFEICAO = [
 
 async def enviar_lembrete_refeicao_pre(meal_nome: str):
     """Envia, 30 min antes, o que comer na refeição do dia."""
+    # TODO Fase 2: iterar user_service.listar_usuarios()
     try:
+        from app.services.user_service import get_por_login
+        u = await get_por_login(settings.PORTAL_USER)
+        if not u:
+            logger.warning("scheduler: usuário %s não encontrado, pulando lembrete", settings.PORTAL_USER)
+            return
+        user_id = str(u["_id"])
+        telefone = u.get("telefone") or settings.WHATSAPP_TO
+
         hoje_iso = datetime.now(TZ).date().isoformat()
-        tipo, periodo = await _treino_hoje()
-        cfg = await get_horarios()
+        tipo, periodo = await _treino_hoje(user_id)
+        cfg = await get_horarios(user_id)
         plano = plano_para_tipo(tipo, hoje_iso, cfg, periodo=periodo)
         ref = next((r for r in plano["refeicoes"] if r["nome"] == meal_nome), None)
-        if ref and settings.WHATSAPP_TO:
-            await send_message(settings.WHATSAPP_TO, formatar_lembrete_refeicao(ref))
+        if ref and telefone:
+            await send_message(telefone, formatar_lembrete_refeicao(ref))
             print(f"[{datetime.now()}] Lembrete enviado: {meal_nome}")
     except Exception as e:
         print(f"[{datetime.now()}] Erro no lembrete {meal_nome}: {e}")
@@ -106,8 +128,15 @@ async def agendar_lembretes_refeicao():
     """(Re)agenda os lembretes para 30 min antes de cada refeição, conforme a
     config de horários. Chamado no start, periodicamente (auto-cura se o banco
     estava fora no boot) e quando o usuário muda os horários."""
+    # TODO Fase 2: iterar user_service.listar_usuarios()
     try:
-        cfg = await get_horarios()
+        from app.services.user_service import get_por_login
+        u = await get_por_login(settings.PORTAL_USER)
+        if not u:
+            logger.warning("scheduler: usuário %s não encontrado, pulando agendamento de lembretes", settings.PORTAL_USER)
+            return
+        user_id = str(u["_id"])
+        cfg = await get_horarios(user_id)
     except Exception as e:
         print(f"[{datetime.now()}] Banco indisponível; lembretes não reagendados (tenta de novo): {e}")
         return
@@ -131,17 +160,24 @@ async def agendar_lembretes_refeicao():
     print(f"🍽️ Lembretes de refeição agendados ({n} refeições, 30 min antes)")
 
 async def job_garmin_sync():
-    """Roda a cada 10 min — sincroniza treinos planejados e atividades do Garmin."""
+    """Roda a cada 10 min — sincroniza treinos planejados e atividades do Garmin.
+    Fase 1: opera para o usuário Marciano. TODO Fase 2: iterar usuários com Garmin."""
     from config.settings import settings
     if not settings.GARMIN_EMAIL or not settings.GARMIN_PASSWORD:
         return
     try:
         from app.services.garmin_service import sync_treinos_planejados, sync_atividades
+        from app.services.user_service import get_por_login
+        u = await get_por_login(settings.PORTAL_USER)
+        if not u:
+            logger.warning("job_garmin_sync: usuário %s não encontrado, pulando", settings.PORTAL_USER)
+            return
+        user_id = str(u["_id"])
         hoje = datetime.now(TZ).date()
         seg = hoje - timedelta(days=hoje.weekday())
         semana = seg.isoformat()
-        pl = await sync_treinos_planejados(semana)
-        at = await sync_atividades(semana)
+        pl = await sync_treinos_planejados(user_id, semana)
+        at = await sync_atividades(user_id, semana)
         if pl or at:
             print(f"[{datetime.now()}] Garmin sync: {pl} treinos planejados, {at} atividades")
     except Exception as e:

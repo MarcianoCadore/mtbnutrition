@@ -1,5 +1,5 @@
 import logging
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import HTMLResponse
 from datetime import datetime, timedelta, date as dt_date
 from app.models.models import PlanoAlimentar, Treino
@@ -22,13 +22,14 @@ LIMITE_CORTE_DIA = 400
 
 
 @router.get("/plano/{tipo}")
-async def plano_por_tipo(tipo: str, data: str | None = None, periodo: str | None = None):
+async def plano_por_tipo(request: Request, tipo: str, data: str | None = None, periodo: str | None = None):
     """Cardápio do tipo de treino para uma data (varia a cada dia) — usado nos cards.
     Com 'periodo' (manha/meio_dia/tarde/noite), redistribui o carbo em volta do treino.
     Aplica também extras e corte_kcal (fuga registrada) do dia."""
-    cfg = await get_horarios()
+    user_id = request.state.user_id
+    cfg = await get_horarios(user_id)
     if data:
-        ajuste = await ajuste_do_dia(data)
+        ajuste = await ajuste_do_dia(user_id, data)
         extras = ajuste["extras"]
         corte = ajuste["corte_kcal"]   # None = doc legado, usa fallback de extras
     else:
@@ -36,12 +37,12 @@ async def plano_por_tipo(tipo: str, data: str | None = None, periodo: str | None
     return plano_para_tipo(tipo, data, cfg, periodo=periodo, extras=extras, corte_kcal=corte)
 
 
-async def _tipo_periodo_do_dia(data_iso: str) -> tuple[str, str | None]:
+async def _tipo_periodo_do_dia(user_id: str, data_iso: str) -> tuple[str, str | None]:
     """(tipo, periodo) do treino salvo para a data; (DESCANSO, None) se não houver."""
     db = get_db()
     d = datetime.fromisoformat(data_iso).date()
     seg = d - timedelta(days=d.weekday())
-    doc = await db.semanas.find_one({"semana_inicio": seg.isoformat()})
+    doc = await db.semanas.find_one({"semana_inicio": seg.isoformat(), "user_id": user_id})
     if doc:
         for t in doc.get("treinos", []):
             if t.get("data") == data_iso:
@@ -49,20 +50,25 @@ async def _tipo_periodo_do_dia(data_iso: str) -> tuple[str, str | None]:
     return "DESCANSO", None
 
 
-@router.get("/plano-do-dia/{data}")
-async def plano_do_dia(data: str):
-    """Plano completo de um dia do calendário (descobre o tipo de treino do dia e
-    aplica as fugas e o corte_kcal registrados)."""
-    cfg = await get_horarios()
-    tipo, periodo = await _tipo_periodo_do_dia(data)
-    ajuste = await ajuste_do_dia(data)
+async def _plano_do_dia_impl(user_id: str, data: str) -> dict:
+    """Plano completo de um dia (uso interno, com user_id já resolvido)."""
+    cfg = await get_horarios(user_id)
+    tipo, periodo = await _tipo_periodo_do_dia(user_id, data)
+    ajuste = await ajuste_do_dia(user_id, data)
     extras = ajuste["extras"]
     corte = ajuste["corte_kcal"]   # None = doc legado → plano_para_tipo usa fallback
     plano = plano_para_tipo(tipo, data, cfg, periodo=periodo, extras=extras, corte_kcal=corte)
     return {"data": data, "tipo": tipo, "periodo": periodo, "extras": extras, "plano": plano}
 
 
-async def registrar_fuga_rollover(data: str, extra: dict, agora=None) -> dict:
+@router.get("/plano-do-dia/{data}")
+async def plano_do_dia(request: Request, data: str):
+    """Plano completo de um dia do calendário (descobre o tipo de treino do dia e
+    aplica as fugas e o corte_kcal registrados)."""
+    return await _plano_do_dia_impl(request.state.user_id, data)
+
+
+async def registrar_fuga_rollover(user_id: str, data: str, extra: dict, agora=None) -> dict:
     """Orquestrador do registro de fuga com rollover.
 
     Grava o alimento no dia, calcula quanto o carbo das refeições restantes
@@ -74,26 +80,26 @@ async def registrar_fuga_rollover(data: str, extra: dict, agora=None) -> dict:
     extra_kcal = max(0, int(round(extra.get("kcal", 0))))
 
     # 1) grava o alimento no dia (para exibir o bloco "Fora do plano")
-    await adicionar_extra_dia(data, extra)
+    await adicionar_extra_dia(user_id, data, extra)
 
     # 2) obtém config de horários e instante atual
-    cfg = await get_horarios()
+    cfg = await get_horarios(user_id)
     hoje_iso = dt_date.today().isoformat()
     hora_atual = agora if agora is not None else datetime.now().time()
 
     # 3) capacidade do dia da fuga
-    tipo_dia, periodo_dia = await _tipo_periodo_do_dia(data)
+    tipo_dia, periodo_dia = await _tipo_periodo_do_dia(user_id, data)
     # se é hoje, conta só refeições após o momento atual; caso contrário, dia inteiro
     apenas_apos = hora_atual if data == hoje_iso else None
     cap_dia = capacidade_carbo_dia(tipo_dia, data, cfg, periodo_dia, apenas_apos=apenas_apos)
     # desconta corte já bookado (outras fugas do mesmo dia registradas antes)
-    corte_ja_bookado = await corte_do_dia(data) or 0
+    corte_ja_bookado = await corte_do_dia(user_id, data) or 0
     cap_disp = max(0.0, cap_dia - corte_ja_bookado)
 
     # 4) corta o que couber hoje
     corte_hoje = min(extra_kcal, cap_disp)
     if corte_hoje > 0:
-        await adicionar_corte_dia(data, corte_hoje)
+        await adicionar_corte_dia(user_id, data, corte_hoje)
 
     sobra = extra_kcal - corte_hoje
     rollover: dict[str, int] = {}
@@ -115,9 +121,9 @@ async def registrar_fuga_rollover(data: str, extra: dict, agora=None) -> dict:
             if restante_rollover <= 0:
                 break
             dia_iso = dia_futuro.isoformat()
-            tipo_fut, periodo_fut = await _tipo_periodo_do_dia(dia_iso)
+            tipo_fut, periodo_fut = await _tipo_periodo_do_dia(user_id, dia_iso)
             cap_fut = capacidade_carbo_dia(tipo_fut, dia_iso, cfg, periodo_fut)
-            corte_booked_fut = await corte_do_dia(dia_iso) or 0
+            corte_booked_fut = await corte_do_dia(user_id, dia_iso) or 0
             cap_disp_fut = max(0.0, cap_fut - corte_booked_fut)
 
             # fatia para este dia: iguala o que sobrou / dias restantes,
@@ -127,7 +133,7 @@ async def registrar_fuga_rollover(data: str, extra: dict, agora=None) -> dict:
 
             if valor_dia > 0:
                 valor_dia_int = int(round(valor_dia))
-                await adicionar_corte_dia(dia_iso, valor_dia_int)
+                await adicionar_corte_dia(user_id, dia_iso, valor_dia_int)
                 rollover[dia_iso] = rollover.get(dia_iso, 0) + valor_dia_int
                 restante_rollover -= valor_dia
 
@@ -148,10 +154,11 @@ async def registrar_fuga_rollover(data: str, extra: dict, agora=None) -> dict:
 
 
 @router.post("/ajuste-dia/{data}")
-async def registrar_fuga(data: str, texto: str | None = Form(None),
+async def registrar_fuga(request: Request, data: str, texto: str | None = Form(None),
                          kcal: str | None = Form(None), imagem: UploadFile | None = File(None)):
     """Registra algo comido fora do plano (texto e/ou foto). Estima as calorias
     pela IA (ou usa o kcal informado) e devolve o plano do dia já ajustado."""
+    user_id = request.state.user_id
     kcal_manual = None
     if kcal not in (None, ""):
         try:
@@ -174,17 +181,19 @@ async def registrar_fuga(data: str, texto: str | None = Form(None),
             raise HTTPException(status_code=422, detail=f"Não consegui estimar as calorias: {e}")
 
     # orquestrador: grava o extra, calcula e distribui o corte de carbo
-    breakdown = await registrar_fuga_rollover(data, extra)
-    resultado = await plano_do_dia(data)
+    breakdown = await registrar_fuga_rollover(user_id, data, extra)
+    resultado = await _plano_do_dia_impl(user_id, data)
 
-    # WhatsApp com o cardápio já ajustado — só quando há fuga registrada.
+    # WhatsApp com o cardápio já ajustado — para o telefone do próprio usuário.
     try:
         from app.services.whatsapp_service import send_message
         from app.services.nutricao_service import formatar_plano_whatsapp
-        from config.settings import settings
-        if settings.WHATSAPP_TO:
+        from app.services.user_service import get_por_id
+        user = await get_por_id(user_id)
+        telefone = (user or {}).get("telefone")
+        if telefone and (user or {}).get("whatsapp", {}).get("ativo"):
             cabecalho = _montar_cabecalho_rollover(extra, breakdown, data)
-            await send_message(settings.WHATSAPP_TO, cabecalho + formatar_plano_whatsapp(data, resultado["plano"]))
+            await send_message(telefone, cabecalho + formatar_plano_whatsapp(data, resultado["plano"]))
     except Exception as e:
         logger.error("WhatsApp da fuga falhou: %s", e)
 
@@ -233,10 +242,11 @@ def _formatar_dias_rollover(rollover: dict) -> str:
 
 
 @router.delete("/ajuste-dia/{data}")
-async def limpar_fuga(data: str):
+async def limpar_fuga(request: Request, data: str):
     """Remove as fugas do dia — volta ao plano original."""
-    await remover_ajuste_dia(data)
-    return await plano_do_dia(data)
+    user_id = request.state.user_id
+    await remover_ajuste_dia(user_id, data)
+    return await _plano_do_dia_impl(user_id, data)
 
 
 class HorariosBody(BaseModel):
@@ -248,14 +258,14 @@ class HorariosBody(BaseModel):
 
 
 @router.get("/horarios")
-async def ler_horarios():
-    return await get_horarios()
+async def ler_horarios(request: Request):
+    return await get_horarios(request.state.user_id)
 
 
 @router.post("/horarios")
-async def gravar_horarios(body: HorariosBody):
+async def gravar_horarios(request: Request, body: HorariosBody):
     try:
-        cfg = await salvar_horarios(body.model_dump(exclude_none=True))
+        cfg = await salvar_horarios(request.state.user_id, body.model_dump(exclude_none=True))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     # reagenda os lembretes de refeição para os novos horários
@@ -265,26 +275,29 @@ async def gravar_horarios(body: HorariosBody):
 
 
 @router.post("/gerar", response_model=dict)
-async def gerar_plano(treino: Treino | None = None):
+async def gerar_plano(request: Request, treino: Treino | None = None):
     plano = await gerar_plano_alimentar(treino)
     db = get_db()
-    await db.planos.insert_one(plano.model_dump())
+    doc = plano.model_dump()
+    doc["user_id"] = request.state.user_id
+    await db.planos.insert_one(doc)
     return plano.model_dump()
 
 
 @router.get("/")
-async def listar_planos():
+async def listar_planos(request: Request):
     db = get_db()
-    planos = await db.planos.find({}, {"_id": 0}).to_list(30)
+    planos = await db.planos.find({"user_id": request.state.user_id}, {"_id": 0}).to_list(30)
     return planos
 
 
 @router.get("/hoje")
-async def plano_hoje():
+async def plano_hoje(request: Request):
     db = get_db()
     hoje = datetime.now().date()
     doc = await db.planos.find_one(
-        {"data": {"$gte": datetime(hoje.year, hoje.month, hoje.day)}},
+        {"user_id": request.state.user_id,
+         "data": {"$gte": datetime(hoje.year, hoje.month, hoje.day)}},
         {"_id": 0}
     )
     if not doc:
@@ -301,7 +314,7 @@ _ORDEM_TIPOS = ["TIROS", "VO2MAX", "TEMPO", "FORCA", "Z2_LONGO", "RECUPERACAO", 
 
 
 @router.get("/guia", response_class=HTMLResponse)
-async def guia_nutricao():
+async def guia_nutricao(request: Request):
     # tabela de alimentos
     linhas_tab = "".join(
         f"<tr><td>{a['nome']}</td><td class='c'>{a['base']}</td>"
@@ -310,7 +323,7 @@ async def guia_nutricao():
     )
 
     # cardápios por tipo
-    cfg = await get_horarios()
+    cfg = await get_horarios(request.state.user_id)
     blocos = []
     for tipo in _ORDEM_TIPOS:
         p = plano_para_tipo(tipo, None, cfg)

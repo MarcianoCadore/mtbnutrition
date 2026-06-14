@@ -228,6 +228,7 @@ def build_cycling_workout(
 
 
 async def upload_e_agendar(
+    user_id: str,
     tipo: str,
     duracao_min: int,
     nome: str,
@@ -238,7 +239,7 @@ async def upload_e_agendar(
     from app.services.garmin_service import get_garmin_client
     from app.services.config_service import zonas_bpm_map
 
-    zonas_bpm = await zonas_bpm_map()
+    zonas_bpm = await zonas_bpm_map(user_id)
     workout = build_cycling_workout(tipo, duracao_min, nome, descricao, zonas_bpm)
     if not workout:
         logger.warning("Tipo %s não tem builder de workout", tipo)

@@ -135,14 +135,14 @@ def _refeicao_pedida(texto: str) -> str | None:
     return None
 
 
-async def _plano_do_dia_msg(data: str, refeicao: str | None = None) -> str:
+async def _plano_do_dia_msg(user_id: str, data: str, refeicao: str | None = None) -> str:
     from app.services.config_service import get_horarios, ajuste_do_dia
     from app.services.nutricao_service import (
         plano_para_tipo, formatar_plano_whatsapp, formatar_refeicao_whatsapp)
     from app.routes.nutrition import _tipo_periodo_do_dia
-    cfg = await get_horarios()
-    tipo, periodo = await _tipo_periodo_do_dia(data)
-    ajuste = await ajuste_do_dia(data)
+    cfg = await get_horarios(user_id)
+    tipo, periodo = await _tipo_periodo_do_dia(user_id, data)
+    ajuste = await ajuste_do_dia(user_id, data)
     extras = ajuste["extras"]
     corte = ajuste["corte_kcal"]   # None = doc legado → usa fallback de extras
     plano = plano_para_tipo(tipo, data, cfg, periodo=periodo, extras=extras, corte_kcal=corte)
@@ -153,13 +153,13 @@ async def _plano_do_dia_msg(data: str, refeicao: str | None = None) -> str:
     return formatar_plano_whatsapp(data, plano)
 
 
-async def _treino_do_dia_msg(data: str) -> str:
+async def _treino_do_dia_msg(user_id: str, data: str) -> str:
     from datetime import datetime, timedelta
     d = datetime.fromisoformat(data).date()
     seg = d - timedelta(days=d.weekday())
     dias = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
     cab = f"🚴 *Treino de {dias[d.weekday()]}, {d.strftime('%d/%m')}*"
-    doc = await get_db().semanas.find_one({"semana_inicio": seg.isoformat()})
+    doc = await get_db().semanas.find_one({"semana_inicio": seg.isoformat(), "user_id": user_id})
     if doc:
         for t in doc.get("treinos", []):
             if t.get("data") == data:
@@ -175,11 +175,11 @@ async def _treino_do_dia_msg(data: str) -> str:
     return cab + "\n🛌 Sem treino marcado (descanso)."
 
 
-async def _registrar_fuga_msg(extra: dict, data: str) -> str:
+async def _registrar_fuga_msg(user_id: str, extra: dict, data: str) -> str:
     from app.routes.nutrition import registrar_fuga_rollover, _montar_cabecalho_rollover
-    breakdown = await registrar_fuga_rollover(data, extra)
+    breakdown = await registrar_fuga_rollover(user_id, data, extra)
     cabecalho = _montar_cabecalho_rollover(extra, breakdown, data)
-    return cabecalho + await _plano_do_dia_msg(data)
+    return cabecalho + await _plano_do_dia_msg(user_id, data)
 
 
 def _fmt_data(data_iso: str) -> str:
@@ -229,11 +229,15 @@ def _dias_afetados_move(resultado: dict) -> list[dict]:
 
 
 async def _sync_garmin_e_whatsapp(
+    user_id: str,
+    u_telefone: str,
     dias_afetados: list[dict],
     semana_inicio: str,
 ) -> str:
     """Sincroniza os dias afetados no Garmin e envia o resumo da semana no WhatsApp.
 
+    user_id: identificador do usuário dono dos treinos.
+    u_telefone: número E.164 do usuário para o envio WhatsApp.
     dias_afetados: lista de dicts, um por dia que mudou de estado. Cada item:
       {"data", "tipo", "duracao_min", "descricao", "garmin_id_antigo"}.
       Para cada dia: remove o workout antigo do Garmin (se houver garmin_id_antigo)
@@ -271,6 +275,7 @@ async def _sync_garmin_e_whatsapp(
             sem_inicio = _semana_inicio_de(data_iso)
             try:
                 gid = await upload_e_agendar(
+                    user_id,
                     tipo=tipo,
                     duracao_min=duracao_min,
                     nome=nome,
@@ -279,7 +284,7 @@ async def _sync_garmin_e_whatsapp(
                 )
                 if gid:
                     await db.semanas.update_one(
-                        {"semana_inicio": sem_inicio, "treinos.data": data_iso},
+                        {"semana_inicio": sem_inicio, "user_id": user_id, "treinos.data": data_iso},
                         {"$set": {"treinos.$.garmin_workout_id": gid}},
                     )
                     houve_upload = True
@@ -298,8 +303,8 @@ async def _sync_garmin_e_whatsapp(
 
     # ── envia resumo da semana no WhatsApp ──
     try:
-        treinos = await get_treinos_semana(semana_inicio)
-        await send_semana_treinos(semana_inicio, treinos)
+        treinos = await get_treinos_semana(user_id, semana_inicio)
+        await send_semana_treinos(semana_inicio, treinos, to=u_telefone)
     except Exception as e:
         logger.error("_sync_garmin_e_whatsapp: send_semana_treinos falhou — %s", e)
 
@@ -314,6 +319,8 @@ def _semana_inicio_de(data_iso: str) -> str:
 
 
 async def _aplicar_estado_pendente(
+    user_id: str,
+    u_telefone: str,
     from_: str,
     estado: dict,
     resposta_usuario: str,
@@ -358,7 +365,7 @@ async def _aplicar_estado_pendente(
         if acao == "alterar_treino":
             origem_iso = payload["origem_iso"]
             destino_iso = payload["destino_iso"]
-            resultado = await mover_treino(origem_iso, destino_iso, modo)
+            resultado = await mover_treino(user_id, origem_iso, destino_iso, modo)
             semana_inicio = _semana_inicio_de(destino_iso)
 
             tipo_origem = payload.get("tipo_origem", "")
@@ -366,7 +373,7 @@ async def _aplicar_estado_pendente(
             # Sincroniza ambos os dias afetados (cobre swap, onde os dois ficam
             # com treino, e sobrescrever, onde a origem vira descanso).
             garmin_status = await _sync_garmin_e_whatsapp(
-                _dias_afetados_move(resultado), semana_inicio)
+                user_id, u_telefone, _dias_afetados_move(resultado), semana_inicio)
 
             if modo == "swap":
                 tipo_destino = payload.get("tipo_destino", "")
@@ -388,8 +395,8 @@ async def _aplicar_estado_pendente(
             descricao = payload.get("descricao")
             semana_inicio = _semana_inicio_de(data_iso)
 
-            resultado = await criar_treino_dia(data_iso, tipo, duracao_min, descricao, modo=modo)
-            garmin_status = await _sync_garmin_e_whatsapp([resultado], semana_inicio)
+            resultado = await criar_treino_dia(user_id, data_iso, tipo, duracao_min, descricao, modo=modo)
+            garmin_status = await _sync_garmin_e_whatsapp(user_id, u_telefone, [resultado], semana_inicio)
 
             horas = duracao_min // 60
             mins = duracao_min % 60
@@ -434,6 +441,19 @@ async def whatsapp_webhook(request: Request):
         num_media = 0
     hoje = datetime.now().date().isoformat()
 
+    # ── RESOLUÇÃO DO USUÁRIO PELO TELEFONE ────────────────────────────────────
+    from app.services.user_service import get_por_telefone
+    # from_number vem como "whatsapp:+5551999999999"; extraímos o E.164
+    numero_e164 = from_number.removeprefix("whatsapp:")
+    u = await get_por_telefone(numero_e164)
+    if u is None:
+        return _twiml(
+            "📱 Seu número ainda não está cadastrado no MTB Nutrition. "
+            "Cadastre-se no portal pra usar o assistente."
+        )
+    user_id = str(u["_id"])
+    u_telefone = u.get("telefone") or numero_e164
+
     from app.services.ai_service import estimar_alimento_extra, interpretar_mensagem, QuotaExcedida
 
     # FOTO → sempre tratada como fuga (comida fotografada), no dia de hoje
@@ -455,7 +475,7 @@ async def whatsapp_webhook(request: Request):
         except Exception as e:
             logger.error("Webhook foto: %s", e)
             return _twiml("Não consegui calcular as calorias da foto. Descreve o que era?")
-        return _twiml(await _registrar_fuga_msg(extra, hoje))
+        return _twiml(await _registrar_fuga_msg(user_id, extra, hoje))
 
     if not body:
         return _twiml("🚴 Oi! Sou teu assistente. Posso te dizer o *cardápio* ou o *treino* de um dia, "
@@ -470,7 +490,7 @@ async def whatsapp_webhook(request: Request):
 
     estado = await get_estado(from_number)
     if estado:
-        resp = await _aplicar_estado_pendente(from_number, estado, body, hoje)
+        resp = await _aplicar_estado_pendente(user_id, u_telefone, from_number, estado, body, hoje)
         if resp is not None:
             return resp
         # resp = None → mensagem não reconhecida como resposta de colisão;
@@ -508,12 +528,12 @@ async def whatsapp_webhook(request: Request):
             return _twiml("Os dois dias são o mesmo 😅 Informa de um dia pra outro diferente.")
 
         # Verifica se há treino na origem
-        treino_origem = await get_treino(origem_iso)
+        treino_origem = await get_treino(user_id, origem_iso)
         if not treino_origem:
             return _twiml(f"Não encontrei nenhum treino em {_fmt_data(origem_iso)} para mover. 🛌")
 
         # Verifica colisão no destino
-        treino_destino = await get_treino(destino_iso)
+        treino_destino = await get_treino(user_id, destino_iso)
         tipo_origem = treino_origem.get("tipo", "")
 
         if treino_destino:
@@ -534,7 +554,7 @@ async def whatsapp_webhook(request: Request):
 
         # Sem colisão — aplica direto (sobrescrever é equivalente a mover para dia vazio)
         try:
-            resultado = await mover_treino(origem_iso, destino_iso, "sobrescrever")
+            resultado = await mover_treino(user_id, origem_iso, destino_iso, "sobrescrever")
         except ValueError as e:
             return _twiml(f"❌ {e}")
         except Exception as e:
@@ -543,7 +563,7 @@ async def whatsapp_webhook(request: Request):
 
         semana_inicio = _semana_inicio_de(destino_iso)
         garmin_status = await _sync_garmin_e_whatsapp(
-            _dias_afetados_move(resultado), semana_inicio)
+            user_id, u_telefone, _dias_afetados_move(resultado), semana_inicio)
 
         msg = (f"✅ Pronto! Movi o treino de {tipo_origem.replace('_', ' ').title()} "
                f"de {_fmt_data(origem_iso)} para {_fmt_data(destino_iso)}.")
@@ -597,7 +617,7 @@ async def whatsapp_webhook(request: Request):
         descricao = interp.get("descricao") or tipo.replace("_", " ").title()
 
         # Verifica colisão
-        treino_existente = await get_treino(data_iso)
+        treino_existente = await get_treino(user_id, data_iso)
         if treino_existente:
             tipo_existente = treino_existente.get("tipo", "")
             await set_estado(from_number, "criar_treino", {
@@ -620,13 +640,13 @@ async def whatsapp_webhook(request: Request):
 
         # Sem colisão — grava direto
         try:
-            resultado = await criar_treino_dia(data_iso, tipo, duracao_min, descricao)
+            resultado = await criar_treino_dia(user_id, data_iso, tipo, duracao_min, descricao)
         except Exception as e:
             logger.error("criar_treino: %s", e)
             return _twiml("❌ Erro ao criar o treino. Tenta de novo.")
 
         semana_inicio = _semana_inicio_de(data_iso)
-        garmin_status = await _sync_garmin_e_whatsapp([resultado], semana_inicio)
+        garmin_status = await _sync_garmin_e_whatsapp(user_id, u_telefone, [resultado], semana_inicio)
 
         msg = f"✅ Criei um treino de {tipo.replace('_', ' ').title()} ({_fmt_duracao(duracao_min)}) no {_fmt_data(data_iso)}. 🚵"
         if nota_limite:
@@ -642,13 +662,13 @@ async def whatsapp_webhook(request: Request):
         if not data_iso:
             data_iso = _validar_ou_hoje(interp.get("data"), hoje)
 
-        treino_existente = await get_treino(data_iso)
+        treino_existente = await get_treino(user_id, data_iso)
         if not treino_existente:
             return _twiml(f"Em {_fmt_data(data_iso)} já está como descanso — não há treino pra remover. 🛌")
 
         tipo_removido = treino_existente.get("tipo", "")
         try:
-            resultado = await remover_treino_dia(data_iso)
+            resultado = await remover_treino_dia(user_id, data_iso)
         except ValueError as e:
             return _twiml(f"❌ {e}")
         except Exception as e:
@@ -659,7 +679,7 @@ async def whatsapp_webhook(request: Request):
         # Dia virou descanso (tipo DESCANSO → não faz upload, só remove do Garmin).
         dia_afetado = {"data": data_iso, "tipo": "DESCANSO",
                        "garmin_id_antigo": resultado.get("garmin_id_antigo")}
-        garmin_status = await _sync_garmin_e_whatsapp([dia_afetado], semana_inicio)
+        garmin_status = await _sync_garmin_e_whatsapp(user_id, u_telefone, [dia_afetado], semana_inicio)
 
         msg = f"🗑️ Removi o treino de {tipo_removido.replace('_', ' ').title()} de {_fmt_data(data_iso)}. Agora é descanso. 🛌"
         if resultado.get("garmin_id_antigo"):
@@ -682,9 +702,9 @@ async def whatsapp_webhook(request: Request):
                 data = hoje
 
     if intencao == "plano_dia":
-        return _twiml(await _plano_do_dia_msg(data, _refeicao_pedida(body)))
+        return _twiml(await _plano_do_dia_msg(user_id, data, _refeicao_pedida(body)))
     if intencao == "treino_dia":
-        return _twiml(await _treino_do_dia_msg(data))
+        return _twiml(await _treino_do_dia_msg(user_id, data))
     if intencao in ("registrar_fuga", "trocar_alimento"):
         desc = (interp.get("para") if intencao == "trocar_alimento" else interp.get("descricao")) or body
         try:
@@ -694,7 +714,7 @@ async def whatsapp_webhook(request: Request):
         except Exception as e:
             logger.error("Webhook fuga texto: %s", e)
             return _twiml("Não consegui calcular as calorias disso. Tenta descrever de outro jeito?")
-        msg = await _registrar_fuga_msg(extra, data)
+        msg = await _registrar_fuga_msg(user_id, extra, data)
         if intencao == "trocar_alimento" and interp.get("de"):
             msg = f"🔁 Beleza, pode trocar *{interp['de']}* por *{interp['para']}*.\n" + msg
         return _twiml(msg)

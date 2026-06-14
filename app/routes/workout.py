@@ -1,7 +1,7 @@
 import os
 import shutil
 import logging
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 from datetime import datetime
@@ -42,27 +42,30 @@ class PlanoSemanal(BaseModel):
 
 
 @router.post("/", response_model=dict)
-async def criar_treino(treino: Treino):
+async def criar_treino(request: Request, treino: Treino):
     if treino.data is None:
         treino.data = datetime.now()
     db = get_db()
-    result = await db.treinos.insert_one(treino.model_dump())
+    doc = treino.model_dump()
+    doc["user_id"] = request.state.user_id
+    result = await db.treinos.insert_one(doc)
     return {"id": str(result.inserted_id), "status": "criado"}
 
 
 @router.get("/")
-async def listar_treinos():
+async def listar_treinos(request: Request):
     db = get_db()
-    treinos = await db.treinos.find({}, {"_id": 0}).to_list(50)
+    treinos = await db.treinos.find({"user_id": request.state.user_id}, {"_id": 0}).to_list(50)
     return treinos
 
 
 @router.get("/hoje")
-async def treino_hoje():
+async def treino_hoje(request: Request):
     db = get_db()
     hoje = datetime.now().date()
     doc = await db.treinos.find_one(
-        {"data": {"$gte": datetime(hoje.year, hoje.month, hoje.day)}},
+        {"user_id": request.state.user_id,
+         "data": {"$gte": datetime(hoje.year, hoje.month, hoje.day)}},
         {"_id": 0}
     )
     if not doc:
@@ -71,21 +74,25 @@ async def treino_hoje():
 
 
 @router.get("/semana/{semana_inicio}")
-async def get_semana(semana_inicio: str):
+async def get_semana(request: Request, semana_inicio: str):
     db = get_db()
-    doc = await db.semanas.find_one({"semana_inicio": semana_inicio}, {"_id": 0})
+    doc = await db.semanas.find_one(
+        {"semana_inicio": semana_inicio, "user_id": request.state.user_id}, {"_id": 0})
     if not doc:
         return {"semana_inicio": semana_inicio, "objetivo": "", "treinos": []}
     return doc
 
 
 @router.post("/semana")
-async def salvar_semana(plano: PlanoSemanal):
+async def salvar_semana(request: Request, plano: PlanoSemanal):
     db = get_db()
+    user_id = request.state.user_id
 
     # preserva resultado e garmin_workout_id que vêm do sync automático
-    existing = await db.semanas.find_one({"semana_inicio": plano.semana_inicio})
+    existing = await db.semanas.find_one(
+        {"semana_inicio": plano.semana_inicio, "user_id": user_id})
     data = plano.model_dump()
+    data["user_id"] = user_id
     if existing:
         preserve_map = {
             t["data"]: {
@@ -102,7 +109,7 @@ async def salvar_semana(plano: PlanoSemanal):
                 t["garmin_workout_id"] = saved["garmin_workout_id"]
 
     await db.semanas.replace_one(
-        {"semana_inicio": plano.semana_inicio},
+        {"semana_inicio": plano.semana_inicio, "user_id": user_id},
         data,
         upsert=True,
     )
@@ -110,12 +117,13 @@ async def salvar_semana(plano: PlanoSemanal):
 
 
 @router.post("/garmin/sync/{semana_inicio}")
-async def sync_garmin(semana_inicio: str):
+async def sync_garmin(request: Request, semana_inicio: str):
     from app.services.garmin_service import sync_treinos_planejados, sync_atividades
-    pl = await sync_treinos_planejados(semana_inicio)
-    at = await sync_atividades(semana_inicio)
+    user_id = request.state.user_id
+    pl = await sync_treinos_planejados(user_id, semana_inicio)
+    at = await sync_atividades(user_id, semana_inicio)
     # reclassifica a partir das descrições recém-importadas (independe da quota do Gemini)
-    rc = await reclassificar_semana(semana_inicio)
+    rc = await _reclassificar_impl(user_id, semana_inicio)
     return {
         "status": "ok",
         "treinos_importados": pl,
@@ -124,17 +132,12 @@ async def sync_garmin(semana_inicio: str):
     }
 
 
-@router.post("/reclassificar/{semana_inicio}")
-async def reclassificar_semana(semana_inicio: str):
-    """Reclassifica o tipo de cada treino da semana a partir da descrição salva.
-
-    Não depende do Garmin — usa o classificador determinístico por texto.
-    Treinos sem descrição ou de descanso explícito não são alterados.
-    """
+async def _reclassificar_impl(user_id: str, semana_inicio: str) -> dict:
+    """Reclassifica o tipo de cada treino da semana a partir da descrição salva."""
     from app.services.ai_service import classificar_por_texto
 
     db = get_db()
-    doc = await db.semanas.find_one({"semana_inicio": semana_inicio})
+    doc = await db.semanas.find_one({"semana_inicio": semana_inicio, "user_id": user_id})
     if not doc:
         return {"status": "sem treinos", "reclassificados": 0}
 
@@ -146,7 +149,7 @@ async def reclassificar_semana(semana_inicio: str):
         novo_tipo = classificar_por_texto(descricao)
         if novo_tipo and novo_tipo != t.get("tipo"):
             await db.semanas.update_one(
-                {"semana_inicio": semana_inicio, "treinos.data": t["data"]},
+                {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": t["data"]},
                 {"$set": {"treinos.$.tipo": novo_tipo}},
             )
             alterados.append({"data": t["data"], "de": t.get("tipo"), "para": novo_tipo})
@@ -154,8 +157,18 @@ async def reclassificar_semana(semana_inicio: str):
     return {"status": "ok", "reclassificados": len(alterados), "detalhes": alterados}
 
 
+@router.post("/reclassificar/{semana_inicio}")
+async def reclassificar_semana(request: Request, semana_inicio: str):
+    """Reclassifica o tipo de cada treino da semana a partir da descrição salva.
+
+    Não depende do Garmin — usa o classificador determinístico por texto.
+    Treinos sem descrição ou de descanso explícito não são alterados.
+    """
+    return await _reclassificar_impl(request.state.user_id, semana_inicio)
+
+
 @router.get("/garmin/debug/{semana_inicio}")
-async def debug_garmin(semana_inicio: str):
+async def debug_garmin(request: Request, semana_inicio: str):
     """Retorna o raw da API Garmin para diagnóstico."""
     from datetime import timedelta
     from app.services.garmin_service import get_garmin_client
@@ -190,16 +203,17 @@ async def debug_garmin(semana_inicio: str):
         "workouts_raw_type": type(workouts_raw).__name__,
         "workouts_raw_keys": list(workouts_raw.keys()) if isinstance(workouts_raw, dict) else None,
         "workouts_raw_preview": workouts_raw if isinstance(workouts_raw, dict) else workouts_raw[:3],
-        "db_semana": await get_db().semanas.find_one({"semana_inicio": semana_inicio}, {"_id": 0}),
+        "db_semana": await get_db().semanas.find_one(
+            {"semana_inicio": semana_inicio, "user_id": request.state.user_id}, {"_id": 0}),
     }
 
 
 @router.post("/gerar-proxima-semana/{semana_atual}")
-async def gerar_proxima_semana(semana_atual: str):
+async def gerar_proxima_semana(request: Request, semana_atual: str):
     """Usa IA para gerar o plano da próxima semana com base na análise da atual."""
     from app.services.plano_semana_service import gerar_proxima_semana as _gerar
     try:
-        return await _gerar(semana_atual)
+        return await _gerar(request.state.user_id, semana_atual)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -211,18 +225,20 @@ class EnviarGarminBody(BaseModel):
 
 
 @router.post("/enviar-garmin")
-async def enviar_para_garmin(body: EnviarGarminBody):
+async def enviar_para_garmin(request: Request, body: EnviarGarminBody):
     """Salva semana no DB e envia cada treino para o Garmin Connect."""
     from app.services.garmin_workout_service import upload_e_agendar
 
     db = get_db()
+    user_id = request.state.user_id
     data = {
         "semana_inicio": body.semana_inicio,
+        "user_id": user_id,
         "objetivo": body.objetivo,
         "treinos": [t.model_dump() for t in body.treinos],
     }
     await db.semanas.replace_one(
-        {"semana_inicio": body.semana_inicio},
+        {"semana_inicio": body.semana_inicio, "user_id": user_id},
         data,
         upsert=True,
     )
@@ -235,6 +251,7 @@ async def enviar_para_garmin(body: EnviarGarminBody):
 
         nome = f"{t.tipo.replace('_', ' ')} — {t.data}"
         gid = await upload_e_agendar(
+            user_id,
             tipo=t.tipo,
             duracao_min=t.duracao_min,
             nome=nome,
@@ -243,32 +260,35 @@ async def enviar_para_garmin(body: EnviarGarminBody):
         )
         if gid:
             await db.semanas.update_one(
-                {"semana_inicio": body.semana_inicio, "treinos.data": t.data},
+                {"semana_inicio": body.semana_inicio, "user_id": user_id, "treinos.data": t.data},
                 {"$set": {"treinos.$.garmin_workout_id": gid}},
             )
         resultados.append({"data": t.data, "tipo": t.tipo, "garmin_id": gid, "status": "ok" if gid else "erro"})
 
     enviados = sum(1 for r in resultados if r.get("status") == "ok")
 
-    # Avisa no WhatsApp com o resumo dos treinos da semana recém-gerada.
+    # Avisa no WhatsApp com o resumo dos treinos da semana — no telefone do usuário.
     whatsapp_ok = False
-    if settings.WHATSAPP_TO:
-        try:
-            from app.services.whatsapp_service import send_semana_treinos
-            await send_semana_treinos(body.semana_inicio, [t.model_dump() for t in body.treinos])
+    try:
+        from app.services.whatsapp_service import send_semana_treinos
+        from app.services.user_service import get_por_id
+        user = await get_por_id(user_id)
+        telefone = (user or {}).get("telefone")
+        if telefone and (user or {}).get("whatsapp", {}).get("ativo"):
+            await send_semana_treinos(body.semana_inicio, [t.model_dump() for t in body.treinos], to=telefone)
             whatsapp_ok = True
-        except Exception as e:
-            logger.error("Falha ao enviar treinos da semana no WhatsApp: %s", e)
+    except Exception as e:
+        logger.error("Falha ao enviar treinos da semana no WhatsApp: %s", e)
 
     return {"status": "ok", "semana": body.semana_inicio, "enviados": enviados,
             "whatsapp": whatsapp_ok, "detalhes": resultados}
 
 
 @router.get("/zonas/dados")
-async def ler_zonas():
+async def ler_zonas(request: Request):
     """Zonas de FC atualmente configuradas."""
     from app.services.config_service import get_zonas
-    return await get_zonas()
+    return await get_zonas(request.state.user_id)
 
 
 @router.post("/zonas/importar-garmin")
@@ -322,12 +342,12 @@ class ZonasBody(BaseModel):
 
 
 @router.post("/zonas/salvar")
-async def salvar_zonas_endpoint(body: ZonasBody):
+async def salvar_zonas_endpoint(request: Request, body: ZonasBody):
     """Valida e salva as zonas de FC. Após salvar, sincroniza automaticamente
     com o Garmin (todos os perfis) — best-effort, não quebra o salvamento."""
     from app.services.config_service import salvar_zonas
     try:
-        salvo = await salvar_zonas(body.model_dump())
+        salvo = await salvar_zonas(request.state.user_id, body.model_dump())
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -349,7 +369,8 @@ async def pagina_zonas():
 
 
 @router.post("/fit/{semana_inicio}/{data}")
-async def upload_fit(semana_inicio: str, data: str, arquivo: UploadFile = File(...)):
+async def upload_fit(request: Request, semana_inicio: str, data: str, arquivo: UploadFile = File(...)):
+    user_id = request.state.user_id
     if not arquivo.filename.lower().endswith(".fit"):
         raise HTTPException(status_code=400, detail="Apenas arquivos .fit são permitidos")
 
@@ -364,7 +385,7 @@ async def upload_fit(semana_inicio: str, data: str, arquivo: UploadFile = File(.
     analise = analisar_fit(dest_path)
 
     db = get_db()
-    doc = await db.semanas.find_one({"semana_inicio": semana_inicio})
+    doc = await db.semanas.find_one({"semana_inicio": semana_inicio, "user_id": user_id})
 
     # inclui descrição já salva no banco para ajudar a IA a classificar
     descricao_existente = None
@@ -393,6 +414,7 @@ async def upload_fit(semana_inicio: str, data: str, arquivo: UploadFile = File(.
     if not doc:
         await db.semanas.insert_one({
             "semana_inicio": semana_inicio,
+            "user_id": user_id,
             "objetivo": "",
             "treinos": [novo_treino],
         })
@@ -402,12 +424,12 @@ async def upload_fit(semana_inicio: str, data: str, arquivo: UploadFile = File(.
             # apenas campos com valor — preserva descricao já salva
             fields = {f"treinos.$.{k}": v for k, v in novo_treino.items() if v is not None}
             await db.semanas.update_one(
-                {"semana_inicio": semana_inicio, "treinos.data": data},
+                {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": data},
                 {"$set": fields},
             )
         else:
             await db.semanas.update_one(
-                {"semana_inicio": semana_inicio},
+                {"semana_inicio": semana_inicio, "user_id": user_id},
                 {"$push": {"treinos": novo_treino}},
             )
 
@@ -415,13 +437,13 @@ async def upload_fit(semana_inicio: str, data: str, arquivo: UploadFile = File(.
 
 
 @router.delete("/fit/{semana_inicio}/{data}")
-async def remover_fit(semana_inicio: str, data: str):
+async def remover_fit(request: Request, semana_inicio: str, data: str):
     dest_path = os.path.join(UPLOADS_DIR, semana_inicio, f"{data}.fit")
     if os.path.exists(dest_path):
         os.remove(dest_path)
     db = get_db()
     await db.semanas.update_one(
-        {"semana_inicio": semana_inicio, "treinos.data": data},
+        {"semana_inicio": semana_inicio, "user_id": request.state.user_id, "treinos.data": data},
         {
             "$set":   {"treinos.$.tipo": "DESCANSO"},
             "$unset": {

@@ -137,8 +137,9 @@ def _extrair_fit_do_zip(data: bytes) -> bytes | None:
     return None
 
 
-async def sync_treinos_planejados(semana_inicio: str) -> int:
-    """Busca treinos planejados no calendário Garmin e faz upsert no MongoDB."""
+async def sync_treinos_planejados(user_id: str, semana_inicio: str) -> int:
+    """Busca treinos planejados no calendário Garmin e faz upsert no MongoDB.
+    Escopado ao user_id (Fase 1: integração Garmin é do usuário Marciano)."""
     api = get_garmin_client()
     d0 = datetime.strptime(semana_inicio, "%Y-%m-%d").date()
     d1 = d0 + timedelta(days=6)
@@ -154,7 +155,7 @@ async def sync_treinos_planejados(semana_inicio: str) -> int:
 
     # Snapshot do estado ANTES do sync, para detectar mudanças nos dias de treino.
     # Indexado por garmin_workout_id -> {data, nome}.
-    doc_antes = await db.semanas.find_one({"semana_inicio": semana_inicio})
+    doc_antes = await db.semanas.find_one({"semana_inicio": semana_inicio, "user_id": user_id})
     antes = {}
     if doc_antes:
         for t in doc_antes.get("treinos", []):
@@ -224,7 +225,7 @@ async def sync_treinos_planejados(semana_inicio: str) -> int:
             cadencia_rpm = extrair_cadencia_texto(notas)
 
         semana = _semana_de(date_str)
-        doc = await db.semanas.find_one({"semana_inicio": semana})
+        doc = await db.semanas.find_one({"semana_inicio": semana, "user_id": user_id})
 
         tipo_planejado = "Z2_LONGO"
         if nome:
@@ -252,6 +253,7 @@ async def sync_treinos_planejados(semana_inicio: str) -> int:
         if not doc:
             await db.semanas.insert_one({
                 "semana_inicio": semana,
+                "user_id": user_id,
                 "objetivo": "",
                 "treinos": [treino_entry],
             })
@@ -259,7 +261,7 @@ async def sync_treinos_planejados(semana_inicio: str) -> int:
             existe = any(t.get("data") == date_str for t in doc.get("treinos", []))
             if not existe:
                 await db.semanas.update_one(
-                    {"semana_inicio": semana},
+                    {"semana_inicio": semana, "user_id": user_id},
                     {"$push": {"treinos": treino_entry}},
                 )
             else:
@@ -273,13 +275,13 @@ async def sync_treinos_planejados(semana_inicio: str) -> int:
                 if cadencia_rpm is not None:
                     set_fields["treinos.$.cadencia_rpm"] = cadencia_rpm
                 await db.semanas.update_one(
-                    {"semana_inicio": semana, "treinos.data": date_str},
+                    {"semana_inicio": semana, "user_id": user_id, "treinos.data": date_str},
                     {"$set": set_fields},
                 )
         sincronizados += 1
 
     # Remove entradas de treinos que foram movidos para outra data no Garmin
-    doc = await db.semanas.find_one({"semana_inicio": semana_inicio})
+    doc = await db.semanas.find_one({"semana_inicio": semana_inicio, "user_id": user_id})
     if doc:
         for treino in doc.get("treinos", []):
             wid = treino.get("garmin_workout_id")
@@ -292,7 +294,7 @@ async def sync_treinos_planejados(semana_inicio: str) -> int:
                     wid, treino["data"], data_atual_garmin,
                 )
                 await db.semanas.update_one(
-                    {"semana_inicio": semana_inicio},
+                    {"semana_inicio": semana_inicio, "user_id": user_id},
                     {"$pull": {"treinos": {"garmin_workout_id": wid, "data": treino["data"]}}},
                 )
 
@@ -431,8 +433,9 @@ def _metricas_extra(planejado: dict, resultado: dict, limiar, avg_speed_ms=None,
     return extra
 
 
-async def sync_atividades(semana_inicio: str) -> int:
-    """Busca atividades completadas no Garmin e salva como resultado."""
+async def sync_atividades(user_id: str, semana_inicio: str) -> int:
+    """Busca atividades completadas no Garmin e salva como resultado.
+    Escopado ao user_id (Fase 1: integração Garmin é do usuário Marciano)."""
     api = get_garmin_client()
     d0 = datetime.strptime(semana_inicio, "%Y-%m-%d").date()
     d1 = d0 + timedelta(days=6)
@@ -450,7 +453,7 @@ async def sync_atividades(semana_inicio: str) -> int:
 
     # Backfill: atividades que já têm resultado salvo são marcadas como
     # processadas para que NÃO sejam notificadas de novo após um restart.
-    doc_semana = await db.semanas.find_one({"semana_inicio": semana_inicio})
+    doc_semana = await db.semanas.find_one({"semana_inicio": semana_inicio, "user_id": user_id})
     if doc_semana:
         for t in doc_semana.get("treinos", []):
             aid = (t.get("resultado") or {}).get("garmin_activity_id")
@@ -473,7 +476,7 @@ async def sync_atividades(semana_inicio: str) -> int:
         semana = _semana_de(act_date)
 
         # verifica se já foi processada — pula a atividade inteira se sim
-        doc = await db.semanas.find_one({"semana_inicio": semana})
+        doc = await db.semanas.find_one({"semana_inicio": semana, "user_id": user_id})
         ja_processada = doc and any(
             t.get("data") == act_date
             and (t.get("resultado") or {}).get("garmin_activity_id") == act_id
@@ -557,7 +560,7 @@ async def sync_atividades(semana_inicio: str) -> int:
         # métricas extras do modal de avaliação (velocidade, TSS) — NÃO vão ao WhatsApp
         try:
             from app.services.config_service import get_zonas
-            limiar = (await get_zonas()).get("limiar")
+            limiar = (await get_zonas(user_id)).get("limiar")
         except Exception:
             limiar = None
         resultado.update(_metricas_extra(treino_planejado, resultado, limiar, act.get("averageSpeed"), fit_path))
@@ -565,7 +568,7 @@ async def sync_atividades(semana_inicio: str) -> int:
         # análise IA
         try:
             from app.services.ai_service import analisar_atividade_pos_treino
-            analise_ia = await analisar_atividade_pos_treino(treino_planejado, resultado)
+            analise_ia = await analisar_atividade_pos_treino(treino_planejado, resultado, user_id)
             resultado["analise_ia"] = analise_ia
         except Exception as e:
             logger.error("IA pós-treino error: %s", e)
@@ -576,6 +579,7 @@ async def sync_atividades(semana_inicio: str) -> int:
         if not doc:
             await db.semanas.insert_one({
                 "semana_inicio": semana,
+                "user_id": user_id,
                 "objetivo": "",
                 "treinos": [{
                     "data": act_date,
@@ -597,12 +601,12 @@ async def sync_atividades(semana_inicio: str) -> int:
                 if periodo_real:
                     set_fields["treinos.$.periodo"] = periodo_real
                 await db.semanas.update_one(
-                    {"semana_inicio": semana, "treinos.data": act_date},
+                    {"semana_inicio": semana, "user_id": user_id, "treinos.data": act_date},
                     {"$set": set_fields},
                 )
             else:
                 await db.semanas.update_one(
-                    {"semana_inicio": semana},
+                    {"semana_inicio": semana, "user_id": user_id},
                     {"$push": {"treinos": {
                         "data": act_date,
                         "tipo": tipo_real,
