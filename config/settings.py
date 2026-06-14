@@ -6,14 +6,23 @@ class Settings(BaseSettings):
     # Diretório onde os arquivos .fit são salvos. Em produção apontar para um
     # disco persistente (ex.: /opt/mtbnutrition/uploads/fit). Vazio = padrão local.
     UPLOADS_DIR: str = ""
-    # Login do portal (HTTP Basic). Em produção, definir PORTAL_PASSWORD via env.
+    # Login do portal (legado, mantido para migração).
+    # O novo auth usa users no banco; PORTAL_USER/PORTAL_PASSWORD não são mais
+    # usados para validar login, apenas como fallback de SECRET_KEY.
     PORTAL_USER: str = "marciano"
     PORTAL_PASSWORD: str = ""
+    # Chave secreta para assinar tokens de sessão.
+    # Se vazio, cai no fallback: PORTAL_PASSWORD → "dev-secret-mtb".
+    # Em produção, defina SECRET_KEY com um valor aleatório forte (ex.: openssl rand -hex 32).
+    SECRET_KEY: str = ""
     # Minutos de inatividade até a sessão do portal expirar. O cookie é de sessão
     # (some ao fechar o navegador), mas navegadores que restauram a sessão revivem
     # o cookie — por isso o servidor também expira por tempo (renovado a cada
     # requisição). Reduza para deslogar mais rápido após fechar o navegador.
     PORTAL_SESSAO_MIN: int = 30
+    # OTP de verificação de telefone por WhatsApp.
+    OTP_EXPIRA_MIN: int = 10
+    OTP_MAX_TENTATIVAS: int = 5
     # Z-API (WhatsApp)
     ZAPI_INSTANCE_ID: str = ""
     ZAPI_TOKEN: str = ""
