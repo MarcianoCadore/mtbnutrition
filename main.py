@@ -124,8 +124,10 @@ async def login_submit(request: Request):
     if not ok:
         return RedirectResponse(url="/login?erro=1", status_code=303)
     resp = RedirectResponse(url="/", status_code=303)
+    # Cookie de SESSÃO (sem max_age/expires): o navegador o apaga ao fechar,
+    # então fechar o navegador ou desligar o notebook desloga do portal.
     resp.set_cookie(_COOKIE, _expected_token(), httponly=True,
-                    samesite="lax", max_age=60 * 60 * 24 * 30)
+                    samesite="lax")
     return resp
 
 
