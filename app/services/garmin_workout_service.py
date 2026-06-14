@@ -266,3 +266,44 @@ async def upload_e_agendar(
     except Exception as e:
         logger.error("upload_e_agendar falhou para %s/%s: %s", tipo, data_iso, e)
         return None
+
+
+async def deletar_workout_garmin(gid: str) -> bool:
+    """Remove o workout do Garmin Connect pelo ID.
+
+    Usa api.delete_workout(workout_id) que está disponível na lib garminconnect.
+    Também tenta desagendar primeiro (unschedule_workout) pra evitar erro de
+    referência pendente — mas segue mesmo se falhar.
+
+    Roda em thread (asyncio.to_thread) para não bloquear o event loop.
+    Retorna True se deletou com sucesso, False caso contrário.
+    Em caso de falha, loga o erro e NÃO lança exceção, para não derrubar o fluxo
+    do webhook — o sync de pull do Garmin irá reconciliar na próxima sincronização.
+    """
+    if not gid:
+        return False
+
+    def _delete():
+        from app.services.garmin_service import get_garmin_client
+        api = get_garmin_client()
+        try:
+            # Tenta desagendar primeiro (ignora erro se não encontrar)
+            api.unschedule_workout(gid)
+        except Exception as e_unsched:
+            logger.debug("unschedule_workout %s: %s (ignorado)", gid, e_unsched)
+        # Deleta o workout propriamente dito
+        api.delete_workout(gid)
+        return True
+
+    try:
+        ok = await asyncio.to_thread(_delete)
+        logger.info("deletar_workout_garmin: id=%s removido", gid)
+        return ok
+    except Exception as e:
+        # Não quebra o fluxo — avisa no log e segue
+        logger.warning(
+            "deletar_workout_garmin: falha ao remover id=%s — %s. "
+            "O sync de pull irá reconciliar na próxima sincronização.",
+            gid, e,
+        )
+        return False

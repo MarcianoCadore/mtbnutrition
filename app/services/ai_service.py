@@ -518,9 +518,19 @@ async def estimar_alimento_extra(texto: str | None = None,
 
 async def interpretar_mensagem(texto: str, referencia_datas: str) -> dict:
     """Classifica a intenção de uma mensagem de WhatsApp do ciclista e extrai os
-    dados. Retorna {"intencao", "data", "descricao", "de", "para", "resposta"}.
+    dados. Retorna um dict com os campos relevantes para a intenção detectada.
 
-    intencao ∈ plano_dia | treino_dia | registrar_fuga | trocar_alimento | conversa
+    intencao ∈ plano_dia | treino_dia | registrar_fuga | trocar_alimento |
+               alterar_treino | criar_treino | conversa
+
+    Campos comuns:
+      intencao, data (ISO YYYY-MM-DD), resposta (só conversa)
+
+    Campos adicionais por intenção:
+      alterar_treino: data_destino (ISO YYYY-MM-DD)
+      criar_treino:   duracao_min (int), tipo (Z2_LONGO|TIROS|VO2MAX|TEMPO|FORCA|RECUPERACAO), descricao
+      registrar_fuga: descricao
+      trocar_alimento: de, para
     """
     import asyncio
 
@@ -528,18 +538,29 @@ async def interpretar_mensagem(texto: str, referencia_datas: str) -> dict:
 
 Classifique a mensagem do usuário em UMA intenção e extraia os dados.
 
-Datas de referência (use para resolver "hoje", "amanhã", "quinta", etc.):
+Datas de referência (use EXATAMENTE estas datas para resolver "hoje", "amanhã", "quinta", etc. — NÃO invente datas):
 {referencia_datas}
 
-Intenções:
+Intenções disponíveis:
 - "plano_dia": quer saber a alimentação/cardápio/refeições de um dia.
 - "treino_dia": quer saber o treino/pedal de um dia.
 - "registrar_fuga": disse que comeu ou bebeu algo (fora do plano).
 - "trocar_alimento": quer trocar um alimento do cardápio por outro.
+- "alterar_treino": quer MOVER/TRANSFERIR/ALTERAR o treino de um dia para outro dia. Ex.: "muda o treino de sábado pra sexta", "altera o treino de quinta para quarta". Extraia o dia de ORIGEM em "data" e o dia de DESTINO em "data_destino" (ambos ISO YYYY-MM-DD).
+- "criar_treino": quer CRIAR/ADICIONAR um treino novo em um dia. Ex.: "cria um treino for fun no sábado de 3 horas", "adiciona um pedal de recuperação na sexta de 1h30". Extraia: "data" (o dia), "duracao_min" (duração em minutos — "três horas"=180, "1h30"=90, "90 min"=90, "2h"=120), "tipo" (um dos valores abaixo inferido da descrição) e "descricao" (texto livre do que o usuário pediu).
 - "conversa": saudação, dúvida geral ou qualquer coisa que não se encaixe acima.
 
-Responda APENAS em JSON válido, sem markdown:
-{{"intencao":"...", "data":"YYYY-MM-DD ou null (null = hoje)", "descricao":"o que comeu — só registrar_fuga", "de":"alimento trocado — só trocar_alimento", "para":"alimento novo — só trocar_alimento", "resposta":"resposta curta e útil — só quando intencao=conversa"}}
+Regras para inferir o tipo de treino em "criar_treino":
+  - "for fun" / "passeio" / "longo" / sem especificar → "Z2_LONGO"
+  - "recuperação" / "leve" / "regenerativo" → "RECUPERACAO"
+  - "tiros" / "intervalado" / "sprint" → "TIROS"
+  - "vo2" / "vo2max" / "máxima intensidade" → "VO2MAX"
+  - "tempo" / "ritmo" / "limiar" → "TEMPO"
+  - "força" / "força específica" / "cadência baixa" → "FORCA"
+  - NUNCA use "DESCANSO" para criar_treino.
+
+Responda APENAS em JSON válido, sem markdown, sem explicações extras:
+{{"intencao":"...", "data":"YYYY-MM-DD ou null", "data_destino":"YYYY-MM-DD ou null — só alterar_treino", "duracao_min":null, "tipo":null, "descricao":"o que comeu (registrar_fuga) ou descrição do treino (criar_treino) — null se não se aplica", "de":"alimento trocado — só trocar_alimento — null se não", "para":"alimento novo — só trocar_alimento — null se não", "resposta":"resposta curta e útil — só quando intencao=conversa — null se não"}}
 
 Mensagem do usuário: "{texto}"
 """

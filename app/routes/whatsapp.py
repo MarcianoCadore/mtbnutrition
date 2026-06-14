@@ -1,4 +1,5 @@
 import logging
+import re
 from xml.sax.saxutils import escape
 
 import httpx
@@ -22,46 +23,82 @@ def _twiml(mensagem: str) -> Response:
     return Response(content=xml, media_type="application/xml")
 
 
-def _resolver_data_texto(texto: str) -> str | None:
-    """Resolve deterministicamente a data citada na mensagem (hoje/amanhã/ontem,
-    anteontem/depois de amanhã e dias da semana), sem depender do cálculo da IA —
-    que às vezes erra por 1 dia. Retorna ISO date (YYYY-MM-DD) ou None se não
-    houver menção temporal na mensagem."""
-    import re
+def _resolver_datas_texto(texto: str) -> list[str]:
+    """Resolve deterministicamente TODAS as datas citadas na mensagem, retornando-as
+    na ordem em que aparecem no texto (por posição da substring).
+
+    Reconhece: hoje/amanhã/ontem/anteontem/depois de amanhã e dias da semana
+    com ajustes de "que vem"/"passada"/tempo verbal — mesma lógica do antigo
+    _resolver_data_texto, mas capturando múltiplas ocorrências.
+
+    Retorna lista de ISO dates (YYYY-MM-DD) na ordem de aparição no texto.
+    Útil para "altere o treino de sábado para sexta" → [<sábado ISO>, <sexta ISO>].
+    """
     from datetime import date, timedelta
 
-    t = " " + texto.lower() + " "
+    t_lower = " " + texto.lower() + " "
     hoje = date.today()
+    seg_semana = hoje - timedelta(days=hoje.weekday())
 
-    if "depois de amanh" in t:
-        return (hoje + timedelta(days=2)).isoformat()
-    if "anteontem" in t:
-        return (hoje - timedelta(days=2)).isoformat()
-    if "amanh" in t:          # amanhã / amanha
-        return (hoje + timedelta(days=1)).isoformat()
-    if "ontem" in t:
-        return (hoje - timedelta(days=1)).isoformat()
+    # Mapa de tokens de data fixa e dias da semana com posição no texto original
+    # Cada entrada: (posição_no_texto, date_resolvida)
+    encontrados: list[tuple[int, str]] = []
 
-    dias = {"segunda": 0, "terça": 1, "terca": 1, "quarta": 2, "quinta": 3,
-            "sexta": 4, "sábado": 5, "sabado": 5, "domingo": 6}
-    for nome, idx in dias.items():
-        if re.search(rf"\b{nome}\b", t):
-            seg = hoje - timedelta(days=hoje.weekday())   # segunda desta semana
-            alvo = seg + timedelta(days=idx)
-            # ajusta a semana conforme o tempo verbal/contexto da frase
-            if "que vem" in t or "próxim" in t or "proxim" in t:
-                alvo += timedelta(days=7)
-            elif "passad" in t:                            # "segunda passada"
-                alvo -= timedelta(days=7)
-            elif re.search(r"\b(fiz|comi|foi|fui|treinei|pedalei|comeu)\b", t) and alvo > hoje:
-                alvo -= timedelta(days=7)                   # passado mas cairia no futuro
-            elif re.search(r"\b(vou|terei|ter[áa]|farei)\b", t) and alvo < hoje:
-                alvo += timedelta(days=7)                   # futuro mas cairia no passado
-            return alvo.isoformat()
+    # ── datas fixas (ordem importa: "depois de amanhã" antes de "amanhã") ──
+    tokens_fixos = [
+        ("depois de amanh", hoje + timedelta(days=2)),
+        ("anteontem",       hoje - timedelta(days=2)),
+        ("amanh",           hoje + timedelta(days=1)),   # amanhã / amanha
+        ("ontem",           hoje - timedelta(days=1)),
+        ("hoje",            hoje),
+    ]
+    for token, data_resolvida in tokens_fixos:
+        pos = t_lower.find(token)
+        if pos != -1:
+            encontrados.append((pos, data_resolvida.isoformat()))
 
-    if "hoje" in t:
-        return hoje.isoformat()
-    return None
+    # ── dias da semana ──
+    _DIAS = [
+        ("segunda", 0), ("terça", 1), ("terca", 1), ("quarta", 2),
+        ("quinta", 3),  ("sexta", 4), ("sábado", 5), ("sabado", 5), ("domingo", 6),
+    ]
+    _vistos: set[int] = set()   # evita duplicar índice de dia (sábado/sabado)
+    for nome, idx in _DIAS:
+        if idx in _vistos:
+            continue
+        m = re.search(rf"\b{nome}\b", t_lower)
+        if not m:
+            continue
+        _vistos.add(idx)
+        alvo = seg_semana + timedelta(days=idx)
+        # ajusta a semana conforme o contexto da frase
+        if "que vem" in t_lower or "próxim" in t_lower or "proxim" in t_lower:
+            alvo += timedelta(days=7)
+        elif "passad" in t_lower:
+            alvo -= timedelta(days=7)
+        elif re.search(r"\b(fiz|comi|foi|fui|treinei|pedalei|comeu)\b", t_lower) and alvo > hoje:
+            alvo -= timedelta(days=7)
+        elif re.search(r"\b(vou|terei|ter[áa]|farei)\b", t_lower) and alvo < hoje:
+            alvo += timedelta(days=7)
+        encontrados.append((m.start(), alvo.isoformat()))
+
+    # Ordena por posição de aparição e remove duplicatas de data mantendo a primeira ocorrência
+    encontrados.sort(key=lambda x: x[0])
+    vistas: set[str] = set()
+    resultado: list[str] = []
+    for _, data_iso in encontrados:
+        if data_iso not in vistas:
+            vistas.add(data_iso)
+            resultado.append(data_iso)
+
+    return resultado
+
+
+def _resolver_data_texto(texto: str) -> str | None:
+    """Compat: retorna a PRIMEIRA data citada no texto, ou None.
+    Reimplementado em cima de _resolver_datas_texto."""
+    datas = _resolver_datas_texto(texto)
+    return datas[0] if datas else None
 
 
 def _ref_datas() -> str:
@@ -99,14 +136,16 @@ def _refeicao_pedida(texto: str) -> str | None:
 
 
 async def _plano_do_dia_msg(data: str, refeicao: str | None = None) -> str:
-    from app.services.config_service import get_horarios, extras_do_dia
+    from app.services.config_service import get_horarios, ajuste_do_dia
     from app.services.nutricao_service import (
         plano_para_tipo, formatar_plano_whatsapp, formatar_refeicao_whatsapp)
     from app.routes.nutrition import _tipo_periodo_do_dia
     cfg = await get_horarios()
     tipo, periodo = await _tipo_periodo_do_dia(data)
-    extras = await extras_do_dia(data)
-    plano = plano_para_tipo(tipo, data, cfg, periodo=periodo, extras=extras)
+    ajuste = await ajuste_do_dia(data)
+    extras = ajuste["extras"]
+    corte = ajuste["corte_kcal"]   # None = doc legado → usa fallback de extras
+    plano = plano_para_tipo(tipo, data, cfg, periodo=periodo, extras=extras, corte_kcal=corte)
     if refeicao:
         msg = formatar_refeicao_whatsapp(data, plano, refeicao)
         if msg:
@@ -137,17 +176,223 @@ async def _treino_do_dia_msg(data: str) -> str:
 
 
 async def _registrar_fuga_msg(extra: dict, data: str) -> str:
-    from app.services.config_service import adicionar_extra_dia
-    await adicionar_extra_dia(data, extra)
-    return (f"🍔 Registrei: {extra['resumo']} (~{int(extra['kcal'])} kcal)\n"
-            f"Ajustei o cardápio (cortei carbo) pra manter o total:\n\n"
-            f"{await _plano_do_dia_msg(data)}")
+    from app.routes.nutrition import registrar_fuga_rollover, _montar_cabecalho_rollover
+    breakdown = await registrar_fuga_rollover(data, extra)
+    cabecalho = _montar_cabecalho_rollover(extra, breakdown, data)
+    return cabecalho + await _plano_do_dia_msg(data)
+
+
+def _fmt_data(data_iso: str) -> str:
+    """Formata ISO date como dd/mm para usar nas mensagens ao usuário."""
+    try:
+        d = datetime.strptime(data_iso, "%Y-%m-%d")
+        return d.strftime("%d/%m")
+    except Exception:
+        return data_iso
+
+
+def _validar_ou_hoje(data_str: str | None, hoje: str) -> str:
+    """Retorna data_str se for ISO válida, ou hoje caso contrário."""
+    if not data_str or str(data_str).lower() == "null":
+        return hoje
+    try:
+        datetime.fromisoformat(data_str)
+        return data_str
+    except (ValueError, TypeError):
+        return hoje
+
+
+def _dias_afetados_move(resultado: dict) -> list[dict]:
+    """Monta a lista de dias afetados (origem e destino) a partir do retorno de
+    mover_treino, anexando a cada dia o garmin_id antigo a ser removido."""
+    origem = {**resultado["origem"], "garmin_id_antigo": resultado.get("garmin_id_origem_antigo")}
+    destino = {**resultado["destino"], "garmin_id_antigo": resultado.get("garmin_id_destino_antigo")}
+    return [origem, destino]
+
+
+async def _sync_garmin_e_whatsapp(
+    dias_afetados: list[dict],
+    semana_inicio: str,
+) -> str:
+    """Sincroniza os dias afetados no Garmin e envia o resumo da semana no WhatsApp.
+
+    dias_afetados: lista de dicts, um por dia que mudou de estado. Cada item:
+      {"data", "tipo", "duracao_min", "descricao", "garmin_id_antigo"}.
+      Para cada dia: remove o workout antigo do Garmin (se houver garmin_id_antigo)
+      e, se o dia passou a ter treino real (tipo != DESCANSO e duração), faz upload
+      do novo. Isso cobre mover-para-vazio, sobrescrever E swap (dois dias com treino).
+    semana_inicio: ISO da segunda-feira da semana (para buscar treinos atualizados).
+
+    Retorna string de status para compor a mensagem de confirmação.
+    """
+    from app.services.garmin_workout_service import upload_e_agendar, deletar_workout_garmin
+    from app.services.whatsapp_service import send_semana_treinos
+    from app.services.treino_semana_service import get_treinos_semana
+    from app.services.mongo_service import get_db
+
+    db = get_db()
+    houve_upload = False
+    houve_falha = False
+
+    for dia in dias_afetados or []:
+        data_iso = dia.get("data")
+
+        # ── remove o workout antigo do dia (se havia um agendado no Garmin) ──
+        gid_antigo = dia.get("garmin_id_antigo")
+        if gid_antigo:
+            ok_del = await deletar_workout_garmin(gid_antigo)
+            if not ok_del:
+                logger.warning("Não foi possível remover workout Garmin id=%s", gid_antigo)
+
+        # ── faz upload do novo treino, se o dia ficou com treino real ──
+        tipo = dia.get("tipo")
+        duracao_min = dia.get("duracao_min")
+        descricao = dia.get("descricao")
+        if tipo and tipo != "DESCANSO" and duracao_min:
+            nome = f"{tipo.replace('_', ' ')} — {data_iso}"
+            sem_inicio = _semana_inicio_de(data_iso)
+            try:
+                gid = await upload_e_agendar(
+                    tipo=tipo,
+                    duracao_min=duracao_min,
+                    nome=nome,
+                    data_iso=data_iso,
+                    descricao=descricao,
+                )
+                if gid:
+                    await db.semanas.update_one(
+                        {"semana_inicio": sem_inicio, "treinos.data": data_iso},
+                        {"$set": {"treinos.$.garmin_workout_id": gid}},
+                    )
+                    houve_upload = True
+                else:
+                    houve_falha = True
+            except Exception as e:
+                logger.error("_sync_garmin_e_whatsapp: upload falhou (%s) — %s", data_iso, e)
+                houve_falha = True
+
+    if houve_falha:
+        garmin_status = "⚠️ Não consegui sincronizar tudo com o Garmin (confira pelo portal)."
+    elif houve_upload:
+        garmin_status = "Já mandei pro Garmin 📲"
+    else:
+        garmin_status = ""
+
+    # ── envia resumo da semana no WhatsApp ──
+    try:
+        treinos = await get_treinos_semana(semana_inicio)
+        await send_semana_treinos(semana_inicio, treinos)
+    except Exception as e:
+        logger.error("_sync_garmin_e_whatsapp: send_semana_treinos falhou — %s", e)
+
+    return garmin_status
+
+
+def _semana_inicio_de(data_iso: str) -> str:
+    """Segunda-feira (ISO) da semana de data_iso."""
+    from datetime import timedelta
+    d = datetime.strptime(data_iso, "%Y-%m-%d").date()
+    return (d - timedelta(days=d.weekday())).isoformat()
+
+
+async def _aplicar_estado_pendente(
+    from_: str,
+    estado: dict,
+    resposta_usuario: str,
+    hoje: str,
+) -> Response | None:
+    """Tenta interpretar a mensagem como resposta à pergunta de colisão pendente.
+
+    Retorna Response TwiML se a mensagem foi tratada como resposta, ou None
+    se não foi reconhecida (nesse caso o caller deve limpar o estado e prosseguir
+    com o fluxo normal de classificação de intenção).
+    """
+    from app.services.treino_semana_service import (
+        mover_treino, criar_treino_dia, limpar_estado, get_treinos_semana,
+    )
+
+    t = resposta_usuario.lower()
+    acao = estado.get("acao")
+    payload = estado.get("payload", {})
+
+    # Detecta intenção de cancelamento
+    if any(k in t for k in ("cancelar", "não", "nao", "deixa", "esquece")):
+        await limpar_estado(from_)
+        return _twiml("Ok, cancelei! 😊 Qualquer coisa é só falar.")
+
+    # Detecta modo de resolução
+    modo = None
+    if any(k in t for k in ("trocar", "troca", "swap", "1")):
+        modo = "swap"
+    elif any(k in t for k in ("sobrescrever", "substituir", "sobreescrever", "2")):
+        modo = "sobrescrever"
+
+    if modo is None:
+        # Não reconheceu a resposta — limpa o estado e devolve None para seguir o fluxo normal
+        await limpar_estado(from_)
+        logger.info("_aplicar_estado_pendente: resposta não reconhecida ('%s'), limpando estado", t)
+        return None
+
+    # ── aplica a ação com o modo escolhido ──
+    await limpar_estado(from_)
+
+    try:
+        if acao == "alterar_treino":
+            origem_iso = payload["origem_iso"]
+            destino_iso = payload["destino_iso"]
+            resultado = await mover_treino(origem_iso, destino_iso, modo)
+            semana_inicio = _semana_inicio_de(destino_iso)
+
+            tipo_origem = payload.get("tipo_origem", "")
+
+            # Sincroniza ambos os dias afetados (cobre swap, onde os dois ficam
+            # com treino, e sobrescrever, onde a origem vira descanso).
+            garmin_status = await _sync_garmin_e_whatsapp(
+                _dias_afetados_move(resultado), semana_inicio)
+
+            if modo == "swap":
+                tipo_destino = payload.get("tipo_destino", "")
+                msg = (f"✅ Feito! Troquei os treinos:\n"
+                       f"• {_fmt_data(origem_iso)} ficou com {tipo_destino.replace('_', ' ').title() if tipo_destino else 'o treino anterior do destino'}\n"
+                       f"• {_fmt_data(destino_iso)} ficou com {tipo_origem.replace('_', ' ').title()}")
+            else:
+                msg = (f"✅ Pronto! Movi o treino de {tipo_origem.replace('_', ' ').title()} "
+                       f"de {_fmt_data(origem_iso)} para {_fmt_data(destino_iso)}.")
+
+            if garmin_status:
+                msg += f"\n{garmin_status}"
+            return _twiml(msg)
+
+        elif acao == "criar_treino":
+            data_iso = payload["data_iso"]
+            tipo = payload["tipo"]
+            duracao_min = payload["duracao_min"]
+            descricao = payload.get("descricao")
+            semana_inicio = _semana_inicio_de(data_iso)
+
+            resultado = await criar_treino_dia(data_iso, tipo, duracao_min, descricao, modo=modo)
+            garmin_status = await _sync_garmin_e_whatsapp([resultado], semana_inicio)
+
+            horas = duracao_min // 60
+            mins = duracao_min % 60
+            dur_str = f"{horas}h{mins:02d}" if horas else f"{mins} min"
+            msg = f"✅ Criei o treino de {tipo.replace('_', ' ').title()} ({dur_str}) no {_fmt_data(data_iso)}."
+            if garmin_status:
+                msg += f"\n{garmin_status}"
+            return _twiml(msg)
+
+    except Exception as e:
+        logger.error("_aplicar_estado_pendente: erro ao aplicar acao=%s modo=%s — %s", acao, modo, e)
+        return _twiml("❌ Ocorreu um erro ao aplicar a alteração. Tenta de novo ou usa o portal.")
+
+    return None
 
 
 @router.post("/webhook")
 async def whatsapp_webhook(request: Request):
     """Assistente de WhatsApp: entende a intenção (cardápio/treino de um dia,
-    registrar fuga por texto ou foto, trocar alimento, conversar) e responde."""
+    registrar fuga por texto ou foto, trocar alimento, alterar/criar treino,
+    conversar) e responde."""
     from datetime import datetime
     form = await request.form()
 
@@ -164,6 +409,7 @@ async def whatsapp_webhook(request: Request):
             return Response(status_code=403, content="erro de validação")
 
     body = (form.get("Body") or "").strip()
+    from_number = form.get("From") or "default"
     try:
         num_media = int(form.get("NumMedia") or 0)
     except ValueError:
@@ -195,7 +441,22 @@ async def whatsapp_webhook(request: Request):
 
     if not body:
         return _twiml("🚴 Oi! Sou teu assistente. Posso te dizer o *cardápio* ou o *treino* de um dia, "
-                      "registrar o que você *comeu fora do plano* (texto ou foto) e trocar alimentos. Manda aí!")
+                      "registrar o que você *comeu fora do plano* (texto ou foto), trocar alimentos, "
+                      "e ainda *alterar ou criar treinos*. Manda aí!")
+
+    # ── VERIFICAÇÃO DE ESTADO PENDENTE (colisão aguardando confirmação) ──────
+    from app.services.treino_semana_service import (
+        get_estado, set_estado, limpar_estado,
+        mover_treino, criar_treino_dia, get_treino, get_treinos_semana,
+    )
+
+    estado = await get_estado(from_number)
+    if estado:
+        resp = await _aplicar_estado_pendente(from_number, estado, body, hoje)
+        if resp is not None:
+            return resp
+        # resp = None → mensagem não reconhecida como resposta de colisão;
+        # o estado já foi limpo dentro de _aplicar_estado_pendente; segue normal.
 
     # TEXTO → classifica a intenção
     try:
@@ -207,6 +468,147 @@ async def whatsapp_webhook(request: Request):
         return _twiml("Não entendi bem 🤔 Ex.: 'cardápio de hoje', 'treino de quinta', 'comi um pão de queijo'.")
 
     intencao = interp.get("intencao", "conversa")
+
+    # ── ALTERAR TREINO ────────────────────────────────────────────────────────
+    if intencao == "alterar_treino":
+        # Resolução determinística de duas datas: origem (1ª) e destino (2ª)
+        datas_resolvidas = _resolver_datas_texto(body)
+        origem_iso = datas_resolvidas[0] if len(datas_resolvidas) >= 1 else None
+        destino_iso = datas_resolvidas[1] if len(datas_resolvidas) >= 2 else None
+
+        # Fallback para campos da IA se a resolução determinística não encontrou
+        if not origem_iso:
+            origem_iso = _validar_ou_hoje(interp.get("data"), hoje)
+        if not destino_iso:
+            destino_iso = _validar_ou_hoje(interp.get("data_destino"), None) if interp.get("data_destino") else None
+
+        if not origem_iso or not destino_iso:
+            return _twiml("De qual dia pra qual dia você quer mover o treino? 🤔 "
+                          "Ex.: 'muda o treino de sábado pra sexta'.")
+
+        if origem_iso == destino_iso:
+            return _twiml("Os dois dias são o mesmo 😅 Informa de um dia pra outro diferente.")
+
+        # Verifica se há treino na origem
+        treino_origem = await get_treino(origem_iso)
+        if not treino_origem:
+            return _twiml(f"Não encontrei nenhum treino em {_fmt_data(origem_iso)} para mover. 🛌")
+
+        # Verifica colisão no destino
+        treino_destino = await get_treino(destino_iso)
+        tipo_origem = treino_origem.get("tipo", "")
+
+        if treino_destino:
+            # Há colisão — salva estado e pergunta
+            tipo_destino = treino_destino.get("tipo", "")
+            await set_estado(from_number, "alterar_treino", {
+                "origem_iso": origem_iso,
+                "destino_iso": destino_iso,
+                "tipo_origem": tipo_origem,
+                "tipo_destino": tipo_destino,
+            })
+            return _twiml(
+                f"⚠️ {_fmt_data(destino_iso)} já tem um treino de "
+                f"{tipo_destino.replace('_', ' ').title()}.\n"
+                f"Quer *trocar* os dois dias ou *sobrescrever* o de {_fmt_data(destino_iso)}?\n"
+                f"(responda: trocar / sobrescrever / cancelar)"
+            )
+
+        # Sem colisão — aplica direto (sobrescrever é equivalente a mover para dia vazio)
+        try:
+            resultado = await mover_treino(origem_iso, destino_iso, "sobrescrever")
+        except ValueError as e:
+            return _twiml(f"❌ {e}")
+        except Exception as e:
+            logger.error("alterar_treino sem colisão: %s", e)
+            return _twiml("❌ Erro ao mover o treino. Tenta de novo.")
+
+        semana_inicio = _semana_inicio_de(destino_iso)
+        garmin_status = await _sync_garmin_e_whatsapp(
+            _dias_afetados_move(resultado), semana_inicio)
+
+        msg = (f"✅ Pronto! Movi o treino de {tipo_origem.replace('_', ' ').title()} "
+               f"de {_fmt_data(origem_iso)} para {_fmt_data(destino_iso)}.")
+        if garmin_status:
+            msg += f"\n{garmin_status}"
+        return _twiml(msg)
+
+    # ── CRIAR TREINO ──────────────────────────────────────────────────────────
+    if intencao == "criar_treino":
+        # Resolve data deterministicamente
+        datas_resolvidas = _resolver_datas_texto(body)
+        data_iso = datas_resolvidas[0] if datas_resolvidas else None
+        if not data_iso:
+            data_iso = _validar_ou_hoje(interp.get("data"), hoje)
+
+        # Duração: tenta extrair da IA (ela é boa para parsear "três horas")
+        duracao_min = None
+        try:
+            duracao_min = int(interp.get("duracao_min") or 0) or None
+        except (ValueError, TypeError):
+            duracao_min = None
+
+        # Fallback: tenta parsear direto do texto (ex.: "3h", "1h30", "90 min")
+        if not duracao_min:
+            m_dur = re.search(r"(\d+)\s*h(?:oras?)?\s*(\d+)?|(\d+)\s*min", body.lower())
+            if m_dur:
+                if m_dur.group(1):
+                    hh = int(m_dur.group(1))
+                    mm = int(m_dur.group(2) or 0)
+                    duracao_min = hh * 60 + mm
+                elif m_dur.group(3):
+                    duracao_min = int(m_dur.group(3))
+
+        if not duracao_min:
+            return _twiml("Qual a duração do treino? ⏱️ Ex.: '3 horas', '90 min', '1h30'.")
+
+        # Tipo: da IA; padrão Z2_LONGO
+        tipo = str(interp.get("tipo") or "Z2_LONGO").upper()
+        _TIPOS_VALIDOS = {"Z2_LONGO", "TIROS", "VO2MAX", "TEMPO", "FORCA", "RECUPERACAO"}
+        if tipo not in _TIPOS_VALIDOS:
+            tipo = "Z2_LONGO"
+
+        descricao = interp.get("descricao") or tipo.replace("_", " ").title()
+
+        # Verifica colisão
+        treino_existente = await get_treino(data_iso)
+        if treino_existente:
+            tipo_existente = treino_existente.get("tipo", "")
+            await set_estado(from_number, "criar_treino", {
+                "data_iso": data_iso,
+                "tipo": tipo,
+                "duracao_min": duracao_min,
+                "descricao": descricao,
+                "tipo_existente": tipo_existente,
+            })
+            return _twiml(
+                f"⚠️ {_fmt_data(data_iso)} já tem um treino de "
+                f"{tipo_existente.replace('_', ' ').title()}.\n"
+                f"Quer *sobrescrever* com o novo treino de {tipo.replace('_', ' ').title()}?\n"
+                f"(responda: sobrescrever / cancelar)\n"
+                f"_Ou 'trocar' para inverter os dois dias._"
+            )
+
+        # Sem colisão — grava direto
+        try:
+            resultado = await criar_treino_dia(data_iso, tipo, duracao_min, descricao)
+        except Exception as e:
+            logger.error("criar_treino: %s", e)
+            return _twiml("❌ Erro ao criar o treino. Tenta de novo.")
+
+        semana_inicio = _semana_inicio_de(data_iso)
+        garmin_status = await _sync_garmin_e_whatsapp([resultado], semana_inicio)
+
+        horas = duracao_min // 60
+        mins = duracao_min % 60
+        dur_str = f"{horas}h{mins:02d}" if horas else f"{mins} min"
+        msg = f"✅ Criei um treino de {tipo.replace('_', ' ').title()} ({dur_str}) no {_fmt_data(data_iso)}. 🚵"
+        if garmin_status:
+            msg += f"\n{garmin_status}"
+        return _twiml(msg)
+
+    # ── INTENÇÕES EXISTENTES ──────────────────────────────────────────────────
+
     # 1) resolução determinística pelo texto (a IA erra dias da semana por 1 dia)
     data = _resolver_data_texto(body)
     # 2) fallback: data devolvida pela IA (que às vezes vem "null" ou inválida)
@@ -241,7 +643,7 @@ async def whatsapp_webhook(request: Request):
     # conversa geral
     return _twiml(interp.get("resposta") or
                   "🚴 Posso te dizer o cardápio ou o treino de um dia, registrar o que comeu fora do plano "
-                  "(texto/foto) e trocar alimentos. É só falar!")
+                  "(texto/foto), trocar alimentos, e alterar ou criar treinos. É só falar!")
 
 
 class MensagemBody(BaseModel):
