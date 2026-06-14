@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -16,66 +17,83 @@ TZ = pytz.timezone("America/Sao_Paulo")
 scheduler = AsyncIOScheduler(timezone=TZ)
 logger = logging.getLogger(__name__)
 
+async def _usuarios_ativos() -> list[dict]:
+    """Usuários com telefone e WhatsApp ativo (aptos a receber notificações)."""
+    from app.services.user_service import listar_usuarios
+    todos = await listar_usuarios()
+    return [u for u in todos
+            if u.get("telefone") and (u.get("whatsapp") or {}).get("ativo")]
+
+
+def _quer_nutricao(u: dict) -> bool:
+    """Plano alimentar e lembretes de refeição só para quem quer perder peso."""
+    return bool((u.get("preferencias") or {}).get("perder_peso"))
+
+
+async def _enviar_plano_diario_usuario(u: dict) -> None:
+    """Monta e envia o plano alimentar do dia para UM usuário (se quer nutrição)."""
+    if not _quer_nutricao(u):
+        return
+    user_id = str(u["_id"])
+    telefone = u.get("telefone")
+    db = get_db()
+
+    hoje = datetime.now(TZ).date()
+    hoje_iso = hoje.isoformat()
+    seg = hoje - timedelta(days=hoje.weekday())
+    doc = await db.semanas.find_one({"semana_inicio": seg.isoformat(), "user_id": user_id})
+
+    tipo, periodo = "DESCANSO", None
+    if doc:
+        for t in doc.get("treinos", []):
+            if t.get("data") == hoje_iso:
+                tipo = t.get("tipo") or "DESCANSO"
+                periodo = t.get("periodo")
+                break
+
+    from app.services.config_service import get_horarios, ajuste_do_dia
+    cfg = await get_horarios(user_id)
+    ajuste = await ajuste_do_dia(user_id, hoje_iso)
+    plano = plano_para_tipo(tipo, hoje_iso, cfg, periodo=periodo,
+                            extras=ajuste["extras"], corte_kcal=ajuste["corte_kcal"])
+
+    # Salva versão compatível com os lembretes de refeição (PlanoAlimentar)
+    await db.planos.insert_one({
+        "data": datetime.now(),
+        "user_id": user_id,
+        "tipo_dia": plano["tipo"],
+        "kcal_total": plano["kcal_total"],
+        "proteina_total_g": plano["proteina_total_g"],
+        "refeicoes": [
+            {
+                "nome": r["nome"], "horario": r["horario"],
+                "itens": [i["texto"] for i in r["itens"]],
+                "kcal_estimado": r["kcal"], "proteina_g": r["proteina_g"],
+                "carbo_g": 0, "gordura_g": 0, "observacao": r.get("observacao"),
+            }
+            for r in plano["refeicoes"]
+        ],
+    })
+
+    if telefone:
+        await send_message(telefone, formatar_plano_whatsapp(hoje_iso, plano))
+
+
 async def job_plano_diario():
-    """Roda às 8h — envia o plano alimentar fixo do treino de hoje."""
-    # TODO Fase 2: iterar user_service.listar_usuarios()
+    """Roda às 8h — envia o plano alimentar do dia para cada usuário ativo."""
     print(f"[{datetime.now()}] Enviando plano alimentar do dia...")
-    try:
-        from app.services.user_service import get_por_login
-        u = await get_por_login(settings.PORTAL_USER)
-        if not u:
-            logger.warning("scheduler: usuário %s não encontrado, pulando", settings.PORTAL_USER)
-            return
-        user_id = str(u["_id"])
-        telefone = u.get("telefone") or settings.WHATSAPP_TO
-
-        db = get_db()
-
-        # Tipo do treino de hoje a partir da semana salva (db.semanas)
-        hoje = datetime.now(TZ).date()
-        hoje_iso = hoje.isoformat()
-        seg = hoje - timedelta(days=hoje.weekday())
-        doc = await db.semanas.find_one({"semana_inicio": seg.isoformat(), "user_id": user_id})
-
-        tipo, periodo = "DESCANSO", None
-        if doc:
-            for t in doc.get("treinos", []):
-                if t.get("data") == hoje_iso:
-                    tipo = t.get("tipo") or "DESCANSO"
-                    periodo = t.get("periodo")
-                    break
-
-        from app.services.config_service import get_horarios, ajuste_do_dia
-        cfg = await get_horarios(user_id)
-        ajuste = await ajuste_do_dia(user_id, hoje_iso)
-        extras = ajuste["extras"]
-        corte = ajuste["corte_kcal"]   # None = doc legado → usa fallback de extras
-        plano = plano_para_tipo(tipo, hoje_iso, cfg, periodo=periodo, extras=extras, corte_kcal=corte)
-
-        # Salva versão compatível com os lembretes de refeição (PlanoAlimentar)
-        await db.planos.insert_one({
-            "data": datetime.now(),
-            "user_id": user_id,
-            "tipo_dia": plano["tipo"],
-            "kcal_total": plano["kcal_total"],
-            "proteina_total_g": plano["proteina_total_g"],
-            "refeicoes": [
-                {
-                    "nome": r["nome"], "horario": r["horario"],
-                    "itens": [i["texto"] for i in r["itens"]],
-                    "kcal_estimado": r["kcal"], "proteina_g": r["proteina_g"],
-                    "carbo_g": 0, "gordura_g": 0, "observacao": r.get("observacao"),
-                }
-                for r in plano["refeicoes"]
-            ],
-        })
-
-        if telefone:
-            await send_message(telefone, formatar_plano_whatsapp(hoje_iso, plano))
-        print(f"[{datetime.now()}] Plano ({tipo}) enviado com sucesso!")
-
-    except Exception as e:
-        print(f"[{datetime.now()}] Erro no job_plano_diario: {e}")
+    usuarios = await _usuarios_ativos()
+    enviados = 0
+    for u in usuarios:
+        try:
+            antes = _quer_nutricao(u)
+            await _enviar_plano_diario_usuario(u)
+            if antes:
+                enviados += 1
+                await asyncio.sleep(1)   # throttle p/ não estourar a Twilio
+        except Exception as e:
+            logger.error("job_plano_diario p/ %s: %s", u.get("login"), e)
+    print(f"[{datetime.now()}] Plano diário enviado para {enviados} usuário(s).")
 
 async def _treino_hoje(user_id: str) -> tuple[str, str | None]:
     """(tipo, periodo) do treino de hoje a partir da semana salva; (DESCANSO, None)
@@ -100,64 +118,61 @@ LEMBRETES_REFEICAO = [
 ]
 
 
-async def enviar_lembrete_refeicao_pre(meal_nome: str):
-    """Envia, 30 min antes, o que comer na refeição do dia."""
-    # TODO Fase 2: iterar user_service.listar_usuarios()
+async def enviar_lembrete_refeicao_pre(user_id: str, meal_nome: str):
+    """Envia, 30 min antes, o que comer na refeição do dia, para UM usuário."""
     try:
-        from app.services.user_service import get_por_login
-        u = await get_por_login(settings.PORTAL_USER)
-        if not u:
-            logger.warning("scheduler: usuário %s não encontrado, pulando lembrete", settings.PORTAL_USER)
+        from app.services.user_service import get_por_id
+        u = await get_por_id(user_id)
+        if not u or not _quer_nutricao(u):
             return
-        user_id = str(u["_id"])
-        telefone = u.get("telefone") or settings.WHATSAPP_TO
-
+        telefone = u.get("telefone")
+        if not telefone:
+            return
         hoje_iso = datetime.now(TZ).date().isoformat()
         tipo, periodo = await _treino_hoje(user_id)
         cfg = await get_horarios(user_id)
         plano = plano_para_tipo(tipo, hoje_iso, cfg, periodo=periodo)
         ref = next((r for r in plano["refeicoes"] if r["nome"] == meal_nome), None)
-        if ref and telefone:
+        if ref:
             await send_message(telefone, formatar_lembrete_refeicao(ref))
-            print(f"[{datetime.now()}] Lembrete enviado: {meal_nome}")
+            print(f"[{datetime.now()}] Lembrete enviado ({u.get('login')}): {meal_nome}")
     except Exception as e:
-        print(f"[{datetime.now()}] Erro no lembrete {meal_nome}: {e}")
+        print(f"[{datetime.now()}] Erro no lembrete {meal_nome} (user={user_id}): {e}")
 
 
 async def agendar_lembretes_refeicao():
-    """(Re)agenda os lembretes para 30 min antes de cada refeição, conforme a
-    config de horários. Chamado no start, periodicamente (auto-cura se o banco
-    estava fora no boot) e quando o usuário muda os horários."""
-    # TODO Fase 2: iterar user_service.listar_usuarios()
+    """(Re)agenda os lembretes de refeição para CADA usuário ativo que quer
+    nutrição, conforme os horários dele. Job ids namespaced por user_id.
+    Chamado no start, e quando um usuário muda os horários."""
     try:
-        from app.services.user_service import get_por_login
-        u = await get_por_login(settings.PORTAL_USER)
-        if not u:
-            logger.warning("scheduler: usuário %s não encontrado, pulando agendamento de lembretes", settings.PORTAL_USER)
-            return
-        user_id = str(u["_id"])
-        cfg = await get_horarios(user_id)
+        usuarios = [u for u in await _usuarios_ativos() if _quer_nutricao(u)]
     except Exception as e:
         print(f"[{datetime.now()}] Banco indisponível; lembretes não reagendados (tenta de novo): {e}")
         return
-    n = 0
-    for chave, nome in LEMBRETES_REFEICAO:
+    n_jobs = 0
+    for u in usuarios:
+        user_id = str(u["_id"])
         try:
-            h, m = map(int, cfg[chave].split(":"))
-        except (KeyError, ValueError):
+            cfg = await get_horarios(user_id)
+        except Exception:
             continue
-        total = (h * 60 + m - 30) % (24 * 60)   # 30 min antes
-        scheduler.add_job(
-            enviar_lembrete_refeicao_pre,
-            CronTrigger(hour=total // 60, minute=total % 60, timezone=TZ),
-            args=[nome],
-            id=f"lembrete_{chave}",
-            replace_existing=True,
-            coalesce=True,
-            max_instances=1,
-        )
-        n += 1
-    print(f"🍽️ Lembretes de refeição agendados ({n} refeições, 30 min antes)")
+        for chave, nome in LEMBRETES_REFEICAO:
+            try:
+                h, m = map(int, cfg[chave].split(":"))
+            except (KeyError, ValueError):
+                continue
+            total = (h * 60 + m - 30) % (24 * 60)   # 30 min antes
+            scheduler.add_job(
+                enviar_lembrete_refeicao_pre,
+                CronTrigger(hour=total // 60, minute=total % 60, timezone=TZ),
+                args=[user_id, nome],
+                id=f"lembrete_{user_id}_{chave}",
+                replace_existing=True,
+                coalesce=True,
+                max_instances=1,
+            )
+            n_jobs += 1
+    print(f"🍽️ Lembretes de refeição agendados ({n_jobs} job(s) p/ {len(usuarios)} usuário(s))")
 
 async def job_garmin_sync():
     """Roda a cada 10 min — sincroniza treinos planejados e atividades do Garmin.
