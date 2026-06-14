@@ -416,6 +416,55 @@ async def garmin_conectar(
     return {"status": "conectado"}
 
 
+@router.get("/strava/conectar")
+async def strava_conectar(request: Request):
+    """Inicia o fluxo OAuth2 do Strava. Redireciona para a página de autorização
+    do Strava com state=user_id para o callback identificar o usuário."""
+    from fastapi.responses import RedirectResponse as _RR
+    from app.services.strava_service import url_autorizacao
+    user_id = request.state.user_id
+    return _RR(url_autorizacao(user_id))
+
+
+@router.get("/strava/callback")
+async def strava_callback(code: str = "", state: str = "", error: str = ""):
+    """Callback do OAuth2 do Strava. Não exige cookie de sessão — o state carrega
+    o user_id. Troca o code por tokens e redireciona para o portal."""
+    from fastapi.responses import RedirectResponse as _RR
+    from app.services.strava_service import trocar_codigo
+
+    # O Strava pode chamar com error=access_denied se o usuário recusou
+    if error:
+        logger.warning("strava_callback: usuário recusou autorização (state=%s, error=%s)", state, error)
+        return _RR(url="/portal/?strava=erro")
+
+    if not code or not state:
+        return _RR(url="/portal/?strava=erro")
+
+    # state contém o user_id — valida formato mínimo (string não-vazia)
+    user_id = state.strip()
+    if not user_id:
+        return _RR(url="/portal/?strava=erro")
+
+    ok = await trocar_codigo(user_id, code)
+    if ok:
+        return _RR(url="/portal/?strava=ok")
+    return _RR(url="/portal/?strava=erro")
+
+
+@router.post("/strava/desconectar")
+async def strava_desconectar(request: Request):
+    """Remove a integração Strava do usuário."""
+    from app.services.user_service import atualizar_usuario
+    user_id = request.state.user_id
+    await atualizar_usuario(user_id, {
+        "integracao.tipo": "none",
+        "integracao.strava": None,
+    })
+    logger.info("strava_desconectar: Strava desconectado para user_id=%s", user_id)
+    return {"status": "desconectado"}
+
+
 @router.post("/garmin/desconectar")
 async def garmin_desconectar(request: Request):
     """Remove a integração Garmin do usuário: apaga credenciais, tokenstore e cache."""

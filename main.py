@@ -53,6 +53,8 @@ app = FastAPI(
 _COOKIE = "mtb_auth"
 
 # Paths liberados sem login: health check, tela de login/cadastro e webhook Twilio.
+# O callback do Strava (/workout/strava/callback) é público porque o Strava redireciona
+# sem cookie de sessão; a identificação do usuário ocorre via parâmetro state=user_id.
 _PUBLIC_PATHS = {
     "/health",
     "/login",
@@ -61,6 +63,7 @@ _PUBLIC_PATHS = {
     "/verificar",
     "/reenviar-codigo",
     "/whatsapp/webhook",
+    "/workout/strava/callback",
 }
 
 

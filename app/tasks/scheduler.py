@@ -214,6 +214,42 @@ async def job_garmin_sync():
             )
 
 
+async def job_strava_sync():
+    """Roda a cada 10 min — sincroniza atividades de ciclismo do Strava.
+    Itera todos os usuários com integracao.tipo == "strava".
+    Um erro em um usuário não derruba os demais (try/except por usuário)."""
+    from app.services.strava_service import sync_atividades_strava
+    from app.services.user_service import listar_usuarios
+
+    todos = await listar_usuarios()
+    com_strava = [
+        u for u in todos
+        if (u.get("integracao") or {}).get("tipo") == "strava"
+    ]
+
+    if not com_strava:
+        return
+
+    hoje = datetime.now(TZ).date()
+    seg = hoje - timedelta(days=hoje.weekday())
+    semana = seg.isoformat()
+
+    for u in com_strava:
+        user_id = str(u["_id"])
+        try:
+            at = await sync_atividades_strava(user_id, semana)
+            if at:
+                print(
+                    f"[{datetime.now()}] Strava sync ({u.get('login')}): "
+                    f"{at} atividade(s) processada(s)"
+                )
+        except Exception as e:
+            logger.error(
+                "job_strava_sync: erro para user_id=%s (%s) — %s",
+                user_id, u.get("login"), e,
+            )
+
+
 def start_scheduler():
     scheduler.add_job(
         job_plano_diario,
@@ -227,6 +263,14 @@ def start_scheduler():
         job_garmin_sync,
         IntervalTrigger(minutes=10),
         id="garmin_sync",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        job_strava_sync,
+        IntervalTrigger(minutes=10),
+        id="strava_sync",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

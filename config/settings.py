@@ -36,6 +36,15 @@ class Settings(BaseSettings):
     # Em produção, gere com: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     # ATENÇÃO: mudar a chave invalida todos os segredos já cifrados no banco.
     FERNET_KEY: str = ""
+    # Strava OAuth2 (somente leitura de atividades — READ-ONLY).
+    # Crie o app em https://www.strava.com/settings/api e preencha:
+    #   STRAVA_CLIENT_ID     → "Client ID" exibido na página da API
+    #   STRAVA_CLIENT_SECRET → "Client Secret" (clique em "show")
+    #   STRAVA_REDIRECT_URI  → URL de callback registrada no app Strava,
+    #                          ex.: "http://18.230.110.168:8000/workout/strava/callback"
+    STRAVA_CLIENT_ID: str = ""
+    STRAVA_CLIENT_SECRET: str = ""
+    STRAVA_REDIRECT_URI: str = ""
     # Twilio
     TWILIO_ACCOUNT_SID: str = ""
     TWILIO_AUTH_TOKEN: str = ""
