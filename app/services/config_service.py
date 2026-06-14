@@ -165,3 +165,47 @@ async def remover_ajuste_dia(data: str) -> None:
     """Remove todos os ajustes (extras) de um dia — volta ao plano original."""
     db = get_db()
     await db.ajustes_dia.delete_one({"_id": data})
+
+
+async def adicionar_corte_dia(data: str, kcal: float) -> None:
+    """Acumula kcal de corte de carboidrato no dia (débito de fuga).
+    Usa $inc para somar ao valor existente (múltiplas fugas acumulam corretamente)."""
+    db = get_db()
+    await db.ajustes_dia.update_one(
+        {"_id": data},
+        {"$inc": {"corte_kcal": int(round(kcal))}, "$set": {"data": data}},
+        upsert=True,
+    )
+
+
+async def corte_do_dia(data: str) -> int | None:
+    """Retorna o corte de kcal de carboidrato registrado para o dia.
+
+    Semântica especial para retrocompatibilidade com docs legados:
+    - Doc sem 'corte_kcal' MAS com 'extras' → retorna None (sinaliza: use o
+      fallback de somar extras em plano_para_tipo).
+    - Doc com 'corte_kcal' explícito → retorna o valor (pode ser 0).
+    - Sem doc → retorna None (idem: fallback de extras).
+    """
+    db = get_db()
+    doc = await db.ajustes_dia.find_one({"_id": data})
+    if doc is None:
+        return None
+    if "corte_kcal" not in doc:
+        # doc legado: tem extras mas não tem corte_kcal — sinaliza para o caller
+        # usar o fallback de somar as kcal dos extras em plano_para_tipo.
+        return None
+    return int(doc["corte_kcal"])
+
+
+async def ajuste_do_dia(data: str) -> dict:
+    """Lê extras e corte_kcal numa única consulta ao banco.
+    Útil para callers que precisam dos dois campos (reduz round-trips)."""
+    db = get_db()
+    doc = await db.ajustes_dia.find_one({"_id": data}) or {}
+    corte = doc.get("corte_kcal")
+    return {
+        "extras": doc.get("extras", []),
+        # None = sem corte explícito (doc legado ou inexistente) → usar fallback
+        "corte_kcal": int(corte) if corte is not None else None,
+    }

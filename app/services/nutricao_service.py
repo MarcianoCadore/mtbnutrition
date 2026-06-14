@@ -293,11 +293,19 @@ def _merge_itens(itens: list[tuple]) -> list[tuple]:
     return [(c, q) for c, q in out]
 
 
-def _reduzir_carbo(refeicoes_raw: list[dict], kcal_alvo: float) -> None:
+def _hhmm_para_time(hhmm: str):
+    """Converte string 'HH:MM' em datetime.time. Levanta ValueError se inválido."""
+    from datetime import time as dt_time
+    h, m = hhmm.split(":")
+    return dt_time(int(h), int(m))
+
+
+def _reduzir_carbo(refeicoes_raw: list[dict], kcal_alvo: float) -> float:
     """Reduz porções de carboidrato (preservando proteína) para remover ~kcal_alvo
-    do dia, começando pelas refeições mais tarde (jantar → café). Edita in place."""
+    do dia, começando pelas refeições mais tarde (jantar → café). Edita in place.
+    Retorna o restante que NÃO conseguiu cortar (0.0 se cortou tudo)."""
     if kcal_alvo <= 0:
-        return
+        return 0.0
     restante = kcal_alvo
     por_nome = {r["nome"]: r for r in refeicoes_raw}
     for nome in ("Jantar", "Lanche da tarde", "Almoço", "Café da manhã"):
@@ -318,20 +326,17 @@ def _reduzir_carbo(refeicoes_raw: list[dict], kcal_alvo: float) -> None:
             if qtd > 0:
                 novos.append((chave, qtd))
         ref["itens"] = novos
+    return max(0.0, restante)
 
 
-def plano_para_tipo(tipo, data_iso: str | None = None, horarios_cfg: dict | None = None,
-                    periodo: str | None = None, extras: list | None = None) -> dict:
-    """Monta o cardápio do tipo de treino para uma data, com kcal/proteína por
-    item, por refeição e total do dia.
+def _montar_refeicoes_raw(
+    tipo, data_iso: str | None, horarios_cfg: dict | None, periodo: str | None
+) -> tuple[list[dict], bool, dict]:
+    """Monta as refeições 'cruas' (itens como (chave, qtd)) para um dia,
+    aplicando a rotação de alternativas e opcionalmente o período do treino.
 
-    A cada dia escolhe uma combinação diferente de alternativas (variando pela
-    data), mantendo as calorias-alvo. Sem data, usa um exemplo estável.
-    Os horários das refeições vêm de horarios_cfg (config do usuário).
-
-    Se 'periodo' for informado (manha/meio_dia/tarde/noite), redistribui o
-    carboidrato em volta do treino (reforça o pré, marca o pós) sem mudar o tipo.
-    """
+    Retorna (refeicoes_raw, aplicar_periodo, horarios).
+    Helper extraído de plano_para_tipo para reutilização em capacidade_carbo_dia."""
     if not isinstance(tipo, TipoTreino):
         try:
             tipo = TipoTreino(tipo)
@@ -390,10 +395,79 @@ def plano_para_tipo(tipo, data_iso: str | None = None, horarios_cfg: dict | None
     if aplicar:
         _aplicar_periodo(refeicoes_raw, periodo)
 
-    # 2b) "fuga" do plano: corta carbo do dia p/ compensar o que foi comido fora
-    extras_kcal = sum(int(e.get("kcal", 0)) for e in (extras or []))
-    if extras_kcal > 0:
-        _reduzir_carbo(refeicoes_raw, extras_kcal)
+    return refeicoes_raw, aplicar, horarios
+
+
+def capacidade_carbo_dia(
+    tipo,
+    data_iso: str | None,
+    horarios_cfg: dict | None = None,
+    periodo: str | None = None,
+    apenas_apos=None,
+) -> float:
+    """Calcula quantas kcal de carboidrato móvel o dia tem disponível para corte.
+
+    Se 'apenas_apos' (datetime.time) for fornecido, conta apenas refeições cujo
+    horário configurado seja estritamente após esse instante — útil para calcular
+    a capacidade restante a partir de um horário de registro da fuga.
+
+    Retorna total em kcal (float)."""
+    refeicoes_raw, _, _ = _montar_refeicoes_raw(tipo, data_iso, horarios_cfg, periodo)
+    total = 0.0
+    for r in refeicoes_raw:
+        if apenas_apos is not None:
+            try:
+                hora_ref = _hhmm_para_time(r["horario"])
+                if hora_ref <= apenas_apos:
+                    continue  # refeição já passou (ou é agora) — não conta
+            except (ValueError, AttributeError):
+                pass  # horário inválido → inclui na conta por precaução
+        for chave, qtd in r["itens"]:
+            if chave in _CARBO_MOVEL and chave in ALIMENTOS:
+                total += ALIMENTOS[chave]["kcal"] * qtd
+    return total
+
+
+def plano_para_tipo(tipo, data_iso: str | None = None, horarios_cfg: dict | None = None,
+                    periodo: str | None = None, extras: list | None = None,
+                    corte_kcal: float | None = None) -> dict:
+    """Monta o cardápio do tipo de treino para uma data, com kcal/proteína por
+    item, por refeição e total do dia.
+
+    A cada dia escolhe uma combinação diferente de alternativas (variando pela
+    data), mantendo as calorias-alvo. Sem data, usa um exemplo estável.
+    Os horários das refeições vêm de horarios_cfg (config do usuário).
+
+    Se 'periodo' for informado (manha/meio_dia/tarde/noite), redistribui o
+    carboidrato em volta do treino (reforça o pré, marca o pós) sem mudar o tipo.
+
+    corte_kcal: kcal de carboidrato a descontar do dia (débito de fuga, fixado
+    no momento do registro). Quando None e há extras, usa a soma das kcal dos
+    extras como alvo (retrocompatibilidade com docs sem corte_kcal salvo).
+    Quando 0 explícito e não há extras, não corta nada.
+    """
+    if not isinstance(tipo, TipoTreino):
+        try:
+            tipo = TipoTreino(tipo)
+        except ValueError:
+            tipo = TipoTreino.DESCANSO
+
+    # monta refeições cruas via helper reutilizável
+    refeicoes_raw, aplicar, horarios = _montar_refeicoes_raw(tipo, data_iso, horarios_cfg, periodo)
+
+    # 2b) corte de carbo: usa corte_kcal fixado (novo fluxo) ou soma extras (legado)
+    # corte_kcal=None com extras = doc legado → fallback para somar kcal dos extras
+    # corte_kcal=None sem extras = dia normal sem fuga
+    # corte_kcal=0 explícito = sem corte neste dia (ex.: dia legado sem débito)
+    if corte_kcal is not None:
+        alvo_corte = corte_kcal
+    else:
+        alvo_corte = sum(int(e.get("kcal", 0)) for e in (extras or []))
+
+    corte_aplicado = 0.0
+    if alvo_corte > 0:
+        nao_cortou = _reduzir_carbo(refeicoes_raw, alvo_corte)
+        corte_aplicado = alvo_corte - nao_cortou
 
     # 3) expande os itens e soma kcal/proteína
     refeicoes = []
@@ -432,6 +506,18 @@ def plano_para_tipo(tipo, data_iso: str | None = None, horarios_cfg: dict | None
         kcal_total += ex_kcal
         prot_total += ex_prot
 
+    # 3c) dia de débito herdado: corte_kcal > 0 mas sem extras (rollover de dia anterior)
+    # Informa o usuário de forma discreta com um bloco informativo (sem somar kcal).
+    elif corte_aplicado > 0:
+        refeicoes.append({
+            "nome": "Ajuste de carboidrato", "horario": "",
+            "kcal": 0, "proteina_g": 0.0, "itens": [],
+            "observacao": (
+                f"Carboidrato reduzido (~{int(round(corte_aplicado))} kcal) "
+                f"para compensar uma fuga registrada recentemente."
+            ),
+        })
+
     if tipo == TipoTreino.DESCANSO:
         nota = None
     elif aplicar:
@@ -447,6 +533,8 @@ def plano_para_tipo(tipo, data_iso: str | None = None, horarios_cfg: dict | None
         "kcal_total": kcal_total,
         "proteina_total_g": round(prot_total, 1),
         "refeicoes": refeicoes,
+        # campo informativo: kcal efetivamente cortadas neste dia (0 se não houve corte)
+        "corte_kcal": int(round(corte_aplicado)),
     }
 
 
@@ -532,7 +620,10 @@ def formatar_plano_whatsapp(data_iso: str, plano: dict) -> str:
     linhas.append("")
 
     for r in plano["refeicoes"]:
-        linhas.append(f"*{r['horario']} · {r['nome']}* ({r['kcal']} kcal · {r['proteina_g']:g}g P)")
+        # horário vazio = bloco especial (ex.: "Fora do plano", "Ajuste de carboidrato")
+        prefixo = f"{r['horario']} · " if r.get("horario") else ""
+        kcal_str = f" ({r['kcal']} kcal · {r['proteina_g']:g}g P)" if r["kcal"] > 0 or r["itens"] else ""
+        linhas.append(f"*{prefixo}{r['nome']}*{kcal_str}")
         for i in r["itens"]:
             linhas.append(f"  • {i['texto']}")
         if r.get("observacao"):

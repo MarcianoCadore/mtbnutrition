@@ -33,10 +33,12 @@ async def job_plano_diario():
                     periodo = t.get("periodo")
                     break
 
-        from app.services.config_service import get_horarios, extras_do_dia
+        from app.services.config_service import get_horarios, ajuste_do_dia
         cfg = await get_horarios()
-        extras = await extras_do_dia(hoje_iso)
-        plano = plano_para_tipo(tipo, hoje_iso, cfg, periodo=periodo, extras=extras)
+        ajuste = await ajuste_do_dia(hoje_iso)
+        extras = ajuste["extras"]
+        corte = ajuste["corte_kcal"]   # None = doc legado → usa fallback de extras
+        plano = plano_para_tipo(tipo, hoje_iso, cfg, periodo=periodo, extras=extras, corte_kcal=corte)
 
         # Salva versão compatível com os lembretes de refeição (PlanoAlimentar)
         await db.planos.insert_one({

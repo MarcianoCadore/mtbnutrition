@@ -1,26 +1,39 @@
+import logging
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from fastapi.responses import HTMLResponse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date as dt_date
 from app.models.models import PlanoAlimentar, Treino
 from app.services.ai_service import gerar_plano_alimentar, estimar_alimento_extra, QuotaExcedida
 from pydantic import BaseModel
-from app.services.nutricao_service import plano_para_tipo, tabela_alimentos, guia_refeicoes, TIPO_PARA_MENU
+from app.services.nutricao_service import (
+    plano_para_tipo, tabela_alimentos, guia_refeicoes, TIPO_PARA_MENU, capacidade_carbo_dia,
+)
 from app.services.config_service import (
     get_horarios, salvar_horarios, extras_do_dia, adicionar_extra_dia, remover_ajuste_dia,
+    adicionar_corte_dia, corte_do_dia, ajuste_do_dia,
 )
 from app.services.mongo_service import get_db
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+# kcal máximos de corte de carboidrato por dia de rollover (acima disso, distribui em 2 dias)
+LIMITE_CORTE_DIA = 400
 
 
 @router.get("/plano/{tipo}")
 async def plano_por_tipo(tipo: str, data: str | None = None, periodo: str | None = None):
     """Cardápio do tipo de treino para uma data (varia a cada dia) — usado nos cards.
     Com 'periodo' (manha/meio_dia/tarde/noite), redistribui o carbo em volta do treino.
-    Aplica também os 'extras' (fugas do plano) registrados para o dia."""
+    Aplica também extras e corte_kcal (fuga registrada) do dia."""
     cfg = await get_horarios()
-    extras = await extras_do_dia(data) if data else []
-    return plano_para_tipo(tipo, data, cfg, periodo=periodo, extras=extras)
+    if data:
+        ajuste = await ajuste_do_dia(data)
+        extras = ajuste["extras"]
+        corte = ajuste["corte_kcal"]   # None = doc legado, usa fallback de extras
+    else:
+        extras, corte = [], None
+    return plano_para_tipo(tipo, data, cfg, periodo=periodo, extras=extras, corte_kcal=corte)
 
 
 async def _tipo_periodo_do_dia(data_iso: str) -> tuple[str, str | None]:
@@ -39,12 +52,99 @@ async def _tipo_periodo_do_dia(data_iso: str) -> tuple[str, str | None]:
 @router.get("/plano-do-dia/{data}")
 async def plano_do_dia(data: str):
     """Plano completo de um dia do calendário (descobre o tipo de treino do dia e
-    aplica as fugas registradas)."""
+    aplica as fugas e o corte_kcal registrados)."""
     cfg = await get_horarios()
     tipo, periodo = await _tipo_periodo_do_dia(data)
-    extras = await extras_do_dia(data)
-    plano = plano_para_tipo(tipo, data, cfg, periodo=periodo, extras=extras)
+    ajuste = await ajuste_do_dia(data)
+    extras = ajuste["extras"]
+    corte = ajuste["corte_kcal"]   # None = doc legado → plano_para_tipo usa fallback
+    plano = plano_para_tipo(tipo, data, cfg, periodo=periodo, extras=extras, corte_kcal=corte)
     return {"data": data, "tipo": tipo, "periodo": periodo, "extras": extras, "plano": plano}
+
+
+async def registrar_fuga_rollover(data: str, extra: dict, agora=None) -> dict:
+    """Orquestrador do registro de fuga com rollover.
+
+    Grava o alimento no dia, calcula quanto o carbo das refeições restantes
+    de hoje consegue absorver e distribui a sobra em D+1 e D+2 se necessário.
+
+    Retorna dict com o breakdown:
+      {"corte_hoje": kcal, "rollover": {data_iso: kcal, ...}, "sobra_descartada": kcal}
+    """
+    extra_kcal = max(0, int(round(extra.get("kcal", 0))))
+
+    # 1) grava o alimento no dia (para exibir o bloco "Fora do plano")
+    await adicionar_extra_dia(data, extra)
+
+    # 2) obtém config de horários e instante atual
+    cfg = await get_horarios()
+    hoje_iso = dt_date.today().isoformat()
+    hora_atual = agora if agora is not None else datetime.now().time()
+
+    # 3) capacidade do dia da fuga
+    tipo_dia, periodo_dia = await _tipo_periodo_do_dia(data)
+    # se é hoje, conta só refeições após o momento atual; caso contrário, dia inteiro
+    apenas_apos = hora_atual if data == hoje_iso else None
+    cap_dia = capacidade_carbo_dia(tipo_dia, data, cfg, periodo_dia, apenas_apos=apenas_apos)
+    # desconta corte já bookado (outras fugas do mesmo dia registradas antes)
+    corte_ja_bookado = await corte_do_dia(data) or 0
+    cap_disp = max(0.0, cap_dia - corte_ja_bookado)
+
+    # 4) corta o que couber hoje
+    corte_hoje = min(extra_kcal, cap_disp)
+    if corte_hoje > 0:
+        await adicionar_corte_dia(data, corte_hoje)
+
+    sobra = extra_kcal - corte_hoje
+    rollover: dict[str, int] = {}
+
+    # 5) distribui a sobra em D+1 e D+2
+    if sobra > 0:
+        data_base = datetime.fromisoformat(data).date()
+        # define se divide em 1 ou 2 dias futuros
+        dias_alvo = [data_base + timedelta(days=1)]
+        if sobra > LIMITE_CORTE_DIA:
+            dias_alvo.append(data_base + timedelta(days=2))
+
+        # tentativa de distribuição equilibrada entre os dias alvo
+        n = len(dias_alvo)
+        fatia_base = sobra / n
+        restante_rollover = sobra
+
+        for i, dia_futuro in enumerate(dias_alvo):
+            if restante_rollover <= 0:
+                break
+            dia_iso = dia_futuro.isoformat()
+            tipo_fut, periodo_fut = await _tipo_periodo_do_dia(dia_iso)
+            cap_fut = capacidade_carbo_dia(tipo_fut, dia_iso, cfg, periodo_fut)
+            corte_booked_fut = await corte_do_dia(dia_iso) or 0
+            cap_disp_fut = max(0.0, cap_fut - corte_booked_fut)
+
+            # fatia para este dia: iguala o que sobrou / dias restantes,
+            # mas nunca passa da capacidade disponível do dia
+            fatia = restante_rollover if i == n - 1 else fatia_base
+            valor_dia = min(fatia, cap_disp_fut)
+
+            if valor_dia > 0:
+                valor_dia_int = int(round(valor_dia))
+                await adicionar_corte_dia(dia_iso, valor_dia_int)
+                rollover[dia_iso] = rollover.get(dia_iso, 0) + valor_dia_int
+                restante_rollover -= valor_dia
+
+        sobra_descartada = max(0.0, restante_rollover)
+        if sobra_descartada > 1:   # margem de arredondamento
+            logger.warning(
+                "Rollover de fuga: %.0f kcal não couberam em D+1/D+2 e foram descartadas "
+                "(extra: %s, data: %s)", sobra_descartada, extra.get("resumo"), data
+            )
+    else:
+        sobra_descartada = 0.0
+
+    return {
+        "corte_hoje": int(round(corte_hoje)),
+        "rollover": rollover,
+        "sobra_descartada": int(round(sobra_descartada)),
+    }
 
 
 @router.post("/ajuste-dia/{data}")
@@ -73,7 +173,8 @@ async def registrar_fuga(data: str, texto: str | None = Form(None),
         except Exception as e:
             raise HTTPException(status_code=422, detail=f"Não consegui estimar as calorias: {e}")
 
-    await adicionar_extra_dia(data, extra)
+    # orquestrador: grava o extra, calcula e distribui o corte de carbo
+    breakdown = await registrar_fuga_rollover(data, extra)
     resultado = await plano_do_dia(data)
 
     # WhatsApp com o cardápio já ajustado — só quando há fuga registrada.
@@ -82,16 +183,53 @@ async def registrar_fuga(data: str, texto: str | None = Form(None),
         from app.services.nutricao_service import formatar_plano_whatsapp
         from config.settings import settings
         if settings.WHATSAPP_TO:
-            cabecalho = (
-                f"🍔 *Fuga do plano registrada:* {extra['resumo']} (~{int(extra['kcal'])} kcal)\n"
-                f"Ajustei o cardápio do dia (cortei carbo) pra manter o total de calorias:\n\n"
-            )
+            cabecalho = _montar_cabecalho_rollover(extra, breakdown, data)
             await send_message(settings.WHATSAPP_TO, cabecalho + formatar_plano_whatsapp(data, resultado["plano"]))
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).error("WhatsApp da fuga falhou: %s", e)
+        logger.error("WhatsApp da fuga falhou: %s", e)
 
     return resultado
+
+
+def _montar_cabecalho_rollover(extra: dict, breakdown: dict, data: str) -> str:
+    """Monta o cabeçalho do WhatsApp/portal explicando onde o corte foi aplicado."""
+    resumo = extra.get("resumo", "alimento fora do plano")
+    kcal_extra = int(extra.get("kcal", 0))
+    corte_hoje = breakdown["corte_hoje"]
+    rollover = breakdown["rollover"]
+
+    linhas = [f"🍔 *Fuga do plano registrada:* {resumo} (~{kcal_extra} kcal)"]
+
+    if corte_hoje > 0 and not rollover:
+        # corte inteiro caiu hoje
+        linhas.append("Ajustei o cardápio do dia (cortei carbo) pra manter o total de calorias:\n")
+    elif corte_hoje == 0 and rollover:
+        # nenhuma refeição restava hoje
+        dias_fmt = _formatar_dias_rollover(rollover)
+        linhas.append(f"Hoje já passou o horário das refeições, então vou descontar carbo {dias_fmt}:\n")
+    else:
+        # split: parte hoje, parte nos próximos dias
+        dias_fmt = _formatar_dias_rollover(rollover)
+        linhas.append(
+            f"Cortei ~{corte_hoje} kcal de carbo das refeições restantes hoje "
+            f"e vou descontar o restante {dias_fmt}:\n"
+        )
+
+    return "\n".join(linhas) + "\n"
+
+
+def _formatar_dias_rollover(rollover: dict) -> str:
+    """Formata o dict {data_iso: kcal} em texto amigável."""
+    if not rollover:
+        return ""
+    partes = []
+    for data_iso, kcal in sorted(rollover.items()):
+        try:
+            d = datetime.fromisoformat(data_iso)
+            partes.append(f"~{kcal} kcal em {d.strftime('%d/%m')}")
+        except ValueError:
+            partes.append(f"~{kcal} kcal em {data_iso}")
+    return " e ".join(partes)
 
 
 @router.delete("/ajuste-dia/{data}")
