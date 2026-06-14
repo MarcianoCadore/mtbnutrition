@@ -521,7 +521,7 @@ async def interpretar_mensagem(texto: str, referencia_datas: str) -> dict:
     dados. Retorna um dict com os campos relevantes para a intenção detectada.
 
     intencao ∈ plano_dia | treino_dia | registrar_fuga | trocar_alimento |
-               alterar_treino | criar_treino | conversa
+               alterar_treino | criar_treino | remover_treino | conversa
 
     Campos comuns:
       intencao, data (ISO YYYY-MM-DD), resposta (só conversa)
@@ -548,6 +548,7 @@ Intenções disponíveis:
 - "trocar_alimento": quer trocar um alimento do cardápio por outro.
 - "alterar_treino": quer MOVER/TRANSFERIR/ALTERAR o treino de um dia para outro dia. Ex.: "muda o treino de sábado pra sexta", "altera o treino de quinta para quarta". Extraia o dia de ORIGEM em "data" e o dia de DESTINO em "data_destino" (ambos ISO YYYY-MM-DD).
 - "criar_treino": quer CRIAR/ADICIONAR um treino novo em um dia. Ex.: "cria um treino for fun no sábado de 3 horas", "adiciona um pedal de recuperação na sexta de 1h30". Extraia: "data" (o dia), "duracao_min" (duração em minutos — "três horas"=180, "1h30"=90, "90 min"=90, "2h"=120), "tipo" (um dos valores abaixo inferido da descrição) e "descricao" (texto livre do que o usuário pediu).
+- "remover_treino": quer REMOVER/EXCLUIR/DELETAR/CANCELAR/TIRAR o treino de um dia (deixar o dia de descanso). Ex.: "remove o treino de amanhã", "exclui o treino de sábado", "cancela o pedal de domingo", "tira o treino de quinta". Extraia o dia em "data" (ISO YYYY-MM-DD). NÃO confunda com alterar_treino: aqui NÃO há dia de destino.
 - "conversa": saudação, dúvida geral ou qualquer coisa que não se encaixe acima.
 
 Regras para inferir o tipo de treino em "criar_treino":

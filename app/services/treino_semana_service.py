@@ -220,6 +220,34 @@ async def criar_treino_dia(
     }
 
 
+# ── remover treino de um dia (vira descanso) ─────────────────────────────────
+
+async def remover_treino_dia(data_iso: str) -> dict:
+    """Transforma o treino do dia em DESCANSO. Retorna o garmin_id antigo (para
+    remover do Garmin). Lança ValueError se o dia não tiver treino real."""
+    db = get_db()
+    treino = await get_treino(data_iso)
+    if not treino:
+        raise ValueError(f"Não há treino em {data_iso} para remover.")
+
+    garmin_id_antigo = treino.get("garmin_workout_id")
+    tipo_antigo = treino.get("tipo")
+
+    # Zera os campos de treino (vira descanso)
+    campos = {c: _treino_vazio(data_iso).get(c) for c in
+              ["tipo", "periodo", "duracao_min", "distancia_km",
+               "elevacao_m", "cadencia_rpm", "descricao"]}
+    campos["garmin_workout_id"] = None
+    await _set_treino_dia(data_iso, campos, db)
+
+    logger.info("remover_treino_dia: %s (era %s)", data_iso, tipo_antigo)
+    return {
+        "data": data_iso,
+        "tipo_antigo": tipo_antigo,
+        "garmin_id_antigo": garmin_id_antigo,
+    }
+
+
 # ── busca treinos da semana (para o resumo enviado no WhatsApp) ───────────────
 
 async def get_treinos_semana(semana_inicio: str) -> list[dict]:

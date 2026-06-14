@@ -191,6 +191,24 @@ def _fmt_data(data_iso: str) -> str:
         return data_iso
 
 
+def _fmt_duracao(minutos: int) -> str:
+    """Formata minutos como '2h00' / '90 min' para as mensagens."""
+    h, m = divmod(int(minutos), 60)
+    return f"{h}h{m:02d}" if h else f"{m} min"
+
+
+# Seg–sex o usuário trabalha: não cria treino acima de 2h em dia útil.
+_MAX_MIN_DIA_SEMANA = 120
+
+
+def _e_dia_util(data_iso: str) -> bool:
+    """True se a data cai de segunda a sexta (weekday 0..4)."""
+    try:
+        return datetime.strptime(data_iso, "%Y-%m-%d").weekday() < 5
+    except Exception:
+        return False
+
+
 def _validar_ou_hoje(data_str: str | None, hoje: str) -> str:
     """Retorna data_str se for ISO válida, ou hoje caso contrário."""
     if not data_str or str(data_str).lower() == "null":
@@ -447,7 +465,7 @@ async def whatsapp_webhook(request: Request):
     # ── VERIFICAÇÃO DE ESTADO PENDENTE (colisão aguardando confirmação) ──────
     from app.services.treino_semana_service import (
         get_estado, set_estado, limpar_estado,
-        mover_treino, criar_treino_dia, get_treino, get_treinos_semana,
+        mover_treino, criar_treino_dia, remover_treino_dia, get_treino, get_treinos_semana,
     )
 
     estado = await get_estado(from_number)
@@ -562,6 +580,14 @@ async def whatsapp_webhook(request: Request):
         if not duracao_min:
             return _twiml("Qual a duração do treino? ⏱️ Ex.: '3 horas', '90 min', '1h30'.")
 
+        # Regra: seg–sex o usuário trabalha → teto de 2h. Acima disso, limita e avisa.
+        nota_limite = ""
+        if _e_dia_util(data_iso) and duracao_min > _MAX_MIN_DIA_SEMANA:
+            nota_limite = (f"⏳ Em dia de semana o limite é 2h (você trabalha), então marquei "
+                           f"{_fmt_duracao(_MAX_MIN_DIA_SEMANA)} em vez de {_fmt_duracao(duracao_min)}. "
+                           f"Pro treino cheio, escolhe sábado ou domingo.")
+            duracao_min = _MAX_MIN_DIA_SEMANA
+
         # Tipo: da IA; padrão Z2_LONGO
         tipo = str(interp.get("tipo") or "Z2_LONGO").upper()
         _TIPOS_VALIDOS = {"Z2_LONGO", "TIROS", "VO2MAX", "TEMPO", "FORCA", "RECUPERACAO"}
@@ -581,13 +607,16 @@ async def whatsapp_webhook(request: Request):
                 "descricao": descricao,
                 "tipo_existente": tipo_existente,
             })
-            return _twiml(
+            pergunta = (
                 f"⚠️ {_fmt_data(data_iso)} já tem um treino de "
                 f"{tipo_existente.replace('_', ' ').title()}.\n"
                 f"Quer *sobrescrever* com o novo treino de {tipo.replace('_', ' ').title()}?\n"
                 f"(responda: sobrescrever / cancelar)\n"
                 f"_Ou 'trocar' para inverter os dois dias._"
             )
+            if nota_limite:
+                pergunta = f"{nota_limite}\n\n{pergunta}"
+            return _twiml(pergunta)
 
         # Sem colisão — grava direto
         try:
@@ -599,12 +628,42 @@ async def whatsapp_webhook(request: Request):
         semana_inicio = _semana_inicio_de(data_iso)
         garmin_status = await _sync_garmin_e_whatsapp([resultado], semana_inicio)
 
-        horas = duracao_min // 60
-        mins = duracao_min % 60
-        dur_str = f"{horas}h{mins:02d}" if horas else f"{mins} min"
-        msg = f"✅ Criei um treino de {tipo.replace('_', ' ').title()} ({dur_str}) no {_fmt_data(data_iso)}. 🚵"
+        msg = f"✅ Criei um treino de {tipo.replace('_', ' ').title()} ({_fmt_duracao(duracao_min)}) no {_fmt_data(data_iso)}. 🚵"
+        if nota_limite:
+            msg += f"\n{nota_limite}"
         if garmin_status:
             msg += f"\n{garmin_status}"
+        return _twiml(msg)
+
+    # ── REMOVER TREINO ────────────────────────────────────────────────────────
+    if intencao == "remover_treino":
+        datas_resolvidas = _resolver_datas_texto(body)
+        data_iso = datas_resolvidas[0] if datas_resolvidas else None
+        if not data_iso:
+            data_iso = _validar_ou_hoje(interp.get("data"), hoje)
+
+        treino_existente = await get_treino(data_iso)
+        if not treino_existente:
+            return _twiml(f"Em {_fmt_data(data_iso)} já está como descanso — não há treino pra remover. 🛌")
+
+        tipo_removido = treino_existente.get("tipo", "")
+        try:
+            resultado = await remover_treino_dia(data_iso)
+        except ValueError as e:
+            return _twiml(f"❌ {e}")
+        except Exception as e:
+            logger.error("remover_treino: %s", e)
+            return _twiml("❌ Erro ao remover o treino. Tenta de novo.")
+
+        semana_inicio = _semana_inicio_de(data_iso)
+        # Dia virou descanso (tipo DESCANSO → não faz upload, só remove do Garmin).
+        dia_afetado = {"data": data_iso, "tipo": "DESCANSO",
+                       "garmin_id_antigo": resultado.get("garmin_id_antigo")}
+        garmin_status = await _sync_garmin_e_whatsapp([dia_afetado], semana_inicio)
+
+        msg = f"🗑️ Removi o treino de {tipo_removido.replace('_', ' ').title()} de {_fmt_data(data_iso)}. Agora é descanso. 🛌"
+        if resultado.get("garmin_id_antigo"):
+            msg += "\nTambém tirei do Garmin 📲" if not garmin_status.startswith("⚠️") else f"\n{garmin_status}"
         return _twiml(msg)
 
     # ── INTENÇÕES EXISTENTES ──────────────────────────────────────────────────
