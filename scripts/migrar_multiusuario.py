@@ -43,7 +43,9 @@ async def main() -> None:
     usuario_existente = await db.users.find_one({"login": login})
 
     if usuario_existente:
-        user_id = usuario_existente["_id"]
+        # user_id é STRING (str do ObjectId) — convenção do app: as coleções
+        # escopadas guardam user_id como string e as queries usam string.
+        user_id = str(usuario_existente["_id"])
         print(f"    → Usuário já existe (_id={user_id}). Reutilizando.")
     else:
         # Copiar zonas do db.config se existirem, senão derivar da FCmáx
@@ -102,7 +104,7 @@ async def main() -> None:
         }
 
         doc_criado = await user_service.criar_usuario(dados_marciano)
-        user_id = doc_criado["_id"]
+        user_id = str(doc_criado["_id"])  # string — convenção do app
         print(f"    → Usuário criado com sucesso (_id={user_id}).")
 
     # ── 2. Marcar coleções simples com user_id (idempotente via $exists) ──────

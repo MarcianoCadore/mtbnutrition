@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 router = APIRouter()
@@ -24,6 +24,7 @@ HTML = """<!DOCTYPE html>
     nav .nav-links a { color: #fff; text-decoration: none; font-size: 0.88rem; opacity: .85; white-space: nowrap; }
     nav .nav-links a:hover { opacity: 1; text-decoration: underline; }
     nav .nav-toggle { display: none; margin-left: auto; background: rgba(255,255,255,.15); border: none; color: #fff; font-size: 1.4rem; line-height: 1; width: 42px; height: 42px; border-radius: 8px; cursor: pointer; }
+    nav .nav-user { color: rgba(255,255,255,.75); font-size: 0.85rem; font-weight: 600; white-space: nowrap; }
 
     main { max-width: 1400px; margin: 0 auto; padding: 24px 20px 80px; }
 
@@ -202,11 +203,9 @@ HTML = """<!DOCTYPE html>
   </div>
   <button class="nav-toggle" aria-label="Abrir menu" onclick="this.closest('nav').classList.toggle('open')">☰</button>
   <div class="nav-links">
-    <a href="/nutrition/config">⏰ Horários</a>
+    {{NAV_NUTRI}}
     <a href="/workout/zonas">❤️ Zonas FC</a>
-    <a href="/nutrition/alimentos">🍽️ Alimentos</a>
-    <a href="/nutrition/guia">🥗 Nutrição</a>
-    <a href="/nutrition/ajuste">🍔 Fuga do plano</a>
+    {{NAV_USER}}
     <a href="/logout">🚪 Sair</a>
   </div>
 </nav>
@@ -271,6 +270,7 @@ HTML = """<!DOCTYPE html>
 </div>
 
 <script>
+window.NUTRICAO_ON = {{NUTRICAO_ON}};
 const DIAS  = ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo'];
 const TIPOS = [
   {v:'DESCANSO',    l:'🛌 Descanso',    s:'Descanso'},
@@ -450,11 +450,11 @@ function buildCards(treinos) {
           ${hide ? '🏃 Adicionar treino' : '🛌 Marcar descanso'}
         </button>
 
-        <div class="nutri-area">
+        ${window.NUTRICAO_ON ? `<div class="nutri-area">
           <button class="nutri-toggle" onclick="abrirNutriModal('${key}')">
             🥗 Plano alimentar do dia
           </button>
-        </div>
+        </div>` : ''}
         ${resHTML}
       </div>`;
     grid.appendChild(c);
@@ -959,5 +959,31 @@ load();
 
 
 @router.get("/", response_class=HTMLResponse)
-async def portal():
-    return HTML
+async def portal(request: Request):
+    from app.services.user_service import get_por_id
+    try:
+        u = await get_por_id(request.state.user_id)
+    except Exception:
+        u = None
+    if u is None:
+        u = {}
+    nome = u.get("nome", "")
+    perder_peso = bool((u.get("preferencias") or {}).get("perder_peso"))
+
+    nav_nutri = (
+        '<a href="/nutrition/config">⏰ Horários</a>\n'
+        '    <a href="/nutrition/alimentos">🍽️ Alimentos</a>\n'
+        '    <a href="/nutrition/guia">🥗 Nutrição</a>\n'
+        '    <a href="/nutrition/ajuste">🍔 Fuga do plano</a>'
+    ) if perder_peso else ""
+
+    nav_user = f'<span class="nav-user">👤 {nome}</span>' if nome else ""
+
+    nutricao_on_js = "true" if perder_peso else "false"
+
+    return (
+        HTML
+        .replace("{{NAV_NUTRI}}", nav_nutri)
+        .replace("{{NAV_USER}}", nav_user)
+        .replace("{{NUTRICAO_ON}}", nutricao_on_js)
+    )
