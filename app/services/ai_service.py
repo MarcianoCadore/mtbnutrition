@@ -19,6 +19,9 @@ KCAL_POR_TIPO = {
 }
 
 def build_prompt(treino: Treino | None) -> str:
+    # TODO Fase 2: parametrizar perfil (nome, idade, peso, objetivo, zonas)
+    # a partir do user_id. Hoje não recebe user_id — alterar assinatura quando
+    # gerar_plano_alimentar também for parametrizada.
     tipo = treino.tipo if treino else TipoTreino.DESCANSO
     kcal = KCAL_POR_TIPO[tipo]
 
@@ -215,6 +218,8 @@ async def classificar_tipo_treino(analise: dict) -> str:
         return analise.get("tipo", "Z2_LONGO")
 
     # 3) Gemini — último recurso
+    # TODO Fase 2: parametrizar perfil do atleta (nome, FC máx, zonas) a partir
+    # de user_id quando classificar_tipo_treino receber esse parâmetro.
     prompt = f"""Você é um especialista em treinamento de ciclismo MTB.
 
 Atleta: Marciano, FC máxima 192 bpm
@@ -288,12 +293,33 @@ async def analisar_atividade_pos_treino(planejado: dict, resultado: dict, user_i
         zonas_txt = "Z1 123-145 | Z2 146-158 | Z3 159-165 | Z4 166-177 | Z5 178-189"
         fc_max, limiar = 189, 172
 
+    # Dados do atleta: nome/idade/peso do perfil do usuário (com defaults seguros)
+    nome_atleta = "Atleta"
+    idade_atleta: int | None = None
+    peso_atleta: float | None = None
+    objetivo_atleta = "melhorar performance MTB"
+    if user_id:
+        try:
+            from app.services.user_service import get_por_id
+            u = await get_por_id(user_id)
+            if u:
+                nome_atleta = u.get("nome") or "Atleta"
+                perfil_u = u.get("perfil") or {}
+                idade_atleta = perfil_u.get("idade") or None
+                peso_atleta = perfil_u.get("peso_kg") or None
+                pref_u = u.get("preferencias") or {}
+                objetivo_atleta = pref_u.get("objetivo") or "melhorar performance MTB"
+        except Exception:
+            pass  # mantém defaults genéricos
+
+    idade_txt = f", {idade_atleta} anos" if idade_atleta else ""
+    peso_txt = f", {peso_atleta:.0f} kg" if peso_atleta else ""
     lim_txt = f", limiar de lactato {limiar} bpm" if limiar else ""
     prompt = f"""Você é um coach de ciclismo MTB especializado em análise de desempenho.
 
-Atleta: Marciano, 34 anos, FC máxima {fc_max} bpm{lim_txt}
+Atleta: {nome_atleta}{idade_txt}{peso_txt}, FC máxima {fc_max} bpm{lim_txt}
 Zonas de FC: {zonas_txt}
-Objetivo: emagrecer preservando músculo + melhorar performance MTB
+Objetivo: {objetivo_atleta}
 
 {chr(10).join(linhas)}
 

@@ -8,6 +8,7 @@ import google.generativeai as genai
 
 from config.settings import settings
 from app.services.mongo_service import get_db
+from app.services.user_service import get_por_id
 
 logger = logging.getLogger(__name__)
 
@@ -56,28 +57,63 @@ def _shift_data(data_iso: str, delta_dias: int) -> str:
     return (d + timedelta(days=delta_dias)).isoformat()
 
 
-# ── Regras fixas de agenda do Marciano (ele trabalha de seg a sex) ────────────
+# ── Regras de agenda (configuráveis por usuário) ──────────────────────────────
 _MAX_MIN_DIA_UTIL = 120   # seg–sex: nenhum treino acima de 2h
-_LONGAO_SABADO_MIN = 180  # sábado: sempre um longão de 3h (Z2 / "for fun")
-_LONGAO_SABADO_DESC = "Longão for fun (~3h) — base aeróbica Z2, ritmo livre/conversacional. Foco em volume e economia de pedalada."
+_LONGAO_MIN = 180         # longão do fim de semana: 3h (Z2 / "for fun")
+_LONGAO_DESC = "Longão for fun (~3h) — base aeróbica Z2, ritmo livre/conversacional. Foco em volume e economia de pedalada."
+
+# Dias de treino padrão (Marciano: seg–sáb = 0..5)
+_DIAS_TREINO_PADRAO = [0, 1, 2, 3, 4, 5]
 
 
-def _aplicar_regras_agenda(data_iso: str, tipo: str, duracao, descricao, cadencia):
-    """Aplica as regras de agenda fixas, sobrepondo o que a IA/fallback gerou:
-    - segunda a sexta: nenhum treino acima de 120 min (dia de trabalho);
-    - sábado: SEMPRE um longão de 180 min (Z2, pode ser "for fun");
-    - domingo: livre (não mexe — geralmente descanso/recuperação).
+def _aplicar_regras_agenda(
+    data_iso: str,
+    tipo: str,
+    duracao,
+    descricao,
+    cadencia,
+    preferencias: dict | None = None,
+):
+    """Aplica regras de agenda generalizadas por preferências do usuário.
+
+    Regras:
+    - Dias não listados em dias_treino → DESCANSO (sobrescreve qualquer tipo).
+    - Seg–sex (wd ≤ 4): teto de 120 min quando for dia de treino.
+    - Sábado (wd == 5): se estiver nos dias_treino, SEMPRE longão de 180 min.
+    - Se sábado NÃO estiver nos dias_treino mas houver dia de fim de semana (sáb/dom)
+      nos dias_treino, o primeiro desses dias recebe o longão; caso contrário não
+      há longão forçado (bom senso: semanas sem treino de fim de semana não precisam).
+    - Domingo (wd == 6): se estiver nos dias_treino e não for o "dia do longão",
+      não é modificado (livre para descanso/recuperação pela IA).
+
     Retorna (tipo, duracao, descricao, cadencia) ajustados.
     """
+    pref = preferencias or {}
+    dias_treino: list[int] = pref.get("dias_treino") or _DIAS_TREINO_PADRAO
+
     try:
         wd = datetime.strptime(data_iso, "%Y-%m-%d").weekday()  # 0=seg ... 6=dom
     except (ValueError, TypeError):
         return tipo, duracao, descricao, cadencia
 
-    if wd == 5:  # sábado → longão de 3h garantido
-        return "Z2_LONGO", _LONGAO_SABADO_MIN, _LONGAO_SABADO_DESC, (cadencia or "85-95")
+    # 1) Dia fora dos dias de treino → DESCANSO
+    if wd not in dias_treino:
+        return "DESCANSO", None, "", cadencia
 
-    if wd <= 4 and tipo != "DESCANSO" and duracao:  # seg–sex → teto de 2h
+    # 2) Determina qual dia é o "dia do longão" (fim de semana com treino)
+    #    Prioridade: sábado (5) > domingo (6). Se nenhum, não força longão.
+    dia_longao: int | None = None
+    for candidato in (5, 6):
+        if candidato in dias_treino:
+            dia_longao = candidato
+            break
+
+    # 3) Dia do longão → longão garantido de 3h
+    if wd == dia_longao:
+        return "Z2_LONGO", _LONGAO_MIN, _LONGAO_DESC, (cadencia or "85-95")
+
+    # 4) Dias úteis (seg–sex, wd ≤ 4) → teto de 2h
+    if wd <= 4 and tipo != "DESCANSO" and duracao:
         duracao = min(int(duracao), _MAX_MIN_DIA_UTIL)
 
     return tipo, duracao, descricao, cadencia
@@ -112,15 +148,78 @@ async def gerar_proxima_semana(user_id: str, semana_atual: str) -> dict:
     treinos = doc.get("treinos", [])
     proxima = _proxima_semana(semana_atual)
 
+    # ── Dados do usuário (tolerante a ausências) ──────────────────────────────
+    u = await get_por_id(user_id)
+    u = u or {}
+    nome_atleta: str = u.get("nome") or "Atleta"
+    perfil: dict = u.get("perfil") or {}
+    preferencias: dict = u.get("preferencias") or {}
+    zonas_doc: dict = u.get("zonas") or {}
+
+    idade: int = int(perfil.get("idade") or 34)
+    peso: float = float(perfil.get("peso_kg") or 85)
+    objetivo: str = preferencias.get("objetivo") or "performance"
+
+    # FC máx e limiar: prioriza zonas_doc (configurado via tela/Garmin),
+    # cai para perfil, depois para defaults razoáveis.
+    fc_max: int = int(zonas_doc.get("fc_max") or perfil.get("fc_max") or 190)
+    limiar: int | None = zonas_doc.get("limiar") or perfil.get("limiar_bpm") or None
+
+    # Zonas de FC: monta texto das faixas
+    zonas_lista: list[dict] = zonas_doc.get("zonas") or []
+    if zonas_lista:
+        zonas_txt = " | ".join(
+            f"Z{z['zona']} {z['min']}-{z['max']}" for z in zonas_lista
+        )
+        # Texto simplificado para o prompt (estilo "Z1 <145 | Z2 146-158 ...")
+        zonas_prompt = " | ".join(
+            f"Z{z['zona']} {z['min']}-{z['max']}" for z in zonas_lista
+        )
+    else:
+        zonas_prompt = "Z1 <145 | Z2 146-158 | Z3 159-165 | Z4 166-177 | Z5 >177"
+
+    limiar_txt = f" | Limiar de lactato: {limiar} bpm" if limiar else ""
+
+    # Dias de treino para o prompt
+    dias_treino: list[int] = preferencias.get("dias_treino") or _DIAS_TREINO_PADRAO
+    _NOMES_DIA = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
+    dias_treino_nomes = ", ".join(_NOMES_DIA[d] for d in sorted(dias_treino))
+
+    # Determina dia do longão para o prompt (sáb > dom, ou nenhum)
+    dia_longao_nome: str | None = None
+    for candidato in (5, 6):
+        if candidato in dias_treino:
+            dia_longao_nome = _NOMES_DIA[candidato]
+            break
+
+    # Restrições de agenda para o prompt
+    dias_uteis_treino = [d for d in dias_treino if d <= 4]
+    if dias_uteis_treino:
+        restricao_util = (
+            f"- {', '.join(_NOMES_DIA[d].capitalize() for d in sorted(dias_uteis_treino))}: "
+            f"NENHUM treino acima de 120 min (2h). Sessões de qualidade cabem em 2h."
+        )
+    else:
+        restricao_util = "- Sem treinos em dias úteis configurados."
+
+    if dia_longao_nome:
+        restricao_fds = (
+            f"- {dia_longao_nome.capitalize()}: SEMPRE um longão de 180 min (3h), "
+            f"Z2_LONGO (\"for fun\", ritmo livre/base aeróbica). É o maior treino da semana."
+        )
+    else:
+        restricao_fds = "- Sem longão fixo de fim de semana (sem treino em sáb/dom)."
+
     resumos = "\n".join(_resumo_treino(t) for t in treinos if t.get("tipo") != "DESCANSO")
     if not resumos:
         resumos = "  (nenhum treino com dados registrados)"
 
     prompt = f"""Você é um coach de ciclismo MTB especializado em periodização progressiva.
 
-ATLETA: Marciano, 34 anos, 85 kg, meta: emagrecer + melhorar performance MTB.
-FCMÁX: 190 bpm | Limiar de lactato: 172 bpm
-ZONAS GARMIN: Z1 <145 | Z2 146-158 | Z3 159-165 | Z4 166-177 | Z5 >177
+ATLETA: {nome_atleta}, {idade} anos, {peso:.0f} kg, objetivo: {objetivo}.
+FCMÁX: {fc_max} bpm{limiar_txt}
+ZONAS GARMIN: {zonas_prompt}
+DIAS DE TREINO: {dias_treino_nomes}
 
 SEMANA ATUAL ({semana_atual}):
 {resumos}
@@ -128,16 +227,16 @@ SEMANA ATUAL ({semana_atual}):
 DISTRIBUIÇÃO ATUAL DOS TREINOS:
 {chr(10).join(f"  {t['data']} → {t.get('tipo','DESCANSO')}" for t in treinos)}
 
-RESTRIÇÕES DE AGENDA (OBRIGATÓRIAS — o atleta trabalha de segunda a sexta):
-- Segunda a sexta: NENHUM treino acima de 120 min (2h). Sessões de qualidade cabem em 2h.
-- Sábado: SEMPRE um longão de 180 min (3h), Z2_LONGO ("for fun", ritmo livre/base aeróbica). É o maior treino da semana.
-- Domingo: livre — priorize DESCANSO ou RECUPERAÇÃO leve para absorver a carga do sábado.
+RESTRIÇÕES DE AGENDA (OBRIGATÓRIAS):
+{restricao_util}
+{restricao_fds}
+- Dias SEM treino: DESCANSO obrigatório — não gere treino nesses dias.
 
 PRIORIZE GANHO DE PERFORMANCE (modelo polarizado):
 - No máximo 2 dias DUROS na semana (ex.: VO2MAX e TIROS, ou VO2MAX e TEMPO), bem ESPAÇADOS (não em dias seguidos).
 - Dias fáceis (Z2/RECUPERACAO) devem ser REALMENTE fáceis (FC baixa, Z2 puro) para recuperar — evite a "zona cinza" (treinar sempre em intensidade média).
 - Garanta recuperação suficiente: pelo menos 1 dia de descanso/recuperação entre blocos duros.
-- Os dias DUROS rendem mais descansados — não coloque dois dias pesados grudados nem antes do longão de sábado.
+- Os dias DUROS rendem mais descansados — não coloque dois dias pesados grudados nem antes do longão.
 
 REGRAS DE PROGRESSÃO:
 - Aumentar volume (+5-10% em duracao_min) quando a semana foi bem executada, respeitando o teto de 120 min em dias úteis.
@@ -170,7 +269,7 @@ Os dados de "treinos" devem ter exatamente 7 entradas (uma por dia da semana {pr
         data = json.loads(raw)
     except Exception as e:
         logger.warning("Gemini falhou para gerar próxima semana: %s — usando fallback", e)
-        data = _fallback(treinos, proxima)
+        data = _fallback(treinos, proxima, preferencias)
 
     # normaliza e valida cada treino retornado pela IA
     treinos_out = []
@@ -182,9 +281,9 @@ Os dados de "treinos" devem ter exatamente 7 entradas (uma por dia da semana {pr
         duracao = min(duracao, _DURACAO_MAXIMA.get(tipo, 150))
         descricao = t.get("descricao") or _DESCRICAO_PADRAO.get(tipo, "")
         cadencia = t.get("cadencia_rpm")
-        # regras de agenda (teto de 2h em dia útil, longão de 3h no sábado)
+        # regras de agenda (dias de treino, teto de 2h em dia útil, longão no fim de semana)
         tipo, duracao, descricao, cadencia = _aplicar_regras_agenda(
-            t.get("data", ""), tipo, duracao, descricao, cadencia)
+            t.get("data", ""), tipo, duracao, descricao, cadencia, preferencias)
         treinos_out.append({
             "data":        t.get("data", ""),
             "tipo":        tipo,
@@ -201,7 +300,7 @@ Os dados de "treinos" devem ter exatamente 7 entradas (uma por dia da semana {pr
     }
 
 
-def _fallback(treinos_atuais: list, proxima: str) -> dict:
+def _fallback(treinos_atuais: list, proxima: str, preferencias: dict | None = None) -> dict:
     """Progressão determinística (+5% duração) quando Gemini não está disponível."""
     novos = []
     for t in treinos_atuais:
@@ -212,9 +311,9 @@ def _fallback(treinos_atuais: list, proxima: str) -> dict:
         data_nova = _shift_data(t["data"], 7)
         descricao = t.get("descricao") or _DESCRICAO_PADRAO.get(tipo, "")
         cadencia = t.get("cadencia_rpm")
-        # regras de agenda (teto de 2h em dia útil, longão de 3h no sábado)
+        # regras de agenda (dias de treino, teto de 2h em dia útil, longão no fim de semana)
         tipo, dur, descricao, cadencia = _aplicar_regras_agenda(
-            data_nova, tipo, dur, descricao, cadencia)
+            data_nova, tipo, dur, descricao, cadencia, preferencias)
         novos.append({
             "data":        data_nova,
             "tipo":        tipo,

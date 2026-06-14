@@ -21,12 +21,62 @@ logger = logging.getLogger(__name__)
 LIMITE_CORTE_DIA = 400
 
 
+async def _nutricao_habilitada(user_id: str) -> bool:
+    """Retorna True se o usuário marcou 'perder peso' nas preferências.
+
+    Nutrição (cardápios, fugas, horários) só é relevante para quem tem
+    objetivo de emagrecimento. Retorna False em caso de ausência do campo.
+    """
+    try:
+        from app.services.user_service import get_por_id
+        u = await get_por_id(user_id)
+        if u is None:
+            return False
+        pref = u.get("preferencias") or {}
+        return bool(pref.get("perder_peso", False))
+    except Exception:
+        return False  # em caso de erro, nega acesso por segurança
+
+
+_MSG_NUTRICAO_DESABILITADA = (
+    "Nutrição não habilitada para este usuário "
+    "(ative 'perder peso' no perfil)."
+)
+
+_HTML_NUTRICAO_DESABILITADA = """<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MTB Nutrition — Não disponível</title>
+<style>
+  body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; background:#f0f2f5;
+         display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; }
+  .card { background:#fff; border-radius:14px; padding:32px 28px; max-width:420px;
+          box-shadow:0 2px 8px rgba(0,0,0,.08); text-align:center; }
+  h1 { font-size:1.3rem; color:#1f2937; margin-bottom:10px; }
+  p { color:#6b7280; font-size:.95rem; line-height:1.6; }
+  a { color:#0e8a7d; font-weight:700; text-decoration:none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Nutrição não habilitada</h1>
+  <p>Esta funcionalidade é exclusiva para quem ativou o objetivo <b>perder peso</b> no perfil.</p>
+  <p style="margin-top:16px"><a href="/portal/">← Voltar ao portal</a></p>
+</div>
+</body>
+</html>"""
+
+
 @router.get("/plano/{tipo}")
 async def plano_por_tipo(request: Request, tipo: str, data: str | None = None, periodo: str | None = None):
     """Cardápio do tipo de treino para uma data (varia a cada dia) — usado nos cards.
     Com 'periodo' (manha/meio_dia/tarde/noite), redistribui o carbo em volta do treino.
     Aplica também extras e corte_kcal (fuga registrada) do dia."""
     user_id = request.state.user_id
+    if not await _nutricao_habilitada(user_id):
+        raise HTTPException(status_code=403, detail=_MSG_NUTRICAO_DESABILITADA)
     cfg = await get_horarios(user_id)
     if data:
         ajuste = await ajuste_do_dia(user_id, data)
@@ -65,7 +115,10 @@ async def _plano_do_dia_impl(user_id: str, data: str) -> dict:
 async def plano_do_dia(request: Request, data: str):
     """Plano completo de um dia do calendário (descobre o tipo de treino do dia e
     aplica as fugas e o corte_kcal registrados)."""
-    return await _plano_do_dia_impl(request.state.user_id, data)
+    user_id = request.state.user_id
+    if not await _nutricao_habilitada(user_id):
+        raise HTTPException(status_code=403, detail=_MSG_NUTRICAO_DESABILITADA)
+    return await _plano_do_dia_impl(user_id, data)
 
 
 async def registrar_fuga_rollover(user_id: str, data: str, extra: dict, agora=None) -> dict:
@@ -159,6 +212,8 @@ async def registrar_fuga(request: Request, data: str, texto: str | None = Form(N
     """Registra algo comido fora do plano (texto e/ou foto). Estima as calorias
     pela IA (ou usa o kcal informado) e devolve o plano do dia já ajustado."""
     user_id = request.state.user_id
+    if not await _nutricao_habilitada(user_id):
+        raise HTTPException(status_code=403, detail=_MSG_NUTRICAO_DESABILITADA)
     kcal_manual = None
     if kcal not in (None, ""):
         try:
@@ -259,13 +314,19 @@ class HorariosBody(BaseModel):
 
 @router.get("/horarios")
 async def ler_horarios(request: Request):
-    return await get_horarios(request.state.user_id)
+    user_id = request.state.user_id
+    if not await _nutricao_habilitada(user_id):
+        raise HTTPException(status_code=403, detail=_MSG_NUTRICAO_DESABILITADA)
+    return await get_horarios(user_id)
 
 
 @router.post("/horarios")
 async def gravar_horarios(request: Request, body: HorariosBody):
+    user_id = request.state.user_id
+    if not await _nutricao_habilitada(user_id):
+        raise HTTPException(status_code=403, detail=_MSG_NUTRICAO_DESABILITADA)
     try:
-        cfg = await salvar_horarios(request.state.user_id, body.model_dump(exclude_none=True))
+        cfg = await salvar_horarios(user_id, body.model_dump(exclude_none=True))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     # reagenda os lembretes de refeição para os novos horários
@@ -293,10 +354,13 @@ async def listar_planos(request: Request):
 
 @router.get("/hoje")
 async def plano_hoje(request: Request):
+    user_id = request.state.user_id
+    if not await _nutricao_habilitada(user_id):
+        raise HTTPException(status_code=403, detail=_MSG_NUTRICAO_DESABILITADA)
     db = get_db()
     hoje = datetime.now().date()
     doc = await db.planos.find_one(
-        {"user_id": request.state.user_id,
+        {"user_id": user_id,
          "data": {"$gte": datetime(hoje.year, hoje.month, hoje.day)}},
         {"_id": 0}
     )
@@ -315,6 +379,9 @@ _ORDEM_TIPOS = ["TIROS", "VO2MAX", "TEMPO", "FORCA", "Z2_LONGO", "RECUPERACAO", 
 
 @router.get("/guia", response_class=HTMLResponse)
 async def guia_nutricao(request: Request):
+    user_id = request.state.user_id
+    if not await _nutricao_habilitada(user_id):
+        return HTMLResponse(content=_HTML_NUTRICAO_DESABILITADA, status_code=200)
     # tabela de alimentos
     linhas_tab = "".join(
         f"<tr><td>{a['nome']}</td><td class='c'>{a['base']}</td>"
@@ -431,7 +498,9 @@ async def guia_nutricao(request: Request):
 
 
 @router.get("/alimentos", response_class=HTMLResponse)
-async def guia_alimentos():
+async def guia_alimentos(request: Request):
+    if not await _nutricao_habilitada(request.state.user_id):
+        return HTMLResponse(content=_HTML_NUTRICAO_DESABILITADA, status_code=200)
     blocos = []
     for r in guia_refeicoes():
         linhas = "".join(
