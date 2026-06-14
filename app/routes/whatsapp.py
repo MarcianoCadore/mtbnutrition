@@ -262,7 +262,7 @@ async def _sync_garmin_e_whatsapp(
         # ── remove o workout antigo do dia (se havia um agendado no Garmin) ──
         gid_antigo = dia.get("garmin_id_antigo")
         if gid_antigo:
-            ok_del = await deletar_workout_garmin(gid_antigo)
+            ok_del = await deletar_workout_garmin(user_id, gid_antigo)
             if not ok_del:
                 logger.warning("Não foi possível remover workout Garmin id=%s", gid_antigo)
 

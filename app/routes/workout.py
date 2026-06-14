@@ -1,7 +1,7 @@
 import os
 import shutil
 import logging
-from fastapi import APIRouter, HTTPException, UploadFile, File, Request
+from fastapi import APIRouter, HTTPException, UploadFile, File, Request, Form
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 from datetime import datetime
@@ -172,7 +172,11 @@ async def debug_garmin(request: Request, semana_inicio: str):
     """Retorna o raw da API Garmin para diagnóstico."""
     from datetime import timedelta
     from app.services.garmin_service import get_garmin_client
-    api = get_garmin_client()
+    user_id = request.state.user_id
+    try:
+        api = await get_garmin_client(user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     d0 = datetime.strptime(semana_inicio, "%Y-%m-%d").date()
     d1 = d0 + timedelta(days=6)
 
@@ -292,11 +296,14 @@ async def ler_zonas(request: Request):
 
 
 @router.post("/zonas/importar-garmin")
-async def importar_zonas_garmin():
+async def importar_zonas_garmin(request: Request):
     """Lê as zonas de FC oficiais direto da conta Garmin (preview, não salva)."""
     from app.services.garmin_service import zonas_do_garmin
+    user_id = request.state.user_id
     try:
-        return await zonas_do_garmin()
+        return await zonas_do_garmin(user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Não consegui ler as zonas do Garmin: {e}")
 
@@ -354,13 +361,89 @@ async def salvar_zonas_endpoint(request: Request, body: ZonasBody):
     garmin = {"ok": False, "status": None}
     try:
         from app.services.garmin_service import enviar_zonas_para_garmin
-        garmin = await enviar_zonas_para_garmin(salvo)
+        garmin = await enviar_zonas_para_garmin(request.state.user_id, salvo)
+    except ValueError:
+        # Usuário sem Garmin conectado — não é erro, apenas não sincroniza
+        pass
     except Exception as e:
         import logging
         logging.getLogger(__name__).error("Auto-sync de zonas com Garmin falhou: %s", e)
 
     salvo["garmin_sync"] = garmin
     return salvo
+
+
+@router.post("/garmin/conectar")
+async def garmin_conectar(
+    request: Request,
+    email: str = Form(...),
+    senha: str = Form(...),
+):
+    """Conecta a conta Garmin do usuário. Testa as credenciais, cifra a senha
+    e salva no documento do usuário. Retorna {"status": "conectado"}."""
+    import asyncio as _asyncio
+    from garminconnect import Garmin as _Garmin
+    from app.services.crypto_service import cifrar
+    from app.services.user_service import atualizar_usuario
+    from app.services.garmin_service import _clients
+
+    user_id = request.state.user_id
+
+    def _testar_login():
+        api = _Garmin(email, senha)
+        api.login()
+        return api
+
+    try:
+        await _asyncio.to_thread(_testar_login)
+    except Exception as e:
+        logger.error("garmin_conectar: credenciais inválidas para user_id=%s — %s", user_id, e)
+        raise HTTPException(status_code=400, detail="Credenciais Garmin inválidas. Verifique e-mail e senha.")
+
+    # Persiste credenciais cifradas no documento do usuário
+    await atualizar_usuario(user_id, {
+        "integracao.tipo": "garmin",
+        "integracao.garmin": {
+            "email": email,
+            "senha_cifrada": cifrar(senha),
+        },
+    })
+
+    # Invalida o cliente cacheado para que o próximo acesso use as credenciais novas
+    _clients.pop(user_id, None)
+
+    logger.info("garmin_conectar: Garmin conectado para user_id=%s", user_id)
+    return {"status": "conectado"}
+
+
+@router.post("/garmin/desconectar")
+async def garmin_desconectar(request: Request):
+    """Remove a integração Garmin do usuário: apaga credenciais, tokenstore e cache."""
+    import shutil as _shutil
+    from app.services.user_service import atualizar_usuario
+    from app.services.garmin_service import _clients, TOKEN_DIR
+
+    user_id = request.state.user_id
+
+    # Limpa credenciais no banco
+    await atualizar_usuario(user_id, {
+        "integracao.tipo": "none",
+        "integracao.garmin": None,
+    })
+
+    # Remove tokenstore do usuário (tokens Garth em disco)
+    token_dir = os.path.join(TOKEN_DIR, user_id)
+    if os.path.isdir(token_dir):
+        try:
+            _shutil.rmtree(token_dir)
+        except Exception as e:
+            logger.warning("garmin_desconectar: não foi possível remover tokenstore — %s", e)
+
+    # Remove do cache em memória
+    _clients.pop(user_id, None)
+
+    logger.info("garmin_desconectar: Garmin desconectado para user_id=%s", user_id)
+    return {"status": "desconectado"}
 
 
 @router.get("/zonas", response_class=HTMLResponse)

@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     # Garmin Connect
     GARMIN_EMAIL: str = ""
     GARMIN_PASSWORD: str = ""
+    # Chave Fernet (base64 urlsafe, 32 bytes) para cifrar credenciais do Garmin.
+    # Se vazio, crypto_service deriva uma chave determinística de SECRET_KEY (dev).
+    # Em produção, gere com: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # ATENÇÃO: mudar a chave invalida todos os segredos já cifrados no banco.
+    FERNET_KEY: str = ""
     # Twilio
     TWILIO_ACCOUNT_SID: str = ""
     TWILIO_AUTH_TOKEN: str = ""

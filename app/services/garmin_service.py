@@ -14,36 +14,82 @@ from app.services.fit_service import analisar_fit
 logger = logging.getLogger(__name__)
 
 UPLOADS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "uploads", "fit")
+# Diretório raiz dos tokens. Cada usuário ganha um subdiretório: TOKEN_DIR/<user_id>/
 TOKEN_DIR = os.path.expanduser("~/.garth_mtb")
 
-_client: Garmin | None = None
+# Cache de clientes autenticados, indexado por user_id (string).
+# Evita re-login a cada chamada sem manter um singleton global.
+_clients: dict[str, Garmin] = {}
 
 
-def get_garmin_client() -> Garmin:
-    global _client
-    if _client is not None:
-        return _client
+async def get_garmin_client(user_id: str) -> Garmin:
+    """Retorna (e inicializa se necessário) um cliente Garmin autenticado para o usuário.
 
-    api = Garmin(settings.GARMIN_EMAIL, settings.GARMIN_PASSWORD)
+    Estratégia de credenciais:
+    1. Lê `integracao.garmin` do doc do usuário no banco (email + senha cifrada).
+    2. Back-compat: se o usuário não tem credenciais Garmin mas é o usuário
+       configurado em settings.PORTAL_USER e settings.GARMIN_EMAIL/PASSWORD existem,
+       usa as credenciais globais — para o Marciano continuar funcionando antes de
+       reconectar pelo novo fluxo.
+    3. Se nenhuma credencial encontrada → levanta ValueError.
 
-    if os.path.isdir(TOKEN_DIR):
+    Tokenstore por usuário: TOKEN_DIR/<user_id>/
+    """
+    if user_id in _clients:
+        return _clients[user_id]
+
+    from app.services.user_service import get_por_id
+    from app.services.crypto_service import decifrar
+
+    u = await get_por_id(user_id)
+    integracao = (u or {}).get("integracao") or {}
+    garmin_cfg = integracao.get("garmin") or {}
+
+    email = garmin_cfg.get("email") or ""
+    senha = decifrar(garmin_cfg.get("senha_cifrada") or "") if garmin_cfg.get("senha_cifrada") else ""
+
+    # Back-compat: Marciano ainda sem credenciais no banco → usa as globais
+    if not (email and senha):
+        login = (u or {}).get("login") or ""
+        if login == settings.PORTAL_USER and settings.GARMIN_EMAIL and settings.GARMIN_PASSWORD:
+            email = settings.GARMIN_EMAIL
+            senha = settings.GARMIN_PASSWORD
+            logger.info(
+                "Garmin: usando credenciais globais para o usuário '%s' (back-compat)",
+                login,
+            )
+
+    if not (email and senha):
+        raise ValueError(
+            f"Usuário {user_id} não tem Garmin conectado. "
+            "Configure a integração em /workout/garmin/conectar."
+        )
+
+    # Tokenstore exclusivo por usuário
+    token_dir = os.path.join(TOKEN_DIR, user_id)
+    os.makedirs(token_dir, exist_ok=True)
+
+    api = Garmin(email, senha)
+
+    if os.path.isdir(token_dir) and os.listdir(token_dir):
         try:
-            api.login(tokenstore=TOKEN_DIR)
-            _client = api
-            logger.info("Garmin: login via token cacheado")
-            return _client
+            api.login(tokenstore=token_dir)
+            _clients[user_id] = api
+            logger.info("Garmin: login via token cacheado (user_id=%s)", user_id)
+            return _clients[user_id]
         except Exception:
-            logger.warning("Garmin: token expirado, re-autenticando")
+            logger.warning(
+                "Garmin: token expirado para user_id=%s, re-autenticando", user_id
+            )
 
     api.login()
-    os.makedirs(TOKEN_DIR, exist_ok=True)
     try:
-        api.garth.dump(TOKEN_DIR)
+        api.garth.dump(token_dir)
     except Exception:
         pass
-    _client = api
-    logger.info("Garmin: login com credenciais")
-    return _client
+    _clients[user_id] = api
+    logger.info("Garmin: login com credenciais (user_id=%s)", user_id)
+    return _clients[user_id]
 
 
 def _semana_de(data: str) -> str:
@@ -51,7 +97,7 @@ def _semana_de(data: str) -> str:
     return (d - timedelta(days=d.weekday())).isoformat()
 
 
-async def zonas_do_garmin(sport: str = "CYCLING") -> dict:
+async def zonas_do_garmin(user_id: str, sport: str = "CYCLING") -> dict:
     """Lê as zonas de FC oficiais do dispositivo direto da API do Garmin.
 
     Prefere o perfil do esporte pedido (ciclismo), caindo no DEFAULT. Retorna
@@ -59,7 +105,7 @@ async def zonas_do_garmin(sport: str = "CYCLING") -> dict:
     extração por imagem. Os 'floors' do Garmin viram faixas: cada zona vai do seu
     floor até (floor da próxima - 1); a Z5 vai do floor 5 até a FC máxima.
     """
-    api = get_garmin_client()
+    api = await get_garmin_client(user_id)
 
     def _fetch():
         return api.connectapi("/biometric-service/heartRateZones")
@@ -92,7 +138,7 @@ async def zonas_do_garmin(sport: str = "CYCLING") -> dict:
     }
 
 
-async def enviar_zonas_para_garmin(zonas_app: dict) -> dict:
+async def enviar_zonas_para_garmin(user_id: str, zonas_app: dict) -> dict:
     """Empurra as zonas de FC do app para o Garmin, atualizando TODOS os perfis
     (CYCLING, DEFAULT, etc.) para ficarem iguais ao app. `zonas_app` no formato
     de config_service.get_zonas(). Retorna {"ok": bool, "status": int|None}."""
@@ -100,8 +146,11 @@ async def enviar_zonas_para_garmin(zonas_app: dict) -> dict:
     fc_max = int(zonas_app["fc_max"])
     limiar = int(zonas_app.get("limiar") or fc_max)
 
+    # Resolve o cliente antes de entrar na thread (get_garmin_client é async)
+    api = await get_garmin_client(user_id)
+
     def _push():
-        api = get_garmin_client()
+        nonlocal api
         atual = api.connectapi("/biometric-service/heartRateZones") or []
         for prof in atual:
             for i in range(5):
@@ -139,8 +188,8 @@ def _extrair_fit_do_zip(data: bytes) -> bytes | None:
 
 async def sync_treinos_planejados(user_id: str, semana_inicio: str) -> int:
     """Busca treinos planejados no calendário Garmin e faz upsert no MongoDB.
-    Escopado ao user_id (Fase 1: integração Garmin é do usuário Marciano)."""
-    api = get_garmin_client()
+    Escopado ao user_id — cada usuário usa suas próprias credenciais Garmin."""
+    api = await get_garmin_client(user_id)
     d0 = datetime.strptime(semana_inicio, "%Y-%m-%d").date()
     d1 = d0 + timedelta(days=6)
 
@@ -435,8 +484,8 @@ def _metricas_extra(planejado: dict, resultado: dict, limiar, avg_speed_ms=None,
 
 async def sync_atividades(user_id: str, semana_inicio: str) -> int:
     """Busca atividades completadas no Garmin e salva como resultado.
-    Escopado ao user_id (Fase 1: integração Garmin é do usuário Marciano)."""
-    api = get_garmin_client()
+    Escopado ao user_id — cada usuário usa suas próprias credenciais Garmin."""
+    api = await get_garmin_client(user_id)
     d0 = datetime.strptime(semana_inicio, "%Y-%m-%d").date()
     d1 = d0 + timedelta(days=6)
 

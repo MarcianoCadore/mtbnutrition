@@ -25,6 +25,7 @@ from motor.motor_asyncio import AsyncIOMotorClient  # noqa: E402 (import após p
 from app.services.mongo_service import get_db  # noqa: E402
 from app.services import user_service  # noqa: E402
 from app.services.nutricao_service import DEFAULT_HORARIOS  # noqa: E402
+from app.services.crypto_service import cifrar  # noqa: E402
 from config.settings import settings  # noqa: E402
 
 
@@ -106,6 +107,38 @@ async def main() -> None:
         doc_criado = await user_service.criar_usuario(dados_marciano)
         user_id = str(doc_criado["_id"])  # string — convenção do app
         print(f"    → Usuário criado com sucesso (_id={user_id}).")
+
+    # ── 1b. Migrar credenciais Garmin para o doc do Marciano (idempotente) ──────
+    #
+    # Se settings.GARMIN_EMAIL e GARMIN_PASSWORD estiverem definidos E o campo
+    # integracao.garmin ainda não tiver email salvo, grava as credenciais cifradas.
+    # Isso permite que o sync automático continue funcionando enquanto o Marciano
+    # não reconectar pelo novo fluxo de /workout/garmin/conectar.
+
+    print("\n[1b] Verificando credenciais Garmin no doc do usuário …")
+
+    doc_atual = await db.users.find_one({"login": login})
+    garmin_cfg = ((doc_atual or {}).get("integracao") or {}).get("garmin") or {}
+
+    if settings.GARMIN_EMAIL and settings.GARMIN_PASSWORD and not garmin_cfg.get("email"):
+        senha_cifrada = cifrar(settings.GARMIN_PASSWORD)
+        await db.users.update_one(
+            {"login": login},
+            {
+                "$set": {
+                    "integracao.tipo": "garmin",
+                    "integracao.garmin": {
+                        "email": settings.GARMIN_EMAIL,
+                        "senha_cifrada": senha_cifrada,
+                    },
+                }
+            },
+        )
+        print(f"    → Credenciais Garmin cifradas e salvas para '{login}'.")
+    elif garmin_cfg.get("email"):
+        print(f"    → Credenciais Garmin já presentes para '{login}', pulando.")
+    else:
+        print("    → GARMIN_EMAIL/PASSWORD não configurados, pulando.")
 
     # ── 2. Marcar coleções simples com user_id (idempotente via $exists) ──────
 

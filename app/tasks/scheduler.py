@@ -176,27 +176,42 @@ async def agendar_lembretes_refeicao():
 
 async def job_garmin_sync():
     """Roda a cada 10 min — sincroniza treinos planejados e atividades do Garmin.
-    Fase 1: opera para o usuário Marciano. TODO Fase 2: iterar usuários com Garmin."""
-    from config.settings import settings
-    if not settings.GARMIN_EMAIL or not settings.GARMIN_PASSWORD:
+    Fase 2: itera todos os usuários que têm integracao.tipo == "garmin".
+    Um erro em um usuário não derruba os demais (try/except por usuário)."""
+    from app.services.garmin_service import sync_treinos_planejados, sync_atividades
+    from app.services.user_service import listar_usuarios
+
+    todos = await listar_usuarios()
+    # Filtra apenas quem tem Garmin configurado
+    com_garmin = [
+        u for u in todos
+        if (u.get("integracao") or {}).get("tipo") == "garmin"
+    ]
+
+    if not com_garmin:
+        # Nenhum usuário com Garmin — sai sem log de erro
         return
-    try:
-        from app.services.garmin_service import sync_treinos_planejados, sync_atividades
-        from app.services.user_service import get_por_login
-        u = await get_por_login(settings.PORTAL_USER)
-        if not u:
-            logger.warning("job_garmin_sync: usuário %s não encontrado, pulando", settings.PORTAL_USER)
-            return
+
+    hoje = datetime.now(TZ).date()
+    seg = hoje - timedelta(days=hoje.weekday())
+    semana = seg.isoformat()
+
+    for u in com_garmin:
         user_id = str(u["_id"])
-        hoje = datetime.now(TZ).date()
-        seg = hoje - timedelta(days=hoje.weekday())
-        semana = seg.isoformat()
-        pl = await sync_treinos_planejados(user_id, semana)
-        at = await sync_atividades(user_id, semana)
-        if pl or at:
-            print(f"[{datetime.now()}] Garmin sync: {pl} treinos planejados, {at} atividades")
-    except Exception as e:
-        print(f"[{datetime.now()}] Erro no job_garmin_sync: {e}")
+        try:
+            pl = await sync_treinos_planejados(user_id, semana)
+            at = await sync_atividades(user_id, semana)
+            if pl or at:
+                print(
+                    f"[{datetime.now()}] Garmin sync ({u.get('login')}): "
+                    f"{pl} treinos planejados, {at} atividades"
+                )
+        except Exception as e:
+            # Não derruba outros usuários — loga e segue
+            logger.error(
+                "job_garmin_sync: erro para user_id=%s (%s) — %s",
+                user_id, u.get("login"), e,
+            )
 
 
 def start_scheduler():

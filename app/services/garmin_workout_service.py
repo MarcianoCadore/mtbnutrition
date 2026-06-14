@@ -245,8 +245,10 @@ async def upload_e_agendar(
         logger.warning("Tipo %s não tem builder de workout", tipo)
         return None
 
+    # Resolve o cliente antes de entrar na thread (get_garmin_client é async)
+    api = await get_garmin_client(user_id)
+
     def _upload() -> str | None:
-        api = get_garmin_client()
         result = api.upload_cycling_workout(workout)
         workout_id = None
         if isinstance(result, dict):
@@ -269,7 +271,7 @@ async def upload_e_agendar(
         return None
 
 
-async def deletar_workout_garmin(gid: str) -> bool:
+async def deletar_workout_garmin(user_id: str, gid: str) -> bool:
     """Remove o workout do Garmin Connect pelo ID.
 
     Usa api.delete_workout(workout_id) que está disponível na lib garminconnect.
@@ -284,9 +286,11 @@ async def deletar_workout_garmin(gid: str) -> bool:
     if not gid:
         return False
 
+    from app.services.garmin_service import get_garmin_client
+    # Resolve o cliente antes de entrar na thread (get_garmin_client é async)
+    api = await get_garmin_client(user_id)
+
     def _delete():
-        from app.services.garmin_service import get_garmin_client
-        api = get_garmin_client()
         try:
             # Tenta desagendar primeiro (ignora erro se não encontrar)
             api.unschedule_workout(gid)
@@ -298,13 +302,13 @@ async def deletar_workout_garmin(gid: str) -> bool:
 
     try:
         ok = await asyncio.to_thread(_delete)
-        logger.info("deletar_workout_garmin: id=%s removido", gid)
+        logger.info("deletar_workout_garmin: id=%s removido (user_id=%s)", gid, user_id)
         return ok
     except Exception as e:
         # Não quebra o fluxo — avisa no log e segue
         logger.warning(
-            "deletar_workout_garmin: falha ao remover id=%s — %s. "
+            "deletar_workout_garmin: falha ao remover id=%s (user_id=%s) — %s. "
             "O sync de pull irá reconciliar na próxima sincronização.",
-            gid, e,
+            gid, user_id, e,
         )
         return False
