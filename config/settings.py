@@ -9,6 +9,11 @@ class Settings(BaseSettings):
     # Login do portal (HTTP Basic). Em produção, definir PORTAL_PASSWORD via env.
     PORTAL_USER: str = "marciano"
     PORTAL_PASSWORD: str = ""
+    # Minutos de inatividade até a sessão do portal expirar. O cookie é de sessão
+    # (some ao fechar o navegador), mas navegadores que restauram a sessão revivem
+    # o cookie — por isso o servidor também expira por tempo (renovado a cada
+    # requisição). Reduza para deslogar mais rápido após fechar o navegador.
+    PORTAL_SESSAO_MIN: int = 30
     # Z-API (WhatsApp)
     ZAPI_INSTANCE_ID: str = ""
     ZAPI_TOKEN: str = ""

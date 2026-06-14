@@ -1,6 +1,7 @@
 import secrets
 import hmac
 import hashlib
+import time
 
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, Response, HTMLResponse
@@ -28,14 +29,35 @@ _PUBLIC_PATHS = {"/health", "/login", "/logout", "/whatsapp/webhook"}
 _COOKIE = "mtb_auth"
 
 
-def _expected_token() -> str:
-    """Token de sessão derivado do usuário+senha. Muda sozinho se a senha mudar
-    (invalidando cookies antigos). Não revela a senha."""
+def _assinar(ts: int) -> str:
+    """Assinatura HMAC de (usuário + timestamp). Muda sozinha se a senha mudar
+    (invalidando cookies antigos) e não revela a senha."""
     return hmac.new(
         settings.PORTAL_PASSWORD.encode(),
-        settings.PORTAL_USER.encode(),
+        f"{settings.PORTAL_USER}:{ts}".encode(),
         hashlib.sha256,
     ).hexdigest()
+
+
+def _gerar_token() -> str:
+    """Gera um token de sessão carimbado com o instante de emissão."""
+    ts = int(time.time())
+    return f"{ts}.{_assinar(ts)}"
+
+
+def _token_valido(token: str) -> bool:
+    """Valida assinatura E idade do token. O cookie é de sessão (some ao fechar
+    o navegador), mas alguns navegadores restauram a sessão e revivem o cookie —
+    então o servidor também expira por inatividade (PORTAL_SESSAO_MIN)."""
+    try:
+        ts_str, sig = token.split(".", 1)
+        ts = int(ts_str)
+    except (ValueError, AttributeError):
+        return False
+    if not hmac.compare_digest(sig, _assinar(ts)):
+        return False
+    idade = int(time.time()) - ts
+    return 0 <= idade <= settings.PORTAL_SESSAO_MIN * 60
 
 
 LOGIN_HTML = """<!DOCTYPE html>
@@ -82,6 +104,13 @@ LOGIN_HTML = """<!DOCTYPE html>
 </html>"""
 
 
+def _set_auth_cookie(resp, token: str) -> None:
+    """Grava o cookie de autenticação como cookie de SESSÃO (sem max_age/expires):
+    o navegador o apaga ao fechar. O timestamp dentro do token garante a expiração
+    no servidor mesmo se o navegador restaurar a sessão."""
+    resp.set_cookie(_COOKIE, token, httponly=True, samesite="lax")
+
+
 @app.middleware("http")
 async def auth(request: Request, call_next):
     """Protege todo o portal por cookie de sessão. Se PORTAL_PASSWORD não estiver
@@ -90,10 +119,13 @@ async def auth(request: Request, call_next):
         return await call_next(request)
 
     token = request.cookies.get(_COOKIE, "")
-    if token and secrets.compare_digest(token, _expected_token()):
-        return await call_next(request)
+    if token and _token_valido(token):
+        response = await call_next(request)
+        # renova a janela de inatividade a cada requisição autenticada
+        _set_auth_cookie(response, _gerar_token())
+        return response
 
-    # Não autenticado → manda para a tela de login.
+    # Não autenticado (ou sessão expirada) → manda para a tela de login.
     return RedirectResponse(url="/login", status_code=303)
 
 
@@ -124,10 +156,7 @@ async def login_submit(request: Request):
     if not ok:
         return RedirectResponse(url="/login?erro=1", status_code=303)
     resp = RedirectResponse(url="/", status_code=303)
-    # Cookie de SESSÃO (sem max_age/expires): o navegador o apaga ao fechar,
-    # então fechar o navegador ou desligar o notebook desloga do portal.
-    resp.set_cookie(_COOKIE, _expected_token(), httponly=True,
-                    samesite="lax")
+    _set_auth_cookie(resp, _gerar_token())
     return resp
 
 
