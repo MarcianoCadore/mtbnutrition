@@ -587,7 +587,8 @@ async def verificar_submit(request: Request):
 
         user_id = str(u["_id"]) if u else ""
         token = _gerar_token(user_id)
-        resp = RedirectResponse(url="/", status_code=303)
+        # Após confirmar o cadastro, leva direto à tela de conectar a conta.
+        resp = RedirectResponse(url="/workout/integracao", status_code=303)
         _set_auth_cookie(resp, token)
         return resp
 

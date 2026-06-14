@@ -205,6 +205,7 @@ HTML = """<!DOCTYPE html>
   <div class="nav-links">
     {{NAV_NUTRI}}
     <a href="/workout/zonas">❤️ Zonas FC</a>
+    <a href="/workout/integracao">⌚ Conectar dispositivo</a>
     {{NAV_USER}}
     <a href="/logout">🚪 Sair</a>
   </div>

@@ -429,27 +429,39 @@ async def strava_conectar(request: Request):
 @router.get("/strava/callback")
 async def strava_callback(code: str = "", state: str = "", error: str = ""):
     """Callback do OAuth2 do Strava. Não exige cookie de sessão — o state carrega
-    o user_id. Troca o code por tokens e redireciona para o portal."""
+    o user_id. Troca o code por tokens, dispara uma sync inicial e redireciona
+    para a tela de integração."""
     from fastapi.responses import RedirectResponse as _RR
     from app.services.strava_service import trocar_codigo
 
     # O Strava pode chamar com error=access_denied se o usuário recusou
     if error:
         logger.warning("strava_callback: usuário recusou autorização (state=%s, error=%s)", state, error)
-        return _RR(url="/portal/?strava=erro")
+        return _RR(url="/workout/integracao?strava=erro")
 
     if not code or not state:
-        return _RR(url="/portal/?strava=erro")
+        return _RR(url="/workout/integracao?strava=erro")
 
     # state contém o user_id — valida formato mínimo (string não-vazia)
     user_id = state.strip()
     if not user_id:
-        return _RR(url="/portal/?strava=erro")
+        return _RR(url="/workout/integracao?strava=erro")
 
     ok = await trocar_codigo(user_id, code)
-    if ok:
-        return _RR(url="/portal/?strava=ok")
-    return _RR(url="/portal/?strava=erro")
+    if not ok:
+        return _RR(url="/workout/integracao?strava=erro")
+
+    # Sync inicial best-effort — não quebra o redirect se falhar
+    try:
+        from datetime import date, timedelta
+        from app.services.strava_service import sync_atividades_strava
+        hoje = date.today()
+        segunda = hoje - timedelta(days=hoje.weekday())
+        await sync_atividades_strava(user_id, segunda.isoformat())
+    except Exception as e:
+        logger.warning("strava_callback: sync inicial falhou para user_id=%s — %s", user_id, e)
+
+    return _RR(url="/workout/integracao?strava=ok")
 
 
 @router.post("/strava/desconectar")
@@ -498,6 +510,66 @@ async def garmin_desconectar(request: Request):
 @router.get("/zonas", response_class=HTMLResponse)
 async def pagina_zonas():
     return _PAGINA_ZONAS
+
+
+@router.get("/integracao", response_class=HTMLResponse)
+async def pagina_integracao(request: Request):
+    """Tela self-service para conectar Garmin (login/senha) ou Strava (1 clique).
+    Mostra o estado atual da integração e permite conectar/desconectar."""
+    from app.services.user_service import get_por_id
+
+    try:
+        u = await get_por_id(request.state.user_id)
+    except Exception:
+        u = None
+    if u is None:
+        u = {}
+
+    integ = u.get("integracao") or {}
+    garmin = integ.get("garmin") or {}
+    strava = integ.get("strava") or {}
+
+    garmin_email = garmin.get("email")
+    garmin_conectado = bool(garmin_email)
+    strava_conectado = bool(strava.get("athlete_id"))
+
+    # Bloco Garmin
+    if garmin_conectado:
+        email_safe = (str(garmin_email)
+                      .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+        garmin_html = f"""
+      <div class="status ok" style="display:block">✅ Garmin conectado <b>({email_safe})</b></div>
+      <p class="hint">Importa seus treinos planejados e as atividades realizadas.</p>
+      <button class="sec" onclick="desconectarGarmin()" id="btnGarminDesc">Desconectar Garmin</button>
+      <div id="stGarmin" class="status"></div>"""
+    else:
+        garmin_html = """
+      <p class="hint">Importa seus <b>treinos planejados</b> e as <b>atividades realizadas</b>. Informe o e-mail e a senha da sua conta Garmin Connect.</p>
+      <form id="formGarmin" onsubmit="conectarGarmin(event)">
+        <label class="fld">E-mail Garmin</label>
+        <input type="email" id="g_email" name="email" autocomplete="username" required>
+        <label class="fld" style="margin-top:10px">Senha Garmin</label>
+        <input type="password" id="g_senha" name="senha" autocomplete="current-password" required>
+        <button type="submit" id="btnGarminConn" style="margin-top:14px">Conectar Garmin</button>
+      </form>
+      <div id="stGarmin" class="status"></div>"""
+
+    # Bloco Strava
+    if strava_conectado:
+        strava_html = """
+      <div class="status ok" style="display:block">✅ Strava conectado</div>
+      <p class="hint">Importa apenas suas <b>atividades</b> (somente leitura).</p>
+      <button class="sec" onclick="desconectarStrava()" id="btnStravaDesc">Desconectar Strava</button>
+      <div id="stStrava" class="status"></div>"""
+    else:
+        strava_html = """
+      <p class="hint">Conexão em 1 clique. O Strava importa apenas suas <b>atividades</b> (somente leitura, não envia treinos planejados).</p>
+      <button onclick="location.href='/workout/strava/conectar'">🔗 Conectar com Strava</button>
+      <div id="stStrava" class="status"></div>"""
+
+    return (_PAGINA_INTEGRACAO
+            .replace("{{GARMIN_BLOCO}}", garmin_html)
+            .replace("{{STRAVA_BLOCO}}", strava_html))
 
 
 @router.post("/fit/{semana_inicio}/{data}")
@@ -774,6 +846,142 @@ _PAGINA_ZONAS = """<!DOCTYPE html>
     finally { btn.disabled=false; btn.textContent='💾 Salvar zonas'; }
   }
   carregar();
+</script>
+</body>
+</html>"""
+
+
+_PAGINA_INTEGRACAO = """<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MTB Nutrition — Conectar dispositivo</title>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  :root { --green:#0e8a7d; --text:#1f2937; --muted:#6b7280; --border:#e5e7eb; --bg:#f0f2f5; }
+  body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; background:var(--bg); color:var(--text); }
+  nav { background:#fff; border-bottom:1px solid var(--border); padding:14px 20px; display:flex; align-items:center; gap:10px; }
+  nav .logo { font-weight:800; color:var(--green); }
+  nav a { margin-left:auto; color:var(--muted); text-decoration:none; font-size:.9rem; font-weight:600; }
+  main { max-width:560px; margin:0 auto; padding:24px 16px 60px; }
+  h1 { font-size:1.4rem; margin-bottom:6px; }
+  .sub { color:var(--muted); margin-bottom:22px; font-size:.92rem; line-height:1.5; }
+  .card { background:#fff; border-radius:14px; padding:22px; box-shadow:0 1px 4px rgba(0,0,0,.06); margin-bottom:18px; }
+  .card h2 { font-size:1.05rem; color:var(--green); margin-bottom:6px; }
+  p.hint { font-size:.85rem; color:var(--muted); margin:6px 0 14px; line-height:1.45; }
+  label.fld { display:block; font-size:.72rem; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; margin-bottom:4px; }
+  input[type=email], input[type=password] { width:100%; border:1.5px solid var(--border); border-radius:9px; padding:11px; font-size:1rem; outline:none; font-family:inherit; }
+  input:focus { border-color:var(--green); }
+  button { width:100%; padding:14px; background:var(--green); color:#fff; border:none; border-radius:10px; font-size:1rem; font-weight:700; cursor:pointer; }
+  button:hover:not(:disabled) { background:#0c7669; }
+  button:disabled { opacity:.6; cursor:not-allowed; }
+  button.sec { background:#374151; }
+  button.sec:hover:not(:disabled) { background:#1f2937; }
+  .status { margin-top:14px; padding:12px; border-radius:10px; font-size:.9rem; display:none; }
+  .ok { background:#e8f5e9; color:#2e7d32; display:block; }
+  .err { background:#fdecea; color:#c62828; display:block; }
+  .info { background:#eef6ff; color:#1d4ed8; display:block; }
+  .banner { padding:12px 14px; border-radius:10px; font-size:.9rem; font-weight:600; margin-bottom:18px; }
+  .banner.ok { background:#e8f5e9; color:#2e7d32; }
+  .banner.err { background:#fdecea; color:#c62828; }
+</style>
+</head>
+<body>
+<nav>
+  <span style="font-size:1.4rem">⌚</span>
+  <span class="logo">MTB Nutrition</span>
+  <a href="/portal/">← Voltar ao portal</a>
+</nav>
+<main>
+  <h1>Conectar dispositivo</h1>
+  <p class="sub">Conecte seu Garmin ou Strava para importar treinos e atividades automaticamente. Você só precisa fazer isso uma vez.</p>
+
+  <div id="bannerBox"></div>
+
+  <div class="card">
+    <h2>⌚ Garmin Connect</h2>
+    {{GARMIN_BLOCO}}
+  </div>
+
+  <div class="card">
+    <h2>🟧 Strava</h2>
+    {{STRAVA_BLOCO}}
+  </div>
+</main>
+<script>
+  // Segunda-feira ISO da semana atual (igual ao portal)
+  function getMonday(d) {
+    const day = d.getDay();
+    const diff = day === 0 ? -6 : 1 - day;
+    const m = new Date(d);
+    m.setDate(d.getDate() + diff);
+    m.setHours(0,0,0,0);
+    return m;
+  }
+  function iso(d) { return d.toISOString().split('T')[0]; }
+  function segundaAtualISO() { return iso(getMonday(new Date())); }
+
+  // Banner ao voltar do OAuth do Strava
+  (function() {
+    const p = new URLSearchParams(location.search).get('strava');
+    if (!p) return;
+    const box = document.getElementById('bannerBox');
+    if (p === 'ok') box.innerHTML = '<div class="banner ok">✅ Strava conectado! Suas atividades estão sendo importadas.</div>';
+    else if (p === 'erro') box.innerHTML = '<div class="banner err">❌ Não foi possível conectar ao Strava. Tente novamente.</div>';
+  })();
+
+  async function conectarGarmin(ev) {
+    ev.preventDefault();
+    const btn = document.getElementById('btnGarminConn');
+    const st = document.getElementById('stGarmin');
+    btn.disabled = true; btn.textContent = 'Conectando...';
+    st.className = 'status info'; st.textContent = '🔐 Verificando credenciais...';
+    try {
+      const fd = new FormData();
+      fd.append('email', document.getElementById('g_email').value);
+      fd.append('senha', document.getElementById('g_senha').value);
+      const r = await fetch('/workout/garmin/conectar', { method:'POST', body: fd });
+      if (r.status === 400) { st.className='status err'; st.textContent='❌ Credenciais inválidas. Verifique e-mail e senha.'; return; }
+      if (!r.ok) throw new Error('Erro ao conectar');
+      st.className='status ok'; st.textContent='✅ Conectado! Sincronizando seus treinos…';
+      // Sync inicial best-effort
+      try { await fetch('/workout/garmin/sync/' + segundaAtualISO(), { method:'POST' }); } catch(e) {}
+      setTimeout(() => location.reload(), 1200);
+    } catch(e) {
+      st.className='status err'; st.textContent='❌ ' + e.message;
+    } finally {
+      btn.disabled = false; btn.textContent = 'Conectar Garmin';
+    }
+  }
+
+  async function desconectarGarmin() {
+    const btn = document.getElementById('btnGarminDesc');
+    const st = document.getElementById('stGarmin');
+    if (btn) { btn.disabled = true; btn.textContent = 'Desconectando...'; }
+    try {
+      const r = await fetch('/workout/garmin/desconectar', { method:'POST' });
+      if (!r.ok) throw new Error('Erro');
+      location.reload();
+    } catch(e) {
+      st.className='status err'; st.textContent='❌ ' + e.message;
+      if (btn) { btn.disabled = false; btn.textContent = 'Desconectar Garmin'; }
+    }
+  }
+
+  async function desconectarStrava() {
+    const btn = document.getElementById('btnStravaDesc');
+    const st = document.getElementById('stStrava');
+    if (btn) { btn.disabled = true; btn.textContent = 'Desconectando...'; }
+    try {
+      const r = await fetch('/workout/strava/desconectar', { method:'POST' });
+      if (!r.ok) throw new Error('Erro');
+      location.href = '/workout/integracao';
+    } catch(e) {
+      st.className='status err'; st.textContent='❌ ' + e.message;
+      if (btn) { btn.disabled = false; btn.textContent = 'Desconectar Strava'; }
+    }
+  }
 </script>
 </body>
 </html>"""
