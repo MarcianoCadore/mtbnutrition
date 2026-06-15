@@ -525,6 +525,13 @@ async def signup_submit(request: Request):
     except ValueError as exc:
         return _erro_signup(str(exc))
     except Exception as exc:
+        err_str = str(exc)
+        if "11000" in err_str or "duplicate key" in err_str:
+            if "telefone" in err_str:
+                return _erro_signup("Este número de WhatsApp já está cadastrado. Use outro número ou faça login.")
+            if "login" in err_str:
+                return _erro_signup("Este usuário já está cadastrado. Escolha outro nome de usuário ou faça login.")
+            return _erro_signup("Já existe uma conta com esses dados. Verifique e tente novamente.")
         logger.error("Erro ao criar usuário: %s", exc)
         return _erro_signup("Erro interno ao criar conta. Tente novamente.")
 

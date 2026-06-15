@@ -231,8 +231,6 @@ HTML = """<!DOCTYPE html>
     <button class="btn btn-save" id="btnSave" onclick="salvar()">💾 Salvar Semana</button>
     <button class="btn btn-sec"  id="btnGarmin" onclick="sincronizarGarmin()">🔄 Sincronizar Garmin</button>
     <button class="btn btn-test" id="btnGenSemana" onclick="gerarProximaSemana()">🤖 Gerar próxima semana</button>
-    <button class="btn btn-test" id="btnTest" onclick="testar()">📲 Testar WhatsApp</button>
-    <button class="btn btn-sec"  onclick="location.href='/whatsapp/'">✏️ Mensagem Manual</button>
   </div>
 </main>
 
@@ -651,9 +649,24 @@ async function load() {
     const d = await r.json();
     document.getElementById('objetivo').value = d.objetivo || '';
     buildCards(d.treinos || []);
+    _atualizarBotaoProximaSemana(d.treinos || []);
   } catch {
     buildCards([]);
+    _atualizarBotaoProximaSemana([]);
   }
+}
+
+function _atualizarBotaoProximaSemana(treinos) {
+  const btn = document.getElementById('btnGenSemana');
+  if (!btn) return;
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  const ehDomingo = hoje.getDay() === 0;
+  const semanaAtual = iso(getMonday(new Date())) === iso(monday);
+  const todosConcluidos = treinos
+    .filter(t => t.tipo !== 'DESCANSO')
+    .every(t => new Date(t.data + 'T12:00:00') < hoje);
+  btn.style.display = (semanaAtual && (ehDomingo || todosConcluidos)) ? '' : 'none';
 }
 
 async function salvar() {
