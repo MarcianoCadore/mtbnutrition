@@ -339,25 +339,16 @@ VERIFICAR_HTML = """<!DOCTYPE html>
 <body>
 <div class="card">
   <div class="card-head">
-    <div class="logo">📱 Verificação</div>
-    <div class="sub">{{TELEFONE_DISPLAY}}</div>
+    <div class="logo">✅ Cadastro Realizado</div>
+    <div class="sub">Aguardando liberação</div>
   </div>
   <div class="card-body">
-    {{ERRO}}
-    <p class="info">Enviamos um código de 6 dígitos para seu WhatsApp. Digite-o abaixo:</p>
-    <form method="post" action="/verificar">
-      <input type="hidden" name="tel" value="{{TEL}}">
-      <label for="codigo">Código de verificação</label>
-      <input id="codigo" name="codigo" type="text" maxlength="6" pattern="[0-9]{6}" placeholder="000000" autofocus required>
-      <button class="btn" type="submit">Verificar</button>
-    </form>
-    <div class="reenviar">
-      Não recebeu?
-      <form method="post" action="/reenviar-codigo">
-        <input type="hidden" name="tel" value="{{TEL}}">
-        <button type="submit">Reenviar código</button>
-      </form>
-    </div>
+    <p class="info" style="text-align:center; font-size:1rem; color:#333; line-height:1.6;">
+      Cadastro realizado com sucesso!
+    </p>
+    <p class="info" style="text-align:center; font-size:.95rem; color:#555; line-height:1.6;">
+      Favor entrar em contato com o administrador da plataforma informando que já realizou o cadastro para que seu acesso seja liberado.
+    </p>
   </div>
 </div>
 </body>
