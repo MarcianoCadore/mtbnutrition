@@ -250,7 +250,7 @@ SIGNUP_HTML = """<!DOCTYPE html>
       <input id="senha" name="senha" type="password" autocomplete="new-password" required>
       <label for="nome">Nome completo</label>
       <input id="nome" name="nome" type="text" required>
-      <label for="telefone">Telefone WhatsApp (E.164)</label>
+      <label for="telefone">Telefone WhatsApp</label>
       <input id="telefone" name="telefone" type="tel" placeholder="+5551999999999" required>
     </fieldset>
 
@@ -264,6 +264,7 @@ SIGNUP_HTML = """<!DOCTYPE html>
       <input id="altura_cm" name="altura_cm" type="number" min="100" max="250">
       <label for="fc_max">FC máxima (bpm)</label>
       <input id="fc_max" name="fc_max" type="number" min="100" max="230">
+      <small style="color:#888;">Frequência Cardíaca Máxima — maior número de batimentos por minuto que seu coração pode atingir. Se não souber, deixe em branco (estimaremos pelo cálculo 220 − sua idade).</small>
     </fieldset>
 
     <fieldset>
