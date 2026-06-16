@@ -51,11 +51,12 @@ async def _enviar_plano_diario_usuario(u: dict) -> None:
                 periodo = t.get("periodo")
                 break
 
-    from app.services.config_service import get_horarios, ajuste_do_dia
+    from app.services.config_service import get_horarios, ajuste_do_dia, overrides_cardapio
     cfg = await get_horarios(user_id)
     ajuste = await ajuste_do_dia(user_id, hoje_iso)
+    overrides = await overrides_cardapio(user_id)
     plano = plano_para_tipo(tipo, hoje_iso, cfg, periodo=periodo,
-                            extras=ajuste["extras"], corte_kcal=ajuste["corte_kcal"])
+                            extras=ajuste["extras"], corte_kcal=ajuste["corte_kcal"], overrides=overrides)
 
     # Salva versão compatível com os lembretes de refeição (PlanoAlimentar)
     await db.planos.insert_one({
@@ -131,7 +132,9 @@ async def enviar_lembrete_refeicao_pre(user_id: str, meal_nome: str):
         hoje_iso = datetime.now(TZ).date().isoformat()
         tipo, periodo = await _treino_hoje(user_id)
         cfg = await get_horarios(user_id)
-        plano = plano_para_tipo(tipo, hoje_iso, cfg, periodo=periodo)
+        from app.services.config_service import overrides_cardapio
+        overrides = await overrides_cardapio(user_id)
+        plano = plano_para_tipo(tipo, hoje_iso, cfg, periodo=periodo, overrides=overrides)
         ref = next((r for r in plano["refeicoes"] if r["nome"] == meal_nome), None)
         if ref:
             await send_message(telefone, formatar_lembrete_refeicao(ref))

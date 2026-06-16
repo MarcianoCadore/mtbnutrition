@@ -212,3 +212,88 @@ async def ajuste_do_dia(user_id: str, data: str) -> dict:
         # None = sem corte explícito (doc legado ou inexistente) → usar fallback
         "corte_kcal": int(corte) if corte is not None else None,
     }
+
+
+# ── Overrides pessoais do cardápio (ajuste permanente via chat) ──────────────
+# Coleção db.overrides_cardapio, escopada por user_id. Cada doc fixa a
+# quantidade (em porções) de um alimento ou categoria, opcionalmente só numa
+# refeição específica — substitui a quantidade que o cardápio fixo escolheria.
+
+async def overrides_cardapio(user_id: str) -> list:
+    """Lista os overrides de cardápio ativos do usuário."""
+    db = get_db()
+    cursor = db.overrides_cardapio.find({"user_id": user_id}, {"_id": 0})
+    return [doc async for doc in cursor]
+
+
+async def definir_override_cardapio(
+    user_id: str, escopo: str, chave: str, porcoes: float, refeicao: str | None = None
+) -> dict:
+    """Cria ou atualiza (upsert) o override de quantidade de um alimento/categoria
+    para o usuário. Retorna o doc salvo."""
+    from datetime import datetime, timezone
+
+    agora = datetime.now(timezone.utc)
+    filtro = {"user_id": user_id, "escopo": escopo, "chave": chave, "refeicao": refeicao}
+    db = get_db()
+    await db.overrides_cardapio.update_one(
+        filtro,
+        {
+            "$set": {**filtro, "porcoes": float(porcoes), "origem": "chat", "atualizado_em": agora},
+            "$setOnInsert": {"criado_em": agora},
+        },
+        upsert=True,
+    )
+    return await db.overrides_cardapio.find_one(filtro, {"_id": 0})
+
+
+async def remover_override_cardapio(
+    user_id: str, escopo: str, chave: str, refeicao: str | None = None
+) -> None:
+    """Remove um override de cardápio do usuário — volta ao valor padrão do menu fixo."""
+    db = get_db()
+    await db.overrides_cardapio.delete_one(
+        {"user_id": user_id, "escopo": escopo, "chave": chave, "refeicao": refeicao}
+    )
+
+
+# ── Histórico do chat de ajuste do cardápio ──────────────────────────────────
+# Um doc por usuário em db.chat_nutricao, com a lista de mensagens (mantém só
+# as últimas _MAX_MENSAGENS_CHAT pra não crescer sem limite nem inflar o
+# prompt da IA).
+
+_MAX_MENSAGENS_CHAT = 30
+
+
+async def historico_chat_nutricao(user_id: str) -> list:
+    """Mensagens da conversa de ajuste do cardápio do usuário (mais antiga primeiro)."""
+    db = get_db()
+    doc = await db.chat_nutricao.find_one({"user_id": user_id})
+    return (doc or {}).get("mensagens", [])
+
+
+async def adicionar_mensagem_chat(user_id: str, role: str, texto: str) -> list:
+    """Acrescenta uma mensagem ao histórico (role: 'user' ou 'assistente') e
+    devolve o histórico atualizado, já truncado nas últimas _MAX_MENSAGENS_CHAT."""
+    from datetime import datetime, timezone
+
+    msg = {"role": role, "texto": texto, "criado_em": datetime.now(timezone.utc)}
+    db = get_db()
+    await db.chat_nutricao.update_one(
+        {"user_id": user_id},
+        {"$push": {"mensagens": msg}, "$set": {"user_id": user_id}},
+        upsert=True,
+    )
+    historico = await historico_chat_nutricao(user_id)
+    if len(historico) > _MAX_MENSAGENS_CHAT:
+        historico = historico[-_MAX_MENSAGENS_CHAT:]
+        await db.chat_nutricao.update_one(
+            {"user_id": user_id}, {"$set": {"mensagens": historico}}
+        )
+    return historico
+
+
+async def limpar_chat_nutricao(user_id: str) -> None:
+    """Apaga o histórico da conversa de ajuste do cardápio do usuário."""
+    db = get_db()
+    await db.chat_nutricao.delete_one({"user_id": user_id})

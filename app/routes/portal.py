@@ -988,7 +988,8 @@ async def portal(request: Request):
         '<a href="/nutrition/config">⏰ Horários</a>\n'
         '    <a href="/nutrition/alimentos">🍽️ Alimentos</a>\n'
         '    <a href="/nutrition/guia">🥗 Nutrição</a>\n'
-        '    <a href="/nutrition/ajuste">🍔 Fuga do plano</a>'
+        '    <a href="/nutrition/ajuste">🍔 Fuga do plano</a>\n'
+        '    <a href="/nutrition/chat">💬 Ajustar cardápio</a>'
     ) if perder_peso else ""
 
     nav_user = f'<span class="nav-user">👤 {nome}</span>' if nome else ""

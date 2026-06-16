@@ -136,7 +136,7 @@ def _refeicao_pedida(texto: str) -> str | None:
 
 
 async def _plano_do_dia_msg(user_id: str, data: str, refeicao: str | None = None) -> str:
-    from app.services.config_service import get_horarios, ajuste_do_dia
+    from app.services.config_service import get_horarios, ajuste_do_dia, overrides_cardapio
     from app.services.nutricao_service import (
         plano_para_tipo, formatar_plano_whatsapp, formatar_refeicao_whatsapp)
     from app.routes.nutrition import _tipo_periodo_do_dia
@@ -145,7 +145,8 @@ async def _plano_do_dia_msg(user_id: str, data: str, refeicao: str | None = None
     ajuste = await ajuste_do_dia(user_id, data)
     extras = ajuste["extras"]
     corte = ajuste["corte_kcal"]   # None = doc legado → usa fallback de extras
-    plano = plano_para_tipo(tipo, data, cfg, periodo=periodo, extras=extras, corte_kcal=corte)
+    overrides = await overrides_cardapio(user_id)
+    plano = plano_para_tipo(tipo, data, cfg, periodo=periodo, extras=extras, corte_kcal=corte, overrides=overrides)
     if refeicao:
         msg = formatar_refeicao_whatsapp(data, plano, refeicao)
         if msg:

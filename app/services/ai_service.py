@@ -614,6 +614,82 @@ Mensagem do usuário: "{texto}"
     return await asyncio.to_thread(_call)
 
 
+async def interpretar_ajuste_cardapio(historico: list[dict], mensagem: str) -> dict:
+    """Interpreta uma mensagem do chat de ajuste do cardápio (tela /nutrition/chat),
+    dado o histórico recente da conversa. O usuário quer mudar a quantidade de um
+    alimento (ou categoria, ex. "arroz") no cardápio fixo dele — de forma
+    permanente, não só pro dia de hoje.
+
+    Retorna {"resposta": str, "acao": dict | None}.
+    "acao", quando preenchida, é um dos formatos:
+      {"tipo": "definir_porcoes", "escopo": "alimento"|"categoria", "chave": str,
+       "porcoes": number, "refeicao": str | None}
+      {"tipo": "remover_ajuste", "escopo": "alimento"|"categoria", "chave": str,
+       "refeicao": str | None}
+    "acao" só vem preenchida quando o pedido já está claro (alimento/categoria e
+    quantidade definidos) — senão vem None e "resposta" pergunta o que falta.
+
+    Levanta QuotaExcedida se a cota gratuita acabar em todos os modelos.
+    """
+    import asyncio
+    from app.services.nutricao_service import ALIMENTOS, categorias_alimentos, nomes_refeicoes
+
+    alimentos_lista = "\n".join(f"- {chave}: {info['nome']}" for chave, info in ALIMENTOS.items())
+    categorias_lista = ", ".join(sorted(set(categorias_alimentos().values())))
+    refeicoes_lista = ", ".join(nomes_refeicoes())
+    historico_txt = "\n".join(
+        f"{'Usuário' if m['role'] == 'user' else 'Assistente'}: {m['texto']}" for m in historico[-10:]
+    ) or "(sem mensagens anteriores)"
+
+    prompt = f"""Você é o assistente de nutrição de um app de treino MTB, conversando com o usuário numa tela de chat dedicada a ajustar o cardápio fixo dele (responda sempre em português do Brasil, tom amigável e direto).
+
+O cardápio é montado por um motor fixo a partir de uma tabela de alimentos — cada refeição escolhe alimentos em porções (ex.: 2,5 porções de arroz = 10 colheres de sopa, já que 1 porção = 100g = 4 colheres). O usuário quer DISCUTIR e AJUSTAR PERMANENTEMENTE a quantidade de um alimento ou categoria no cardápio dele (não é um ajuste só de hoje).
+
+Alimentos disponíveis (chave: nome):
+{alimentos_lista}
+
+Categorias (agrupam alimentos parecidos, ex. "arroz" agrupa arroz branco e integral): {categorias_lista}
+
+Nomes de refeição válidos: {refeicoes_lista}
+
+Histórico recente da conversa:
+{historico_txt}
+
+Nova mensagem do usuário: "{mensagem}"
+
+Decida:
+1. Se o usuário já deixou claro QUAL alimento/categoria, QUANTAS porções quer (ou que quer remover um ajuste anterior e voltar ao padrão), e opcionalmente EM QUAL refeição — preencha "acao".
+   - "porcoes" é a quantidade de porções-base (ex.: 0.5 porção de arroz = 2 colheres; 1 porção = 4 colheres). Se o usuário falar em colheres, converta (1 porção de arroz/aveia = 4 colheres de sopa).
+   - Se ele não especificar a refeição, "refeicao" é null (vale em qualquer refeição que tenha esse alimento).
+   - Se ele pedir pra "voltar ao normal"/"desfazer"/"tirar esse ajuste", use "tipo":"remover_ajuste".
+2. Se faltar informação pra agir com segurança (ex.: não disse quanto quer, ou o alimento citado é ambíguo), deixe "acao" como null e pergunte o que falta em "resposta".
+3. Trocar um alimento por outro (ex. arroz por batata-doce) ou excluir um alimento da rotação NÃO é suportado aqui — se o usuário pedir isso, explique em "resposta" que esse pedido específico deve ser feito pelo assistente do WhatsApp, e deixe "acao" null.
+
+Responda APENAS em JSON válido, sem markdown:
+{{"resposta": "texto curto pra mostrar ao usuário", "acao": null ou {{"tipo": "definir_porcoes" ou "remover_ajuste", "escopo": "alimento" ou "categoria", "chave": "...", "porcoes": number (omitir se tipo=remover_ajuste), "refeicao": "..." ou null}}}}
+"""
+
+    modelos = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"]
+
+    def _call():
+        ultimo_erro = None
+        for nome in modelos:
+            try:
+                modelo = genai.GenerativeModel(nome)
+                resp = modelo.generate_content(prompt)
+                raw = resp.text.strip().replace("```json", "").replace("```", "").strip()
+                d = json.loads(raw)
+                return {"resposta": str(d.get("resposta") or ""), "acao": d.get("acao") or None}
+            except Exception as e:
+                ultimo_erro = e
+                if _e_cota(e):
+                    continue
+                raise
+        raise QuotaExcedida() from ultimo_erro
+
+    return await asyncio.to_thread(_call)
+
+
 class QuotaExcedida(Exception):
     """Cota gratuita do Gemini esgotada em todos os modelos de visão."""
 

@@ -3,14 +3,19 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import HTMLResponse
 from datetime import datetime, timedelta, date as dt_date
 from app.models.models import PlanoAlimentar, Treino
-from app.services.ai_service import gerar_plano_alimentar, estimar_alimento_extra, QuotaExcedida
+from app.services.ai_service import (
+    gerar_plano_alimentar, estimar_alimento_extra, interpretar_ajuste_cardapio, QuotaExcedida,
+)
 from pydantic import BaseModel
 from app.services.nutricao_service import (
     plano_para_tipo, tabela_alimentos, guia_refeicoes, TIPO_PARA_MENU, capacidade_carbo_dia,
+    ALIMENTOS, categorias_alimentos, nomes_refeicoes,
 )
 from app.services.config_service import (
     get_horarios, salvar_horarios, extras_do_dia, adicionar_extra_dia, remover_ajuste_dia,
     adicionar_corte_dia, corte_do_dia, ajuste_do_dia,
+    overrides_cardapio, definir_override_cardapio, remover_override_cardapio,
+    historico_chat_nutricao, adicionar_mensagem_chat,
 )
 from app.services.mongo_service import get_db
 
@@ -84,7 +89,8 @@ async def plano_por_tipo(request: Request, tipo: str, data: str | None = None, p
         corte = ajuste["corte_kcal"]   # None = doc legado, usa fallback de extras
     else:
         extras, corte = [], None
-    return plano_para_tipo(tipo, data, cfg, periodo=periodo, extras=extras, corte_kcal=corte)
+    overrides = await overrides_cardapio(user_id)
+    return plano_para_tipo(tipo, data, cfg, periodo=periodo, extras=extras, corte_kcal=corte, overrides=overrides)
 
 
 async def _tipo_periodo_do_dia(user_id: str, data_iso: str) -> tuple[str, str | None]:
@@ -107,7 +113,8 @@ async def _plano_do_dia_impl(user_id: str, data: str) -> dict:
     ajuste = await ajuste_do_dia(user_id, data)
     extras = ajuste["extras"]
     corte = ajuste["corte_kcal"]   # None = doc legado → plano_para_tipo usa fallback
-    plano = plano_para_tipo(tipo, data, cfg, periodo=periodo, extras=extras, corte_kcal=corte)
+    overrides = await overrides_cardapio(user_id)
+    plano = plano_para_tipo(tipo, data, cfg, periodo=periodo, extras=extras, corte_kcal=corte, overrides=overrides)
     return {"data": data, "tipo": tipo, "periodo": periodo, "extras": extras, "plano": plano}
 
 
@@ -704,6 +711,225 @@ async def pagina_ajuste():
 </script>
 </body>
 </html>"""
+
+
+class MensagemChat(BaseModel):
+    texto: str
+
+
+def _chaves_validas_chat() -> set:
+    return set(ALIMENTOS.keys()) | set(categorias_alimentos().values())
+
+
+async def _aplicar_acao_chat(user_id: str, acao: dict) -> dict | None:
+    """Valida a ação estruturada devolvida pela IA e aplica (ou remove) o
+    override de cardápio correspondente. Retorna None se a ação vier inválida
+    (alimento/categoria desconhecida) — a mensagem ainda é mostrada ao usuário,
+    só não altera nada."""
+    escopo = acao.get("escopo")
+    chave = acao.get("chave")
+    tipo = acao.get("tipo")
+    refeicao = acao.get("refeicao") or None
+    if escopo not in ("alimento", "categoria") or not chave or chave not in _chaves_validas_chat():
+        return None
+    if refeicao is not None and refeicao not in nomes_refeicoes():
+        refeicao = None
+
+    if tipo == "definir_porcoes":
+        try:
+            porcoes = max(0.0, min(5.0, float(acao.get("porcoes"))))
+        except (TypeError, ValueError):
+            return None
+        return await definir_override_cardapio(user_id, escopo, chave, porcoes, refeicao)
+    if tipo == "remover_ajuste":
+        await remover_override_cardapio(user_id, escopo, chave, refeicao)
+        return {"removido": True, "escopo": escopo, "chave": chave, "refeicao": refeicao}
+    return None
+
+
+@router.get("/chat", response_class=HTMLResponse)
+async def pagina_chat():
+    return """<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MTB Nutrition — Ajustar cardápio</title>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  :root { --green:#0e8a7d; --text:#1f2937; --muted:#6b7280; --border:#e5e7eb; --bg:#f0f2f5; }
+  body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; background:var(--bg); color:var(--text); }
+  nav { background:#fff; border-bottom:1px solid var(--border); padding:14px 20px; display:flex; align-items:center; gap:10px; }
+  nav .logo { font-weight:800; color:var(--green); }
+  nav a { margin-left:auto; color:var(--muted); text-decoration:none; font-size:.9rem; font-weight:600; }
+  main { max-width:560px; margin:0 auto; padding:24px 16px 60px; }
+  h1 { font-size:1.4rem; margin-bottom:6px; }
+  .sub { color:var(--muted); margin-bottom:20px; font-size:.92rem; }
+  .card { background:#fff; border-radius:14px; padding:18px; box-shadow:0 1px 4px rgba(0,0,0,.06); margin-bottom:18px; }
+  .msgs { display:flex; flex-direction:column; gap:10px; max-height:50vh; overflow-y:auto; margin-bottom:14px; }
+  .msg { padding:10px 14px; border-radius:14px; font-size:.92rem; line-height:1.4; max-width:85%; }
+  .msg.user { background:var(--green); color:#fff; align-self:flex-end; }
+  .msg.assistente { background:#f0f2f5; color:var(--text); align-self:flex-start; }
+  .row { display:flex; gap:8px; }
+  input[type=text] { flex:1; border:1.5px solid var(--border); border-radius:10px; padding:12px; font-size:1rem; outline:none; font-family:inherit; }
+  input[type=text]:focus { border-color:var(--green); }
+  button { padding:12px 18px; background:var(--green); color:#fff; border:none; border-radius:10px; font-size:1rem; font-weight:700; cursor:pointer; }
+  button:hover:not(:disabled) { background:#0c7669; }
+  button:disabled { opacity:.6; cursor:not-allowed; }
+  .status { margin-top:10px; padding:10px; border-radius:10px; font-size:.85rem; display:none; }
+  .err { background:#fdecea; color:#c62828; display:block; }
+  .ajustes h2 { font-size:1rem; margin-bottom:10px; }
+  .ajuste-item { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:8px 0; border-top:1px solid var(--border); font-size:.86rem; }
+  .ajuste-item:first-of-type { border-top:none; }
+  .ajuste-rm { background:none; border:none; color:#c62828; font-weight:700; cursor:pointer; padding:4px 8px; font-size:.8rem; }
+  .vazio { color:var(--muted); font-size:.85rem; }
+</style>
+</head>
+<body>
+<nav>
+  <span style="font-size:1.4rem">💬</span>
+  <span class="logo">MTB Nutrition</span>
+  <a href="/portal/">← Voltar ao portal</a>
+</nav>
+<main>
+  <h1>Ajustar o cardápio</h1>
+  <p class="sub">Não gostou da quantidade de algum alimento? Converse aqui — o ajuste vale pra sempre, em qualquer dia desse tipo de treino. 💬</p>
+
+  <div class="card">
+    <div class="msgs" id="msgs"></div>
+    <div class="row">
+      <input type="text" id="texto" placeholder="Ex.: o arroz do almoço tá demais, quero só 2 colheres" onkeydown="if(event.key==='Enter') enviar()">
+      <button id="btn" onclick="enviar()">Enviar</button>
+    </div>
+    <div id="st" class="status"></div>
+  </div>
+
+  <div class="card ajustes">
+    <h2>Ajustes ativos</h2>
+    <div id="listaAjustes"><span class="vazio">Nenhum ajuste ainda.</span></div>
+  </div>
+</main>
+<script>
+  const $ = id => document.getElementById(id);
+
+  function renderMsgs(historico) {
+    $('msgs').innerHTML = historico.map(m =>
+      `<div class="msg ${m.role}">${m.texto}</div>`
+    ).join('');
+    $('msgs').scrollTop = $('msgs').scrollHeight;
+  }
+
+  function renderAjustes(overrides) {
+    if (!overrides || !overrides.length) {
+      $('listaAjustes').innerHTML = '<span class="vazio">Nenhum ajuste ainda.</span>';
+      return;
+    }
+    $('listaAjustes').innerHTML = overrides.map(o => {
+      const ref = o.refeicao ? ` · ${o.refeicao}` : ' · qualquer refeição';
+      return `<div class="ajuste-item"><span>${o.chave} → ${o.porcoes} porção(ões)${ref}</span>` +
+        `<button class="ajuste-rm" onclick="removerAjuste('${o.escopo}','${o.chave}',${o.refeicao ? "'"+o.refeicao+"'" : 'null'})">remover</button></div>`;
+    }).join('');
+  }
+
+  async function carregarAjustes() {
+    const r = await fetch('/nutrition/chat/ajustes');
+    if (r.ok) renderAjustes((await r.json()).overrides);
+  }
+
+  async function carregarHistorico() {
+    const r = await fetch('/nutrition/chat/historico');
+    if (r.ok) renderMsgs((await r.json()).historico);
+  }
+
+  async function enviar() {
+    const texto = $('texto').value.trim();
+    if (!texto) return;
+    const btn = $('btn'), st = $('st');
+    btn.disabled = true; st.className = 'status';
+    try {
+      const r = await fetch('/nutrition/chat/mensagem', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({texto}),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Erro');
+      $('texto').value = '';
+      renderMsgs(d.historico);
+      renderAjustes(d.overrides);
+    } catch (e) {
+      st.className = 'status err'; st.textContent = '❌ ' + e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function removerAjuste(escopo, chave, refeicao) {
+    const params = new URLSearchParams({escopo, chave});
+    if (refeicao) params.set('refeicao', refeicao);
+    const r = await fetch('/nutrition/chat/ajuste?' + params.toString(), {method: 'DELETE'});
+    if (r.ok) renderAjustes((await r.json()).overrides);
+  }
+
+  carregarHistorico();
+  carregarAjustes();
+</script>
+</body>
+</html>"""
+
+
+@router.get("/chat/historico")
+async def chat_historico(request: Request):
+    user_id = request.state.user_id
+    if not await _nutricao_habilitada(user_id):
+        raise HTTPException(status_code=403, detail=_MSG_NUTRICAO_DESABILITADA)
+    return {"historico": await historico_chat_nutricao(user_id)}
+
+
+@router.get("/chat/ajustes")
+async def chat_ajustes(request: Request):
+    user_id = request.state.user_id
+    if not await _nutricao_habilitada(user_id):
+        raise HTTPException(status_code=403, detail=_MSG_NUTRICAO_DESABILITADA)
+    return {"overrides": await overrides_cardapio(user_id)}
+
+
+@router.post("/chat/mensagem")
+async def chat_mensagem(request: Request, body: MensagemChat):
+    user_id = request.state.user_id
+    if not await _nutricao_habilitada(user_id):
+        raise HTTPException(status_code=403, detail=_MSG_NUTRICAO_DESABILITADA)
+    texto = body.texto.strip()
+    if not texto:
+        raise HTTPException(status_code=400, detail="Escreva uma mensagem.")
+
+    historico = await historico_chat_nutricao(user_id)
+    try:
+        resultado = await interpretar_ajuste_cardapio(historico, texto)
+    except QuotaExcedida:
+        raise HTTPException(status_code=429, detail="Cota da IA esgotada hoje. Tente de novo mais tarde.")
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Não consegui interpretar a mensagem: {e}")
+
+    if resultado.get("acao"):
+        await _aplicar_acao_chat(user_id, resultado["acao"])
+
+    await adicionar_mensagem_chat(user_id, "user", texto)
+    historico = await adicionar_mensagem_chat(user_id, "assistente", resultado["resposta"] or "Ok!")
+
+    return {
+        "resposta": resultado["resposta"],
+        "historico": historico,
+        "overrides": await overrides_cardapio(user_id),
+    }
+
+
+@router.delete("/chat/ajuste")
+async def remover_ajuste_chat(request: Request, escopo: str, chave: str, refeicao: str | None = None):
+    user_id = request.state.user_id
+    if not await _nutricao_habilitada(user_id):
+        raise HTTPException(status_code=403, detail=_MSG_NUTRICAO_DESABILITADA)
+    await remover_override_cardapio(user_id, escopo, chave, refeicao)
+    return {"overrides": await overrides_cardapio(user_id)}
 
 
 @router.get("/config", response_class=HTMLResponse)

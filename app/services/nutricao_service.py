@@ -329,8 +329,42 @@ def _reduzir_carbo(refeicoes_raw: list[dict], kcal_alvo: float) -> float:
     return max(0.0, restante)
 
 
+def _aplicar_overrides_usuario(refeicoes_raw: list[dict], overrides: list[dict] | None) -> None:
+    """Substitui a quantidade de itens do cardápio pelos overrides pessoais do
+    usuário (ajustados via chat), editando refeicoes_raw in place.
+
+    Para cada item, procura o override mais específico: alimento bate antes de
+    categoria, e refeição nomeada bate antes de refeição=None (vale em qualquer
+    refeição)."""
+    if not overrides:
+        return
+    for r in refeicoes_raw:
+        novos = []
+        for chave, qtd in r["itens"]:
+            categoria = _CATEGORIA.get(chave)
+            melhor = None
+            melhor_pontos = -1
+            for ov in overrides:
+                if ov["refeicao"] not in (None, r["nome"]):
+                    continue
+                if ov["escopo"] == "alimento" and ov["chave"] == chave:
+                    pontos = 2
+                elif ov["escopo"] == "categoria" and ov["chave"] == categoria:
+                    pontos = 1
+                else:
+                    continue
+                if ov["refeicao"] == r["nome"]:
+                    pontos += 1
+                if pontos > melhor_pontos:
+                    melhor_pontos = pontos
+                    melhor = ov
+            novos.append((chave, melhor["porcoes"] if melhor else qtd))
+        r["itens"] = novos
+
+
 def _montar_refeicoes_raw(
-    tipo, data_iso: str | None, horarios_cfg: dict | None, periodo: str | None
+    tipo, data_iso: str | None, horarios_cfg: dict | None, periodo: str | None,
+    overrides: list[dict] | None = None,
 ) -> tuple[list[dict], bool, dict]:
     """Monta as refeições 'cruas' (itens como (chave, qtd)) para um dia,
     aplicando a rotação de alternativas e opcionalmente o período do treino.
@@ -395,6 +429,9 @@ def _montar_refeicoes_raw(
     if aplicar:
         _aplicar_periodo(refeicoes_raw, periodo)
 
+    # 3) overrides pessoais do usuário (ajuste de quantidade via chat)
+    _aplicar_overrides_usuario(refeicoes_raw, overrides)
+
     return refeicoes_raw, aplicar, horarios
 
 
@@ -404,6 +441,7 @@ def capacidade_carbo_dia(
     horarios_cfg: dict | None = None,
     periodo: str | None = None,
     apenas_apos=None,
+    overrides: list[dict] | None = None,
 ) -> float:
     """Calcula quantas kcal de carboidrato móvel o dia tem disponível para corte.
 
@@ -412,7 +450,7 @@ def capacidade_carbo_dia(
     a capacidade restante a partir de um horário de registro da fuga.
 
     Retorna total em kcal (float)."""
-    refeicoes_raw, _, _ = _montar_refeicoes_raw(tipo, data_iso, horarios_cfg, periodo)
+    refeicoes_raw, _, _ = _montar_refeicoes_raw(tipo, data_iso, horarios_cfg, periodo, overrides)
     total = 0.0
     for r in refeicoes_raw:
         if apenas_apos is not None:
@@ -430,7 +468,7 @@ def capacidade_carbo_dia(
 
 def plano_para_tipo(tipo, data_iso: str | None = None, horarios_cfg: dict | None = None,
                     periodo: str | None = None, extras: list | None = None,
-                    corte_kcal: float | None = None) -> dict:
+                    corte_kcal: float | None = None, overrides: list[dict] | None = None) -> dict:
     """Monta o cardápio do tipo de treino para uma data, com kcal/proteína por
     item, por refeição e total do dia.
 
@@ -453,7 +491,7 @@ def plano_para_tipo(tipo, data_iso: str | None = None, horarios_cfg: dict | None
             tipo = TipoTreino.DESCANSO
 
     # monta refeições cruas via helper reutilizável
-    refeicoes_raw, aplicar, horarios = _montar_refeicoes_raw(tipo, data_iso, horarios_cfg, periodo)
+    refeicoes_raw, aplicar, horarios = _montar_refeicoes_raw(tipo, data_iso, horarios_cfg, periodo, overrides)
 
     # 2b) corte de carbo: usa corte_kcal fixado (novo fluxo) ou soma extras (legado)
     # corte_kcal=None com extras = doc legado → fallback para somar kcal dos extras
@@ -544,6 +582,24 @@ def tabela_alimentos() -> list[dict]:
         {"nome": a["nome"], "base": a["base"], "kcal": a["kcal"], "prot": a["prot"]}
         for a in ALIMENTOS.values()
     ]
+
+
+def categorias_alimentos() -> dict:
+    """Mapa alimento -> categoria (ex.: 'arroz_branco' -> 'arroz'), usado pelo
+    chat de ajuste do cardápio para aceitar pedidos genéricos ('menos arroz')
+    sem precisar especificar branco ou integral."""
+    return dict(_CATEGORIA)
+
+
+def nomes_refeicoes() -> list[str]:
+    """Nomes de refeição válidos (ordem de primeira aparição nos menus fixos),
+    usados pra validar a refeição que o chat de ajuste do cardápio recebeu da IA."""
+    vistos: list[str] = []
+    for menu in MENUS.values():
+        for nome, _, _ in menu:
+            if nome not in vistos:
+                vistos.append(nome)
+    return vistos
 
 
 # ─────────────────────────────────────────────────────────────────────────────
