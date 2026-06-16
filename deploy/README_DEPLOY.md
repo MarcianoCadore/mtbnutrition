@@ -57,10 +57,10 @@ PEM=~/Downloads/mtb-key.pem
 # 1) cria a pasta no servidor
 ssh -i $PEM $EC2 "sudo mkdir -p /opt/mtbnutrition && sudo chown ubuntu:ubuntu /opt/mtbnutrition"
 
-# 2) copia o código (sem venv, .git, uploads, .env)
+# 2) copia o código (sem venv, .git, uploads, .env, .claude)
 rsync -avz -e "ssh -i $PEM" \
   --exclude venv --exclude .git --exclude '__pycache__' \
-  --exclude uploads --exclude .env \
+  --exclude uploads --exclude .env --exclude .claude \
   ./ $EC2:/opt/mtbnutrition/
 ```
 
@@ -92,7 +92,7 @@ sudo systemctl restart mtbnutrition     # reiniciar
 Para **atualizar** depois de mudar código (na sua máquina):
 ```bash
 rsync -avz -e "ssh -i $PEM" --exclude venv --exclude .git --exclude '__pycache__' \
-  --exclude uploads --exclude .env ./ $EC2:/opt/mtbnutrition/
+  --exclude uploads --exclude .env --exclude .claude ./ $EC2:/opt/mtbnutrition/
 ssh -i $PEM $EC2 "cd /opt/mtbnutrition && ./venv/bin/pip install -r requirements.txt && sudo systemctl restart mtbnutrition"
 ```
 
