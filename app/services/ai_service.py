@@ -1,12 +1,14 @@
-import google.generativeai as genai
+import anthropic
+import base64
 import json
 import re
 from config.settings import settings
 from app.models.models import Treino, TipoTreino, PlanoAlimentar
 from datetime import datetime
 
-genai.configure(api_key=settings.GEMINI_API_KEY)
-client = genai.GenerativeModel("gemini-2.5-flash-lite")
+_client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+_MODEL = "claude-sonnet-4-6"
+_MODEL_ANALISE = "claude-opus-4-8"  # análise pós-treino: mais rico, ~20x/mês
 
 KCAL_POR_TIPO = {
     TipoTreino.Z2_LONGO:    2500,
@@ -19,9 +21,6 @@ KCAL_POR_TIPO = {
 }
 
 def build_prompt(treino: Treino | None) -> str:
-    # TODO Fase 2: parametrizar perfil (nome, idade, peso, objetivo, zonas)
-    # a partir do user_id. Hoje não recebe user_id — alterar assinatura quando
-    # gerar_plano_alimentar também for parametrizada.
     tipo = treino.tipo if treino else TipoTreino.DESCANSO
     kcal = KCAL_POR_TIPO[tipo]
 
@@ -79,7 +78,7 @@ Responda APENAS em JSON válido, sem markdown, sem texto extra:
 _TIPOS_VALIDOS = {"Z2_LONGO", "TIROS", "VO2MAX", "TEMPO", "FORCA", "RECUPERACAO", "DESCANSO"}
 
 # Palavras-chave por tipo de treino (regex, case-insensitive).
-# Classificador determinístico — não depende da quota do Gemini.
+# Classificador determinístico — não depende da API de IA.
 _PADROES_TIPO = {
     "VO2MAX": [
         r"vo\s*[2₂]\s*max", r"\bvo\s*[2₂]\b", r"\bv0?2\s*max\b",
@@ -180,7 +179,7 @@ async def classificar_tipo_treino(analise: dict) -> str:
     Ordem de confiança:
       1. Palavras-chave no nome/notas/descrição (determinístico, confiável)
       2. Classificação por FC/potência do .fit (já feita em fit_service)
-      3. Gemini (último recurso — sujeito a quota)
+      3. Claude (último recurso)
     """
     # 1) Palavras-chave — título tem prioridade
     tipo_kw = classificar_por_texto(
@@ -217,9 +216,7 @@ async def classificar_tipo_treino(analise: dict) -> str:
     if not linhas:
         return analise.get("tipo", "Z2_LONGO")
 
-    # 3) Gemini — último recurso
-    # TODO Fase 2: parametrizar perfil do atleta (nome, FC máx, zonas) a partir
-    # de user_id quando classificar_tipo_treino receber esse parâmetro.
+    # 3) Claude — último recurso
     prompt = f"""Você é um especialista em treinamento de ciclismo MTB.
 
 Atleta: Marciano, FC máxima 192 bpm
@@ -238,8 +235,12 @@ RECUPERACAO - sessão leve, Z1, recuperação ativa
 DESCANSO - sem treino efetivo"""
 
     try:
-        response = client.generate_content(prompt)
-        tipo = response.text.strip().upper().split()[0]
+        resp = await _client.messages.create(
+            model=_MODEL,
+            max_tokens=20,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        tipo = resp.content[0].text.strip().upper().split()[0]
         return tipo if tipo in _TIPOS_VALIDOS else analise.get("tipo", "Z2_LONGO")
     except Exception:
         return analise.get("tipo", "Z2_LONGO")
@@ -385,34 +386,21 @@ Responda APENAS em JSON válido, sem markdown, sem texto extra:
   "pontos_fracos": ["até 3 pontos a melhorar, 1 frase cada"]
 }}"""
 
-    modelos = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"]
-
-    def _call():
-        ultimo_erro = None
-        for nome in modelos:
-            try:
-                modelo = genai.GenerativeModel(nome)
-                resp = modelo.generate_content(prompt)
-                raw = resp.text.strip().replace("```json", "").replace("```", "").strip()
-                data = json.loads(raw)
-                return {
-                    "nota": _nota_valida(data.get("nota")),
-                    "resumo": data.get("resumo", ""),
-                    "pontos_fortes": data.get("pontos_fortes", []),
-                    "pontos_fracos": data.get("pontos_fracos", []),
-                }
-            except Exception as e:
-                ultimo_erro = e
-                if _e_cota(e):
-                    continue
-                raise
-        raise QuotaExcedida() from ultimo_erro
-
     try:
-        import asyncio
-        return await asyncio.to_thread(_call)
+        resp = await _client.messages.create(
+            model=_MODEL_ANALISE,
+            max_tokens=600,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = resp.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+        data = json.loads(raw)
+        return {
+            "nota": _nota_valida(data.get("nota")),
+            "resumo": data.get("resumo", ""),
+            "pontos_fortes": data.get("pontos_fortes", []),
+            "pontos_fracos": data.get("pontos_fracos", []),
+        }
     except Exception:
-        # IA indisponível (cota, parse, rede): análise determinística pelos números.
         return _fallback_pos_treino(planejado, resultado)
 
 
@@ -494,7 +482,6 @@ async def gerar_focos_prova(user_id: str, prova: dict, fase: str = "",
     """Até 3 focos de melhoria até a prova, a partir das últimas avaliações de
     treino do atleta + as exigências da prova. Fallback determinístico se a IA
     estiver indisponível ou não houver dados suficientes."""
-    import asyncio
     from app.services.mongo_service import get_db
 
     db = get_db()
@@ -555,36 +542,28 @@ caracteres, sem markdown), priorizando o que mais impacta o desempenho NESTA pro
 Responda APENAS em JSON válido, sem markdown:
 {{"focos": ["foco 1", "foco 2", "foco 3"]}}"""
 
-    modelos = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"]
-
-    def _call():
-        ultimo_erro = None
-        for nome in modelos:
-            try:
-                modelo = genai.GenerativeModel(nome)
-                resp = modelo.generate_content(prompt)
-                raw = resp.text.strip().replace("```json", "").replace("```", "").strip()
-                data = json.loads(raw)
-                focos = [str(f).strip() for f in (data.get("focos") or []) if str(f).strip()]
-                return focos[:3] or _fallback()
-            except Exception as e:
-                ultimo_erro = e
-                if _e_cota(e):
-                    continue
-                raise
-        raise QuotaExcedida() from ultimo_erro
-
     try:
-        return await asyncio.to_thread(_call)
+        resp = await _client.messages.create(
+            model=_MODEL,
+            max_tokens=250,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = resp.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+        data = json.loads(raw)
+        focos = [str(f).strip() for f in (data.get("focos") or []) if str(f).strip()]
+        return focos[:3] or _fallback()
     except Exception:
         return _fallback()
 
 
 async def gerar_plano_alimentar(treino: Treino | None = None) -> PlanoAlimentar:
     prompt = build_prompt(treino)
-    response = client.generate_content(prompt)
-    raw = response.text.strip()
-    raw = raw.replace("```json", "").replace("```", "").strip()
+    resp = await _client.messages.create(
+        model=_MODEL,
+        max_tokens=1500,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    raw = resp.content[0].text.strip().replace("```json", "").replace("```", "").strip()
     data = json.loads(raw)
     return PlanoAlimentar(
         data=datetime.now(),
@@ -600,10 +579,8 @@ async def extrair_zonas_de_imagem(image_bytes: bytes, mime_type: str) -> dict:
     """Lê uma captura de tela das zonas de FC do Garmin e extrai as faixas.
 
     Retorna {"fc_max", "limiar", "zonas": [{"zona","min","max"}, ...]}.
-    Usa o Gemini em modo visão. Levanta exceção se não conseguir interpretar.
+    Levanta exceção se não conseguir interpretar.
     """
-    import asyncio
-
     prompt = """Analise esta captura de tela das ZONAS DE FREQUÊNCIA CARDÍACA de um relógio ou app Garmin.
 
 Extraia, em batimentos por minuto (bpm):
@@ -619,29 +596,26 @@ Regras:
 Responda APENAS em JSON válido, sem markdown, sem texto extra:
 {"fc_max": number ou null, "limiar": number ou null, "zonas": [{"zona": 1, "min": number, "max": number}, {"zona": 2, ...}, {"zona": 3, ...}, {"zona": 4, ...}, {"zona": 5, ...}]}"""
 
-    imagem = {"mime_type": mime_type, "data": image_bytes}
+    image_b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
+    content = [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": mime_type,
+                "data": image_b64,
+            },
+        },
+        {"type": "text", "text": prompt},
+    ]
 
-    # Modelos de visão em ordem de preferência. Cada modelo tem cota gratuita
-    # própria, então se um estourar (429) tentamos o próximo.
-    modelos = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"]
-
-    def _call():
-        ultimo_erro = None
-        for nome in modelos:
-            try:
-                modelo = genai.GenerativeModel(nome)
-                resp = modelo.generate_content([prompt, imagem])
-                raw = resp.text.strip().replace("```json", "").replace("```", "").strip()
-                return json.loads(raw)
-            except Exception as e:
-                ultimo_erro = e
-                if _e_cota(e):
-                    continue   # cota desse modelo esgotada — tenta o próximo
-                raise          # outro erro: propaga de imediato
-        # todos os modelos sem cota
-        raise QuotaExcedida() from ultimo_erro
-
-    return await asyncio.to_thread(_call)
+    resp = await _client.messages.create(
+        model=_MODEL,
+        max_tokens=300,
+        messages=[{"role": "user", "content": content}]
+    )
+    raw = resp.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+    return json.loads(raw)
 
 
 async def estimar_alimento_extra(texto: str | None = None,
@@ -651,10 +625,8 @@ async def estimar_alimento_extra(texto: str | None = None,
     descrição em texto e/ou de uma foto do alimento.
 
     Retorna {"resumo": str, "kcal": int, "proteina_g": float}.
-    Levanta QuotaExcedida se a cota gratuita acabar em todos os modelos.
+    Levanta QuotaExcedida se a API estiver indisponível.
     """
-    import asyncio
-
     prompt = (
         "Você é um nutricionista. Estime o TOTAL de calorias (kcal) e de proteína "
         "(g) do que a pessoa comeu/bebeu FORA do plano, descrito abaixo e/ou na "
@@ -667,33 +639,34 @@ async def estimar_alimento_extra(texto: str | None = None,
         '{"resumo": "breve descrição do que foi consumido", "kcal": number, "proteina_g": number}'
     )
 
-    conteudo = [prompt]
+    content: list = []
     if image_bytes and mime_type:
-        conteudo.append({"mime_type": mime_type, "data": image_bytes})
+        image_b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
+        content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": mime_type,
+                "data": image_b64,
+            },
+        })
+    content.append({"type": "text", "text": prompt})
 
-    modelos = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"]
-
-    def _call():
-        ultimo_erro = None
-        for nome in modelos:
-            try:
-                modelo = genai.GenerativeModel(nome)
-                resp = modelo.generate_content(conteudo)
-                raw = resp.text.strip().replace("```json", "").replace("```", "").strip()
-                d = json.loads(raw)
-                return {
-                    "resumo": str(d.get("resumo") or (texto or "Alimento fora do plano")),
-                    "kcal": max(0, int(round(float(d.get("kcal") or 0)))),
-                    "proteina_g": max(0.0, round(float(d.get("proteina_g") or 0), 1)),
-                }
-            except Exception as e:
-                ultimo_erro = e
-                if _e_cota(e):
-                    continue
-                raise
-        raise QuotaExcedida() from ultimo_erro
-
-    return await asyncio.to_thread(_call)
+    try:
+        resp = await _client.messages.create(
+            model=_MODEL,
+            max_tokens=150,
+            messages=[{"role": "user", "content": content}]
+        )
+        raw = resp.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+        d = json.loads(raw)
+        return {
+            "resumo": str(d.get("resumo") or (texto or "Alimento fora do plano")),
+            "kcal": max(0, int(round(float(d.get("kcal") or 0)))),
+            "proteina_g": max(0.0, round(float(d.get("proteina_g") or 0), 1)),
+        }
+    except Exception as e:
+        raise QuotaExcedida() from e
 
 
 async def interpretar_mensagem(texto: str, referencia_datas: str) -> dict:
@@ -712,8 +685,6 @@ async def interpretar_mensagem(texto: str, referencia_datas: str) -> dict:
       registrar_fuga: descricao
       trocar_alimento: de, para
     """
-    import asyncio
-
     prompt = f"""Você é o assistente de nutrição e treino de um ciclista de MTB, conversando pelo WhatsApp (responda sempre em português do Brasil, tom amigável e direto).
 
 Classifique a mensagem do usuário em UMA intenção e extraia os dados.
@@ -746,26 +717,18 @@ Responda APENAS em JSON válido, sem markdown, sem explicações extras:
 Mensagem do usuário: "{texto}"
 """
 
-    modelos = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"]
-
-    def _call():
-        ultimo_erro = None
-        for nome in modelos:
-            try:
-                modelo = genai.GenerativeModel(nome)
-                resp = modelo.generate_content(prompt)
-                raw = resp.text.strip().replace("```json", "").replace("```", "").strip()
-                d = json.loads(raw)
-                d.setdefault("intencao", "conversa")
-                return d
-            except Exception as e:
-                ultimo_erro = e
-                if _e_cota(e):
-                    continue
-                raise
-        raise QuotaExcedida() from ultimo_erro
-
-    return await asyncio.to_thread(_call)
+    try:
+        resp = await _client.messages.create(
+            model=_MODEL,
+            max_tokens=300,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = resp.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+        d = json.loads(raw)
+        d.setdefault("intencao", "conversa")
+        return d
+    except Exception as e:
+        raise QuotaExcedida() from e
 
 
 async def interpretar_ajuste_cardapio(historico: list[dict], mensagem: str) -> dict:
@@ -783,9 +746,8 @@ async def interpretar_ajuste_cardapio(historico: list[dict], mensagem: str) -> d
     "acao" só vem preenchida quando o pedido já está claro (alimento/categoria e
     quantidade definidos) — senão vem None e "resposta" pergunta o que falta.
 
-    Levanta QuotaExcedida se a cota gratuita acabar em todos os modelos.
+    Levanta QuotaExcedida se a API estiver indisponível.
     """
-    import asyncio
     from app.services.nutricao_service import ALIMENTOS, categorias_alimentos, nomes_refeicoes
 
     alimentos_lista = "\n".join(f"- {chave}: {info['nome']}" for chave, info in ALIMENTOS.items())
@@ -823,31 +785,24 @@ Responda APENAS em JSON válido, sem markdown:
 {{"resposta": "texto curto pra mostrar ao usuário", "acao": null ou {{"tipo": "definir_porcoes" ou "remover_ajuste", "escopo": "alimento" ou "categoria", "chave": "...", "porcoes": number (omitir se tipo=remover_ajuste), "refeicao": "..." ou null}}}}
 """
 
-    modelos = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"]
-
-    def _call():
-        ultimo_erro = None
-        for nome in modelos:
-            try:
-                modelo = genai.GenerativeModel(nome)
-                resp = modelo.generate_content(prompt)
-                raw = resp.text.strip().replace("```json", "").replace("```", "").strip()
-                d = json.loads(raw)
-                return {"resposta": str(d.get("resposta") or ""), "acao": d.get("acao") or None}
-            except Exception as e:
-                ultimo_erro = e
-                if _e_cota(e):
-                    continue
-                raise
-        raise QuotaExcedida() from ultimo_erro
-
-    return await asyncio.to_thread(_call)
+    try:
+        resp = await _client.messages.create(
+            model=_MODEL,
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = resp.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+        d = json.loads(raw)
+        return {"resposta": str(d.get("resposta") or ""), "acao": d.get("acao") or None}
+    except Exception as e:
+        raise QuotaExcedida() from e
 
 
 class QuotaExcedida(Exception):
-    """Cota gratuita do Gemini esgotada em todos os modelos de visão."""
+    """API de IA indisponível (rate limit, erro de rede, parse inválido)."""
 
 
 def _e_cota(e: Exception) -> bool:
+    """Retorna True se o erro é de rate limit da API."""
     s = str(e).lower()
-    return any(t in s for t in ("429", "quota", "exceeded", "exhaust", "rate limit"))
+    return any(t in s for t in ("429", "rate_limit", "rate limit", "quota", "exceeded", "exhaust"))
