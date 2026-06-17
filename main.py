@@ -258,6 +258,11 @@ SIGNUP_HTML = """<!DOCTYPE html>
       <legend>Perfil físico</legend>
       <label for="idade">Idade (anos)</label>
       <input id="idade" name="idade" type="number" min="10" max="100">
+      <label for="sexo">Sexo</label>
+      <select id="sexo" name="sexo">
+        <option value="M">Masculino</option>
+        <option value="F">Feminino</option>
+      </select>
       <label for="peso_kg">Peso (kg)</label>
       <input id="peso_kg" name="peso_kg" type="number" step="0.1" min="30" max="200">
       <label for="altura_cm">Altura (cm)</label>
@@ -475,6 +480,7 @@ async def signup_submit(request: Request):
         "idade": form.get("idade") or None,
         "peso_kg": form.get("peso_kg") or None,
         "altura_cm": form.get("altura_cm") or None,
+        "sexo": form.get("sexo") or "M",
         "fc_max": form.get("fc_max") or None,
         "limiar_bpm": None,
     }

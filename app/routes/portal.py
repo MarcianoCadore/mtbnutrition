@@ -35,6 +35,21 @@ HTML = """<!DOCTYPE html>
     .today-btn { background: none; border: none; color: var(--green); font-size: 0.85rem; text-decoration: underline; cursor: pointer; }
 
     .card { background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+
+    .prova-panel { background: linear-gradient(135deg, #0e8a7d, #128c7e); color: #fff; border-radius: 12px; padding: 18px 20px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(14,138,125,.3); }
+    .prova-panel .pp-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .prova-panel .pp-label { font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; opacity: .85; }
+    .prova-panel .pp-nome { font-size: 1.15rem; font-weight: 800; }
+    .prova-panel .pp-fase { margin-left: auto; background: rgba(255,255,255,.2); border-radius: 20px; padding: 4px 12px; font-size: .75rem; font-weight: 700; white-space: nowrap; }
+    .prova-panel .pp-sub { font-size: .85rem; opacity: .92; margin-top: 3px; }
+    .prova-panel .pp-count { font-size: 1.4rem; font-weight: 800; margin: 8px 0 2px; }
+    .prova-panel .pp-focos { background: rgba(255,255,255,.13); border-radius: 10px; padding: 10px 12px; margin-top: 12px; }
+    .prova-panel .pp-focos .pf-titulo { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; opacity: .9; margin-bottom: 6px; }
+    .prova-panel .pp-focos ul { list-style: none; }
+    .prova-panel .pp-focos li { font-size: .85rem; padding: 3px 0; display: flex; gap: 7px; align-items: flex-start; line-height: 1.35; }
+    .prova-panel a.pp-link { color: #fff; text-decoration: underline; font-size: .82rem; opacity: .9; }
+    .prova-cta { background: #fff; border: 1.5px dashed var(--green); border-radius: 12px; padding: 14px 18px; margin-bottom: 20px; text-align: center; }
+    .prova-cta a { color: var(--green); font-weight: 700; text-decoration: none; font-size: .92rem; }
     .section-label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin-bottom: 8px; }
     .card textarea { width: 100%; border: 1.5px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: .95rem; font-family: inherit; resize: vertical; min-height: 72px; outline: none; transition: border-color .2s; line-height: 1.5; }
     .card textarea:focus { border-color: var(--green); }
@@ -47,6 +62,10 @@ HTML = """<!DOCTYPE html>
     .day-card { background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.08); transition: box-shadow .2s; }
     .day-card:hover { box-shadow: 0 4px 14px rgba(0,0,0,.13); }
     .day-card.today { outline: 2.5px solid var(--green); }
+    .day-card.realizado { background: #d9f7e1; }
+    .day-card.realizado .day-body { background: #d9f7e1; }
+    .day-card.perdido { background: #ffe2bf; }
+    .day-card.perdido .day-body { background: #ffe2bf; }
     .day-head { padding: 10px 12px; color: #fff; }
     .day-name { font-weight: 700; font-size: .88rem; }
     .day-date { font-size: .73rem; opacity: .85; }
@@ -89,6 +108,10 @@ HTML = """<!DOCTYPE html>
 
     .resultado-section { border-top: 2px solid var(--green); margin-top: 10px; padding-top: 10px; }
     .resultado-header { font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .7px; color: var(--green); margin-bottom: 8px; display: flex; align-items: center; gap: 5px; }
+    .nota-treino { display: flex; align-items: center; justify-content: center; gap: 10px; background: #f7f9fc; border-radius: 10px; padding: 12px; margin-top: 10px; }
+    .nota-treino .nota-num { font-size: 2rem; font-weight: 800; line-height: 1; }
+    .nota-treino .nota-de { font-size: .9rem; font-weight: 700; color: var(--muted); }
+    .nota-treino .nota-lbl { font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
     .analise-bloco { background: #f7f9fc; border-radius: 8px; padding: 8px 10px; margin-top: 6px; }
     .analise-bloco .resumo-txt { font-size: .8rem; color: var(--text); font-style: italic; margin-bottom: 6px; line-height: 1.4; }
     .analise-lista { list-style: none; }
@@ -101,6 +124,11 @@ HTML = """<!DOCTYPE html>
     .nutri-toggle { background: #f1f8f6; border: 1px solid #cfe9e3; color: var(--green); font-size: .8rem; font-weight: 700; cursor: pointer; padding: 8px 10px; border-radius: 8px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px; }
     .nutri-toggle:hover { background: #e6f3ef; }
     .nutri-estrat { font-size: .76rem; color: var(--muted); font-style: italic; background: #f7f9fc; border-radius: 8px; padding: 7px 9px; margin-bottom: 8px; line-height: 1.4; }
+    .nutri-prova { background: #e8f8ec; border: 1px solid #b6e6c4; border-radius: 10px; padding: 11px 13px; margin-bottom: 10px; }
+    .nutri-prova .np-tit { font-size: .85rem; font-weight: 800; color: #1e7a44; margin-bottom: 6px; }
+    .nutri-prova ul { list-style: none; margin: 0; padding: 0; }
+    .nutri-prova li { font-size: .8rem; color: var(--text); padding: 3px 0 3px 16px; position: relative; line-height: 1.35; }
+    .nutri-prova li::before { content: "•"; position: absolute; left: 3px; color: #1e7a44; font-weight: 700; }
     .nutri-meta { display: flex; gap: 8px; margin-bottom: 8px; }
     .nutri-meta .nm { flex: 1; background: var(--green); color: #fff; border-radius: 8px; padding: 6px; text-align: center; }
     .nutri-meta .nm .nmv { font-size: .95rem; font-weight: 800; }
@@ -204,6 +232,8 @@ HTML = """<!DOCTYPE html>
   <button class="nav-toggle" aria-label="Abrir menu" onclick="this.closest('nav').classList.toggle('open')">☰</button>
   <div class="nav-links">
     {{NAV_NUTRI}}
+    <a href="/workout/calendario">📅 Provas</a>
+    <a href="/workout/perfil">👤 Perfil</a>
     <a href="/workout/zonas">❤️ Zonas FC</a>
     <a href="/workout/integracao">⌚ Conectar dispositivo</a>
     {{NAV_USER}}
@@ -218,6 +248,8 @@ HTML = """<!DOCTYPE html>
     <button class="today-btn" onclick="goToday()">Hoje</button>
     <button class="arrow" onclick="changeWeek(1)">&#8594;</button>
   </div>
+
+  <div id="provaPanel"></div>
 
   <div class="card">
     <div class="section-label">💡 Objetivo / Foco da Semana</div>
@@ -353,9 +385,11 @@ function buildCards(treinos) {
     const key = iso(d);
     const t   = map[key] || {data: key, tipo:'DESCANSO'};
     const isToday = key === todayISO;
+    const isRealizado = !!t.resultado;
+    const isPerdido = !isRealizado && key < todayISO && t.tipo !== 'DESCANSO';
 
     const c = document.createElement('div');
-    c.className = 'day-card' + (isToday ? ' today' : '');
+    c.className = 'day-card' + (isToday ? ' today' : '') + (isRealizado ? ' realizado' : '') + (isPerdido ? ' perdido' : '');
 
     const opts = TIPOS.map(tp =>
       `<option value="${tp.v}" ${tp.v===t.tipo?'selected':''}>${tp.s}</option>`
@@ -519,9 +553,22 @@ function abrirAvaliacao(key) {
   const fortes = (ia.pontos_fortes || []).map(p => `<li><span class="icon">✅</span>${p}</li>`).join('');
   const fracos = (ia.pontos_fracos || []).map(p => `<li><span class="icon">⚠️</span>${p}</li>`).join('');
 
+  let notaHTML = '';
+  if (ia.nota != null) {
+    const n = Number(ia.nota);
+    const cor = n >= 8 ? '#1e9e57' : (n >= 6 ? '#c08a00' : '#c62828');
+    const notaTxt = Number.isInteger(n) ? n : n.toFixed(1);
+    notaHTML = `<div class="nota-treino">
+      <span class="nota-lbl">Nota<br>treino</span>
+      <span class="nota-num" style="color:${cor}">${notaTxt}</span>
+      <span class="nota-de">/ 10</span>
+    </div>`;
+  }
+
   document.getElementById('avalModalHead').innerHTML = `<h3>📊 Avaliação do treino</h3><div class="modal-sub">${lbl}</div>`;
   document.getElementById('avalModalBody').innerHTML = `
     ${mItems.length ? `<div class="metrics">${mItems.join('')}</div>` : ''}
+    ${notaHTML}
     <div class="analise-bloco">
       ${ia.resumo ? `<div class="resumo-txt">"${ia.resumo}"</div>` : ''}
       ${fortes ? `<ul class="analise-lista">${fortes}</ul>` : ''}
@@ -597,7 +644,13 @@ async function abrirNutriModal(key) {
         <ul>${itens}</ul>${obs}</div>`;
     }).join('');
     const notaTreino = p.nota_treino ? `<div class="nutri-estrat" style="background:#fff7e6;color:#8a5a00">⏰ ${p.nota_treino}</div>` : '';
+    let provaHTML = '';
+    if (p.prova) {
+      const itens = (p.prova.itens || []).map(i => `<li>${i}</li>`).join('');
+      provaHTML = `<div class="nutri-prova"><div class="np-tit">${p.prova.titulo}</div><ul>${itens}</ul></div>`;
+    }
     body.innerHTML = `
+      ${provaHTML}
       <div class="nutri-estrat">💡 ${p.estrategia}</div>
       <div class="nutri-meta">
         <div class="nm"><div class="nmv">${p.kcal_total}</div><div class="nml">kcal/dia</div></div>
@@ -966,7 +1019,53 @@ function toast(msg, type='info') {
   _tt = setTimeout(() => { el.className = 'toast'; }, 3500);
 }
 
+async function carregarProva() {
+  const panel = document.getElementById('provaPanel');
+  if (!panel) return;
+  let d;
+  try {
+    const r = await fetch('/workout/provas/proxima');
+    if (!r.ok) return;
+    d = await r.json();
+  } catch(e) { return; }
+
+  if (!d || !d.prova) {
+    panel.innerHTML = `<div class="prova-cta">🎯 <a href="/workout/calendario">Cadastre sua próxima prova</a> para a IA periodizar seus treinos.</div>`;
+    return;
+  }
+
+  const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const dias = d.dias_restantes;
+  const count = dias <= 0 ? '🏁 É hoje!' : (dias === 1 ? 'Falta 1 dia' : 'Faltam ' + dias + ' dias');
+  const p = d.prova;
+  const [y,m,dd] = (p.data||'').split('-');
+  const dataFmt = dd ? (dd+'/'+m+'/'+y) : (p.data||'');
+  const sub = [];
+  if (p.local) sub.push('📍 ' + esc(p.local));
+  if (p.distancia_km) sub.push(p.distancia_km + ' km');
+  if (p.altimetria_m) sub.push(p.altimetria_m + ' m');
+  if (p.terreno) sub.push(esc(p.terreno));
+
+  const focos = (d.focos || []).map(f => `<li><span>🎯</span><span>${esc(f)}</span></li>`).join('');
+  const focosHTML = focos ? `<div class="pp-focos"><div class="pf-titulo">Focos até a prova</div><ul>${focos}</ul></div>` : '';
+
+  panel.innerHTML = `<div class="prova-panel">
+    <div class="pp-top">
+      <div>
+        <div class="pp-label">Próxima prova</div>
+        <div class="pp-nome">${esc(p.nome)}</div>
+      </div>
+      <span class="pp-fase">${esc(d.fase_label || '')}</span>
+    </div>
+    <div class="pp-count">${count}</div>
+    <div class="pp-sub">${dataFmt}${sub.length ? '  ·  ' + sub.join('  ·  ') : ''}</div>
+    ${focosHTML}
+    <div style="margin-top:10px"><a class="pp-link" href="/workout/calendario">Gerenciar provas →</a></div>
+  </div>`;
+}
+
 load();
+carregarProva();
 </script>
 </body>
 </html>"""
@@ -983,6 +1082,14 @@ async def portal(request: Request):
         u = {}
     nome = u.get("nome", "")
     perder_peso = bool((u.get("preferencias") or {}).get("perder_peso"))
+    # Nutrição também aparece para quem tem prova futura (fueling/performance),
+    # mesmo sem objetivo de emagrecer.
+    if not perder_peso:
+        try:
+            from app.services.prova_service import proxima_prova
+            perder_peso = await proxima_prova(request.state.user_id) is not None
+        except Exception:
+            pass
 
     nav_nutri = (
         '<a href="/nutrition/config">⏰ Horários</a>\n'

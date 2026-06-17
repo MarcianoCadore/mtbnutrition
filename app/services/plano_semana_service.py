@@ -65,6 +65,29 @@ _LONGAO_DESC = "Longão for fun (~3h) — base aeróbica Z2, ritmo livre/convers
 # Dias de treino padrão (Marciano: seg–sáb = 0..5)
 _DIAS_TREINO_PADRAO = [0, 1, 2, 3, 4, 5]
 
+# Regras de treino por fase de periodização (injetadas no prompt quando há prova).
+_REGRAS_FASE = {
+    "base": (
+        "REGRAS DA FASE (BASE): priorize volume aeróbico e Z2; inclua FORCA; "
+        "pouca alta intensidade (no máximo 1 dia mais forte). Construa base."
+    ),
+    "construcao": (
+        "REGRAS DA FASE (CONSTRUÇÃO): introduza intensidade específica da prova "
+        "(TIROS/VO2MAX/TEMPO conforme o terreno) e suba o volume progressivamente. "
+        "Até 2 dias duros bem espaçados."
+    ),
+    "pico": (
+        "REGRAS DA FASE (PICO): intensidade alta e específica da prova; o volume "
+        "começa a cair. Qualidade acima de quantidade; recuperação reforçada."
+    ),
+    "taper": (
+        "REGRAS DA FASE (POLIMENTO/TAPER): REDUZA o volume ~40-50% mantendo apenas "
+        "estímulos CURTOS de intensidade para manter a forma. Nada de treino longo "
+        "ou desgastante. Descanso reforçado nos 2-3 dias antes da prova. Chegue "
+        "descansado e afiado."
+    ),
+}
+
 
 def _aplicar_regras_agenda(
     data_iso: str,
@@ -73,6 +96,7 @@ def _aplicar_regras_agenda(
     descricao,
     cadencia,
     preferencias: dict | None = None,
+    fase: str | None = None,
 ):
     """Aplica regras de agenda generalizadas por preferências do usuário.
 
@@ -108,13 +132,19 @@ def _aplicar_regras_agenda(
             dia_longao = candidato
             break
 
-    # 3) Dia do longão → longão garantido de 3h
+    # 3) Dia do longão → longão garantido de 3h.
+    #    Em semana de taper (prova chegando), o longão encolhe para não cansar.
     if wd == dia_longao:
+        if fase == "taper":
+            return ("Z2_LONGO", 90,
+                    "Rodagem leve de taper (~1h30) — Z2 solto, pernas leves para a prova.",
+                    (cadencia or "85-95"))
         return "Z2_LONGO", _LONGAO_MIN, _LONGAO_DESC, (cadencia or "85-95")
 
-    # 4) Dias úteis (seg–sex, wd ≤ 4) → teto de 2h
+    # 4) Dias úteis (seg–sex, wd ≤ 4) → teto de 2h (60 min no taper)
     if wd <= 4 and tipo != "DESCANSO" and duracao:
-        duracao = min(int(duracao), _MAX_MIN_DIA_UTIL)
+        teto = 60 if fase == "taper" else _MAX_MIN_DIA_UTIL
+        duracao = min(int(duracao), teto)
 
     return tipo, duracao, descricao, cadencia
 
@@ -214,13 +244,41 @@ async def gerar_proxima_semana(user_id: str, semana_atual: str) -> dict:
     if not resumos:
         resumos = "  (nenhum treino com dados registrados)"
 
+    # ── Próxima prova: periodização orientada ao objetivo ─────────────────────
+    from app.services.prova_service import (
+        proxima_prova, semanas_ate, fase_periodizacao, FASE_LABEL,
+    )
+    bloco_prova = ""
+    fase_prova: str | None = None
+    prova = await proxima_prova(user_id, ref=proxima)
+    if prova:
+        sem_rest = semanas_ate(prova["data"], ref=proxima)
+        fase_prova = fase_periodizacao(sem_rest)
+        det = []
+        if prova.get("distancia_km"):
+            det.append(f"{prova['distancia_km']} km")
+        if prova.get("altimetria_m"):
+            det.append(f"{prova['altimetria_m']} m de altimetria")
+        if prova.get("terreno"):
+            det.append(f"terreno {prova['terreno']}")
+        if prova.get("prioridade"):
+            det.append(f"prioridade {prova['prioridade']}")
+        det_txt = (" — " + ", ".join(det)) if det else ""
+        meta_txt = f"\nMeta do atleta: {prova['meta']}" if prova.get("meta") else ""
+        bloco_prova = f"""
+PRÓXIMA PROVA-ALVO: {prova['nome']} em {prova['data']} ({sem_rest} semana(s) restante(s)){det_txt}.{meta_txt}
+FASE DE PERIODIZAÇÃO: {FASE_LABEL.get(fase_prova, fase_prova)}.
+{_REGRAS_FASE.get(fase_prova, "")}
+Direcione a semana para essa fase e para as exigências da prova (terreno/altimetria).
+"""
+
     prompt = f"""Você é um coach de ciclismo MTB especializado em periodização progressiva.
 
 ATLETA: {nome_atleta}, {idade} anos, {peso:.0f} kg, objetivo: {objetivo}.
 FCMÁX: {fc_max} bpm{limiar_txt}
 ZONAS GARMIN: {zonas_prompt}
 DIAS DE TREINO: {dias_treino_nomes}
-
+{bloco_prova}
 SEMANA ATUAL ({semana_atual}):
 {resumos}
 
@@ -283,7 +341,7 @@ Os dados de "treinos" devem ter exatamente 7 entradas (uma por dia da semana {pr
         cadencia = t.get("cadencia_rpm")
         # regras de agenda (dias de treino, teto de 2h em dia útil, longão no fim de semana)
         tipo, duracao, descricao, cadencia = _aplicar_regras_agenda(
-            t.get("data", ""), tipo, duracao, descricao, cadencia, preferencias)
+            t.get("data", ""), tipo, duracao, descricao, cadencia, preferencias, fase_prova)
         treinos_out.append({
             "data":        t.get("data", ""),
             "tipo":        tipo,
@@ -296,6 +354,7 @@ Os dados de "treinos" devem ter exatamente 7 entradas (uma por dia da semana {pr
         "semana_proxima": proxima,
         "analise_semana": data.get("analise_semana", ""),
         "progressao":     data.get("progressao", ""),
+        "fase":           fase_prova,
         "treinos":        treinos_out,
     }
 

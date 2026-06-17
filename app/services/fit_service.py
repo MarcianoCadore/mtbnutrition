@@ -137,6 +137,43 @@ def hrtss_ponderado(caminho: str, limiar) -> int | None:
     return round(soma * 100 / 3600)
 
 
+def tempo_em_zonas(caminho: str, zonas: list[dict]) -> dict | None:
+    """Tempo (em segundos) em cada zona de FC, lido segundo-a-segundo do .fit.
+
+    `zonas` = [{"zona":1,"min":..,"max":..}, ...] (faixas configuradas do atleta).
+    Diferente da FC média, mostra a real distribuição de intensidade — essencial
+    em treinos de tiros, onde a média é diluída por aquecimento, recuperações
+    entre os tiros e volta à calma. Retorna {1: seg, ..., 5: seg} ou None.
+    """
+    if not zonas:
+        return None
+    try:
+        ff = FitFile(caminho)
+    except Exception:
+        return None
+    zs = sorted(zonas, key=lambda z: z["min"])
+    contagem = {z["zona"]: 0 for z in zs}
+    n = 0
+    for msg in ff.get_messages("record"):
+        hr = msg.get_value("heart_rate")
+        if hr is None:
+            continue
+        hr = int(hr)
+        n += 1
+        if hr <= zs[0]["max"]:            # abaixo/dentro da primeira zona
+            contagem[zs[0]["zona"]] += 1
+        elif hr >= zs[-1]["min"]:         # dentro/acima da última zona
+            contagem[zs[-1]["zona"]] += 1
+        else:
+            for z in zs:
+                if z["min"] <= hr <= z["max"]:
+                    contagem[z["zona"]] += 1
+                    break
+    if not n:
+        return None
+    return contagem  # ~1 amostra/segundo nos .fit do Garmin
+
+
 def analisar_fit(caminho: str) -> dict:
     ff = FitFile(caminho)
 

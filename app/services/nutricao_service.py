@@ -329,6 +329,39 @@ def _reduzir_carbo(refeicoes_raw: list[dict], kcal_alvo: float) -> float:
     return max(0.0, restante)
 
 
+def _kcal_raw(refeicoes_raw: list[dict]) -> float:
+    """Soma kcal das refeições cruas (itens (chave, qtd))."""
+    return sum(
+        ALIMENTOS[ch]["kcal"] * qtd
+        for r in refeicoes_raw for ch, qtd in r["itens"] if ch in ALIMENTOS
+    )
+
+
+def _aumentar_carbo(refeicoes_raw: list[dict], kcal_alvo: float) -> float:
+    """Adiciona porções de carboidrato (almoço/jantar primeiro) para acrescentar
+    ~kcal_alvo ao dia, respeitando os tetos por refeição. Edita in place.
+    Retorna o restante que NÃO conseguiu adicionar."""
+    if kcal_alvo <= 0:
+        return 0.0
+    restante = kcal_alvo
+    por_nome = {r["nome"]: r for r in refeicoes_raw}
+    for nome in ("Almoço", "Jantar", "Café da manhã", "Lanche da tarde"):
+        ref = por_nome.get(nome)
+        if not ref or restante <= 0:
+            continue
+        novos = []
+        for chave, qtd in ref["itens"]:
+            if restante > 0 and chave in _CARBO_MOVEL and chave in ALIMENTOS:
+                kcal_un = ALIMENTOS[chave]["kcal"]
+                teto = _MAX_QTD_REFEICAO.get(chave, qtd + 6)  # limite por refeição
+                while qtd < teto and restante > 0:
+                    qtd = round(qtd + 0.5, 2)
+                    restante -= kcal_un * 0.5
+            novos.append((chave, qtd))
+        ref["itens"] = novos
+    return max(0.0, restante)
+
+
 def _aplicar_overrides_usuario(refeicoes_raw: list[dict], overrides: list[dict] | None) -> None:
     """Substitui a quantidade de itens do cardápio pelos overrides pessoais do
     usuário (ajustados via chat), editando refeicoes_raw in place.
@@ -466,9 +499,123 @@ def capacidade_carbo_dia(
     return total
 
 
+def orientacao_prova(dias: int | None, prova: dict) -> dict | None:
+    """Bloco de orientação nutricional para os dias próximos a uma prova.
+
+    `dias` = dias do dia exibido até a prova (0 = dia da prova). Retorna None
+    fora da janela (só 0 a 3 dias antes). Usado para sobrepor uma orientação de
+    carga de carboidrato / fueling ao cardápio normal nos dias-chave da prova.
+    """
+    if dias is None or dias < 0 or dias > 3:
+        return None
+    nome = prova.get("nome") or "prova"
+    if dias == 0:
+        return {
+            "fase": "dia",
+            "titulo": f"🏁 Dia da prova — {nome}",
+            "itens": [
+                "Café 2-3h antes: carbo de fácil digestão (pão/aveia/banana/mel), pouca fibra e gordura.",
+                "30-60 min antes: 1 banana ou gel + água.",
+                "Durante a prova: 60-90 g de carbo por hora (gel, isotônico, banana) e hidratação constante.",
+                "Logo após: carbo + proteína (whey + fruta) para repor o glicogênio.",
+            ],
+        }
+    if dias == 1:
+        return {
+            "fase": "vespera",
+            "titulo": f"📦 Véspera de {nome}",
+            "itens": [
+                "Carboidrato alto o dia todo, distribuído nas refeições (encha o glicogênio).",
+                "Jantar mais cedo e leve: arroz/macarrão/batata, pouca fibra e gordura.",
+                "Hidrate bem; evite álcool e alimentos novos.",
+            ],
+        }
+    return {
+        "fase": "carga",
+        "titulo": f"🔋 Carga de carboidrato — faltam {dias} dias para {nome}",
+        "itens": [
+            "Aumente o carboidrato nas refeições para encher os estoques de glicogênio.",
+            "Mantenha a proteína; reduza um pouco a gordura para abrir espaço ao carbo.",
+            "Treino leve (taper) — não desperdice o carbo com sessões longas.",
+        ],
+    }
+
+
+# ── Metabolismo (TDEE) ──────────────────────────────────────────────────────
+# Manutenção = BMR (Mifflin-St Jeor) × fator basal (vida diária fora do treino)
+# + gasto do treino do dia (real, do Garmin, ou estimado pelo planejado).
+_FATOR_BASAL = 1.3        # NEAT/trabalho leve; o treino é somado à parte
+_DEFICIT_KCAL = 400       # déficit moderado p/ emagrecer (só na fase base)
+
+# Estimativa de gasto por minuto de treino (kcal/min) quando ainda não há o
+# valor real do Garmin (treino futuro/planejado). Valores médios p/ MTB.
+_KCAL_MIN_TREINO = {
+    "DESCANSO": 0, "RECUPERACAO": 6, "Z2_LONGO": 8,
+    "FORCA": 9, "TEMPO": 10, "TIROS": 11, "VO2MAX": 12,
+}
+
+# Fallback coarse (sem perfil completo p/ TDEE): sobe o menu um degrau.
+_TIPO_PERF_BUMP = {
+    "DESCANSO": "RECUPERACAO", "RECUPERACAO": "TEMPO", "FORCA": "Z2_LONGO",
+    "TEMPO": "Z2_LONGO", "Z2_LONGO": "Z2_LONGO", "TIROS": "TIROS", "VO2MAX": "VO2MAX",
+}
+
+_ESTRAT_PERFORMANCE = (
+    "🎯 Modo performance: sem déficit — calorias na manutenção (gasto basal + treino) "
+    "com carboidrato suficiente para render e recuperar rumo à prova."
+)
+
+
+def bump_performance(tipo) -> str:
+    tv = tipo.value if isinstance(tipo, TipoTreino) else str(tipo)
+    return _TIPO_PERF_BUMP.get(tv, tv)
+
+
+def bmr_mifflin(peso_kg: float, altura_cm: float, idade: int, sexo: str = "M") -> float:
+    """Taxa metabólica basal (Mifflin-St Jeor)."""
+    base = 10 * peso_kg + 6.25 * altura_cm - 5 * idade
+    return base + (5 if str(sexo).upper().startswith("M") else -161)
+
+
+def manutencao_basal(perfil: dict | None) -> float | None:
+    """Gasto diário fora do treino (BMR × fator basal). None se faltar dado."""
+    p = perfil or {}
+    peso, altura, idade = p.get("peso_kg"), p.get("altura_cm"), p.get("idade")
+    if not (peso and altura and idade):
+        return None
+    return bmr_mifflin(float(peso), float(altura), int(idade), p.get("sexo") or "M") * _FATOR_BASAL
+
+
+def estimar_kcal_treino(tipo, duracao_min) -> int:
+    """Gasto estimado de um treino planejado (sem dado real do Garmin)."""
+    tv = tipo.value if isinstance(tipo, TipoTreino) else str(tipo or "DESCANSO")
+    return int(_KCAL_MIN_TREINO.get(tv, 8) * int(duracao_min or 0))
+
+
+def resolver_nutricao_prova(tipo, prova: dict | None, dias: int | None,
+                            fase: str | None, perder_peso: bool):
+    """Decide o MODO de nutrição do dia conforme a proximidade/fase da prova.
+
+    Função pura. Regras:
+    - 0-3 dias da prova → carga de carbo / fueling (menu Z2_LONGO + bloco).
+    - fase BASE e o atleta quer emagrecer → déficit.
+    - demais fases ou quem não quer emagrecer → performance (manutenção).
+
+    Retorna (modo, tipo_menu, bloco_prova | None), modo ∈ {deficit, performance, carga}.
+    """
+    if prova is not None and dias is not None:
+        bloco = orientacao_prova(dias, prova)
+        if bloco:
+            return "carga", "Z2_LONGO", bloco
+    if perder_peso and (prova is None or fase == "base"):
+        return "deficit", tipo, None
+    return "performance", tipo, None
+
+
 def plano_para_tipo(tipo, data_iso: str | None = None, horarios_cfg: dict | None = None,
                     periodo: str | None = None, extras: list | None = None,
-                    corte_kcal: float | None = None, overrides: list[dict] | None = None) -> dict:
+                    corte_kcal: float | None = None, overrides: list[dict] | None = None,
+                    kcal_alvo: int | None = None) -> dict:
     """Monta o cardápio do tipo de treino para uma data, com kcal/proteína por
     item, por refeição e total do dia.
 
@@ -492,6 +639,16 @@ def plano_para_tipo(tipo, data_iso: str | None = None, horarios_cfg: dict | None
 
     # monta refeições cruas via helper reutilizável
     refeicoes_raw, aplicar, horarios = _montar_refeicoes_raw(tipo, data_iso, horarios_cfg, periodo, overrides)
+
+    # 2a) alvo calórico (TDEE): ajusta o carboidrato do dia para bater a meta de
+    # kcal (manutenção no modo performance, manutenção−déficit ao emagrecer).
+    # Roda ANTES do corte de fuga, que é aplicado por cima.
+    if kcal_alvo is not None:
+        diff = _kcal_raw(refeicoes_raw) - kcal_alvo
+        if diff > 1:
+            _reduzir_carbo(refeicoes_raw, diff)
+        elif diff < -1:
+            _aumentar_carbo(refeicoes_raw, -diff)
 
     # 2b) corte de carbo: usa corte_kcal fixado (novo fluxo) ou soma extras (legado)
     # corte_kcal=None com extras = doc legado → fallback para somar kcal dos extras

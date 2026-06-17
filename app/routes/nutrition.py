@@ -27,10 +27,11 @@ LIMITE_CORTE_DIA = 400
 
 
 async def _nutricao_habilitada(user_id: str) -> bool:
-    """Retorna True se o usuário marcou 'perder peso' nas preferências.
+    """Retorna True se a nutrição é relevante para o usuário.
 
-    Nutrição (cardápios, fugas, horários) só é relevante para quem tem
-    objetivo de emagrecimento. Retorna False em caso de ausência do campo.
+    Vale para quem quer emagrecer (perder_peso) OU para quem tem uma prova
+    futura cadastrada — nesse caso a nutrição é orientada à performance/fueling
+    (carga de carbo perto da prova), sem déficit.
     """
     try:
         from app.services.user_service import get_por_id
@@ -38,7 +39,10 @@ async def _nutricao_habilitada(user_id: str) -> bool:
         if u is None:
             return False
         pref = u.get("preferencias") or {}
-        return bool(pref.get("perder_peso", False))
+        if bool(pref.get("perder_peso", False)):
+            return True
+        from app.services.prova_service import proxima_prova
+        return await proxima_prova(user_id) is not None
     except Exception:
         return False  # em caso de erro, nega acesso por segurança
 
@@ -74,6 +78,65 @@ _HTML_NUTRICAO_DESABILITADA = """<!DOCTYPE html>
 </html>"""
 
 
+async def _treino_kcal_do_dia(user_id: str, data: str, tipo: str) -> int:
+    """Gasto do treino do dia: usa o valor real do Garmin (resultado.calorias)
+    se já houver; senão estima pelo treino planejado (tipo + duração)."""
+    from app.services.nutricao_service import estimar_kcal_treino
+    db = get_db()
+    d = datetime.fromisoformat(data).date()
+    seg = d - timedelta(days=d.weekday())
+    doc = await db.semanas.find_one({"semana_inicio": seg.isoformat(), "user_id": user_id})
+    if doc:
+        for t in doc.get("treinos", []):
+            if t.get("data") == data:
+                real = (t.get("resultado") or {}).get("calorias")
+                if real:
+                    return int(real)
+                return estimar_kcal_treino(t.get("tipo") or tipo, t.get("duracao_min"))
+    return estimar_kcal_treino(tipo, None)
+
+
+async def _alvo_calorico(user_id: str, data: str, tipo: str, modo: str) -> int | None:
+    """Meta de kcal do dia pelo TDEE. None se o perfil não tiver peso/altura/idade
+    (cai no comportamento de menu fixo)."""
+    from app.services.user_service import get_por_id
+    from app.services.nutricao_service import manutencao_basal, _DEFICIT_KCAL
+    u = await get_por_id(user_id)
+    basal = manutencao_basal((u or {}).get("perfil"))
+    if basal is None:
+        return None
+    manut = basal + await _treino_kcal_do_dia(user_id, data, tipo)
+    if modo == "deficit":
+        return int(round(manut - _DEFICIT_KCAL))
+    return int(round(manut))
+
+
+async def _resolver_menu(user_id: str, data: str | None, tipo: str):
+    """Resolve o cardápio do dia conforme a fase/proximidade da próxima prova e o
+    TDEE do atleta. Retorna (tipo_menu, estrategia_override|None, bloco_prova|None, kcal_alvo|None)."""
+    if not data:
+        return tipo, None, None, None
+    from app.services.prova_service import proxima_prova, dias_ate, semanas_ate, fase_periodizacao
+    from app.services.nutricao_service import resolver_nutricao_prova, bump_performance, _ESTRAT_PERFORMANCE
+    from app.services.user_service import get_por_id
+
+    prova = await proxima_prova(user_id, ref=data)
+    dias = dias_ate(prova["data"], data) if prova else None
+    fase = fase_periodizacao(semanas_ate(prova["data"], data)) if prova else None
+    u = await get_por_id(user_id)
+    perder_peso = bool(((u or {}).get("preferencias") or {}).get("perder_peso"))
+
+    modo, tipo_menu, bloco = resolver_nutricao_prova(tipo, prova, dias, fase, perder_peso)
+    kcal_alvo = await _alvo_calorico(user_id, data, tipo, modo)
+    estrat = None
+    if modo in ("performance", "carga"):
+        estrat = _ESTRAT_PERFORMANCE
+        # sem perfil completo p/ TDEE: usa o fallback coarse (sobe o menu um degrau)
+        if kcal_alvo is None and modo == "performance":
+            tipo_menu = bump_performance(tipo_menu)
+    return tipo_menu, estrat, bloco, kcal_alvo
+
+
 @router.get("/plano/{tipo}")
 async def plano_por_tipo(request: Request, tipo: str, data: str | None = None, periodo: str | None = None):
     """Cardápio do tipo de treino para uma data (varia a cada dia) — usado nos cards.
@@ -90,7 +153,14 @@ async def plano_por_tipo(request: Request, tipo: str, data: str | None = None, p
     else:
         extras, corte = [], None
     overrides = await overrides_cardapio(user_id)
-    return plano_para_tipo(tipo, data, cfg, periodo=periodo, extras=extras, corte_kcal=corte, overrides=overrides)
+    tipo_menu, estrat_override, prova_block, kcal_alvo = await _resolver_menu(user_id, data, tipo)
+    plano = plano_para_tipo(tipo_menu, data, cfg, periodo=periodo, extras=extras,
+                            corte_kcal=corte, overrides=overrides, kcal_alvo=kcal_alvo)
+    if estrat_override:
+        plano["estrategia"] = estrat_override
+    if prova_block:
+        plano["prova"] = prova_block
+    return plano
 
 
 async def _tipo_periodo_do_dia(user_id: str, data_iso: str) -> tuple[str, str | None]:
@@ -114,7 +184,13 @@ async def _plano_do_dia_impl(user_id: str, data: str) -> dict:
     extras = ajuste["extras"]
     corte = ajuste["corte_kcal"]   # None = doc legado → plano_para_tipo usa fallback
     overrides = await overrides_cardapio(user_id)
-    plano = plano_para_tipo(tipo, data, cfg, periodo=periodo, extras=extras, corte_kcal=corte, overrides=overrides)
+    tipo_menu, estrat_override, prova_block, kcal_alvo = await _resolver_menu(user_id, data, tipo)
+    plano = plano_para_tipo(tipo_menu, data, cfg, periodo=periodo, extras=extras,
+                            corte_kcal=corte, overrides=overrides, kcal_alvo=kcal_alvo)
+    if estrat_override:
+        plano["estrategia"] = estrat_override
+    if prova_block:
+        plano["prova"] = prova_block
     return {"data": data, "tipo": tipo, "periodo": periodo, "extras": extras, "plano": plano}
 
 

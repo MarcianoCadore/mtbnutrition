@@ -245,8 +245,11 @@ DESCANSO - sem treino efetivo"""
         return analise.get("tipo", "Z2_LONGO")
 
 
-async def analisar_atividade_pos_treino(planejado: dict, resultado: dict, user_id: str | None = None) -> dict:
-    """Compara planejado vs realizado e retorna análise com pontos fortes e fracos."""
+async def analisar_atividade_pos_treino(planejado: dict, resultado: dict, user_id: str | None = None, fit_path: str | None = None) -> dict:
+    """Compara planejado vs realizado e retorna análise com pontos fortes e fracos.
+
+    Se `fit_path` for fornecido, calcula o tempo real em cada zona de FC a partir
+    do .fit — métrica muito mais fiel que a FC média para treinos de tiros."""
     linhas = []
 
     if planejado:
@@ -292,6 +295,30 @@ async def analisar_atividade_pos_treino(planejado: dict, resultado: dict, user_i
     except Exception:
         zonas_txt = "Z1 123-145 | Z2 146-158 | Z3 159-165 | Z4 166-177 | Z5 178-189"
         fc_max, limiar = 189, 172
+        zs = [
+            {"zona": 1, "min": 123, "max": 145}, {"zona": 2, "min": 146, "max": 158},
+            {"zona": 3, "min": 159, "max": 165}, {"zona": 4, "min": 166, "max": 177},
+            {"zona": 5, "min": 178, "max": 189},
+        ]
+
+    # Tempo real em cada zona de FC (lido do .fit, segundo-a-segundo). É o que
+    # importa para julgar a intensidade de um treino de tiros — a FC média do
+    # treino inteiro é diluída por aquecimento, recuperações e volta à calma.
+    if fit_path:
+        try:
+            from app.services.fit_service import tempo_em_zonas
+            tz = tempo_em_zonas(fit_path, zs)
+            if tz:
+                total = sum(tz.values()) or 1
+                partes = []
+                for z in zs:
+                    secs = tz.get(z["zona"], 0)
+                    if secs:
+                        partes.append(f"Z{z['zona']} {secs/60:.0f}min ({round(secs*100/total)}%)")
+                if partes:
+                    linhas.append(f"- Tempo em cada zona de FC: {' | '.join(partes)}")
+        except Exception:
+            pass
 
     # Dados do atleta: nome/idade/peso do perfil do usuário (com defaults seguros)
     nome_atleta = "Atleta"
@@ -323,12 +350,28 @@ Objetivo: {objetivo_atleta}
 
 {chr(10).join(linhas)}
 
+DIRETRIZES DE ANÁLISE (fisiologia da FC — leve a sério):
+- A FC tem resposta atrasada (lag): leva ~30-60s para subir até Z4/Z5 no início de
+  um esforço forte e ~10-15s para baixar na recuperação. Os primeiros segundos de
+  cada tiro saem de uma zona mais baixa — isso é normal, NÃO é falta de intensidade.
+- Em treinos de TIROS, intervalados ou VO2MAX, NÃO julgue a intensidade pela FC
+  MÉDIA do treino inteiro: ela é naturalmente baixa (Z1/Z2) porque inclui
+  aquecimento, recuperações entre os tiros e volta à calma. Avalie a intensidade
+  pela FC MÁXIMA atingida e pelo TEMPO EM ZONAS ALTAS (Z4/Z5), quando disponível.
+- Nunca conclua que "faltou intensidade" só porque a FC média ficou em Z2 num
+  treino de tiros — isso é esperado e correto.
+
 Compare o planejado com o realizado. Comente intensidade (zonas de FC atingidas),
 volume (duração realizada vs planejada), cadência e o que ajustar no próximo treino.
 Seja CONCISO: cada ponto deve ter no máximo 1 frase curta (até ~140 caracteres),
 sem markdown (não use **). No máximo 3 pontos fortes e 3 pontos fracos.
+Atribua uma NOTA de 0 a 10 (pode ter 1 casa decimal) para o treino, ponderando os
+pontos fortes e fracos: quão bem o realizado cumpriu o objetivo do planejado
+(intensidade nas zonas certas, volume, cadência). 10 = execução exemplar;
+abaixo de 5 só quando o treino destoou muito do planejado.
 Responda APENAS em JSON válido, sem markdown, sem texto extra:
 {{
+  "nota": number (0 a 10, 1 casa decimal),
   "resumo": "string resumindo o treino em 1-2 frases objetivas",
   "pontos_fortes": ["até 3 pontos positivos, 1 frase cada"],
   "pontos_fracos": ["até 3 pontos a melhorar, 1 frase cada"]
@@ -345,6 +388,7 @@ Responda APENAS em JSON válido, sem markdown, sem texto extra:
                 raw = resp.text.strip().replace("```json", "").replace("```", "").strip()
                 data = json.loads(raw)
                 return {
+                    "nota": _nota_valida(data.get("nota")),
                     "resumo": data.get("resumo", ""),
                     "pontos_fortes": data.get("pontos_fortes", []),
                     "pontos_fracos": data.get("pontos_fracos", []),
@@ -362,6 +406,15 @@ Responda APENAS em JSON válido, sem markdown, sem texto extra:
     except Exception:
         # IA indisponível (cota, parse, rede): análise determinística pelos números.
         return _fallback_pos_treino(planejado, resultado)
+
+
+def _nota_valida(valor) -> float | None:
+    """Garante que a nota da IA caia em 0–10 (1 casa decimal); None se inválida."""
+    try:
+        n = round(float(valor), 1)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, min(10.0, n))
 
 
 def _zona_de(bpm: int, zonas: list[dict]) -> int:
@@ -423,7 +476,100 @@ def _fallback_pos_treino(planejado: dict, resultado: dict) -> dict:
 
     if not fortes:
         fortes.append("Atividade registrada e sincronizada.")
-    return {"resumo": resumo, "pontos_fortes": fortes, "pontos_fracos": fracos}
+    # Nota determinística: parte de 7 e pondera pontos fortes contra fracos.
+    nota = max(0.0, min(10.0, round(7.0 + len(fortes) - 1.5 * len(fracos), 1)))
+    return {"nota": nota, "resumo": resumo, "pontos_fortes": fortes, "pontos_fracos": fracos}
+
+
+async def gerar_focos_prova(user_id: str, prova: dict, fase: str = "",
+                            dias_restantes: int | None = None) -> list[str]:
+    """Até 3 focos de melhoria até a prova, a partir das últimas avaliações de
+    treino do atleta + as exigências da prova. Fallback determinístico se a IA
+    estiver indisponível ou não houver dados suficientes."""
+    import asyncio
+    from app.services.mongo_service import get_db
+
+    db = get_db()
+    docs = await db.semanas.find({"user_id": str(user_id)}).sort("semana_inicio", -1).to_list(length=8)
+
+    avals: list[tuple] = []  # (data, tipo, nota, pontos_fracos)
+    for doc in docs:
+        for t in doc.get("treinos", []):
+            ia = (t.get("resultado") or {}).get("analise_ia")
+            if ia and ia.get("pontos_fracos"):
+                avals.append((t.get("data") or "", t.get("tipo") or "", ia.get("nota"), ia.get("pontos_fracos")))
+    avals.sort(key=lambda x: x[0], reverse=True)
+    avals = avals[:6]
+
+    fracos_recentes: list[str] = [f for (_, _, _, fr) in avals for f in fr]
+    if not fracos_recentes:
+        return []
+
+    # Fallback determinístico: pontos fracos recentes distintos (preserva ordem).
+    def _fallback() -> list[str]:
+        vistos, out = set(), []
+        for f in fracos_recentes:
+            chave = f.lower()[:40]
+            if chave not in vistos:
+                vistos.add(chave)
+                out.append(f)
+            if len(out) >= 3:
+                break
+        return out
+
+    linhas_aval = "\n".join(
+        f"- {data} ({tipo}, nota {nota if nota is not None else '—'}): " + "; ".join(fr)
+        for (data, tipo, nota, fr) in avals
+    )
+    prova_txt = (
+        f"Nome: {prova.get('nome','')}\n"
+        f"Data: {prova.get('data','')}"
+        + (f" (faltam {dias_restantes} dias)" if dias_restantes is not None else "")
+        + (f"\nFase atual de treino: {fase}" if fase else "")
+        + (f"\nDistância: {prova['distancia_km']} km" if prova.get("distancia_km") else "")
+        + (f"\nAltimetria: {prova['altimetria_m']} m" if prova.get("altimetria_m") else "")
+        + (f"\nTerreno: {prova['terreno']}" if prova.get("terreno") else "")
+        + (f"\nMeta: {prova['meta']}" if prova.get("meta") else "")
+    )
+
+    prompt = f"""Você é um coach de ciclismo MTB. Com base nas exigências da prova-alvo
+e nos pontos fracos recorrentes dos treinos recentes do atleta, defina os focos de
+melhoria mais importantes ATÉ o dia da prova.
+
+PROVA-ALVO:
+{prova_txt}
+
+PONTOS FRACOS DOS TREINOS RECENTES:
+{linhas_aval}
+
+Gere NO MÁXIMO 3 focos objetivos e acionáveis (1 frase curta cada, até ~120
+caracteres, sem markdown), priorizando o que mais impacta o desempenho NESTA prova.
+Responda APENAS em JSON válido, sem markdown:
+{{"focos": ["foco 1", "foco 2", "foco 3"]}}"""
+
+    modelos = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"]
+
+    def _call():
+        ultimo_erro = None
+        for nome in modelos:
+            try:
+                modelo = genai.GenerativeModel(nome)
+                resp = modelo.generate_content(prompt)
+                raw = resp.text.strip().replace("```json", "").replace("```", "").strip()
+                data = json.loads(raw)
+                focos = [str(f).strip() for f in (data.get("focos") or []) if str(f).strip()]
+                return focos[:3] or _fallback()
+            except Exception as e:
+                ultimo_erro = e
+                if _e_cota(e):
+                    continue
+                raise
+        raise QuotaExcedida() from ultimo_erro
+
+    try:
+        return await asyncio.to_thread(_call)
+    except Exception:
+        return _fallback()
 
 
 async def gerar_plano_alimentar(treino: Treino | None = None) -> PlanoAlimentar:

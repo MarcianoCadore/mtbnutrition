@@ -55,8 +55,40 @@ async def _enviar_plano_diario_usuario(u: dict) -> None:
     cfg = await get_horarios(user_id)
     ajuste = await ajuste_do_dia(user_id, hoje_iso)
     overrides = await overrides_cardapio(user_id)
-    plano = plano_para_tipo(tipo, hoje_iso, cfg, periodo=periodo,
-                            extras=ajuste["extras"], corte_kcal=ajuste["corte_kcal"], overrides=overrides)
+
+    # Periodização da nutrição pela próxima prova + alvo calórico (TDEE).
+    from app.services.prova_service import proxima_prova, dias_ate, semanas_ate, fase_periodizacao
+    from app.services.nutricao_service import (
+        resolver_nutricao_prova, bump_performance, manutencao_basal,
+        estimar_kcal_treino, _ESTRAT_PERFORMANCE, _DEFICIT_KCAL,
+    )
+    prova = await proxima_prova(user_id, ref=hoje_iso)
+    dias = dias_ate(prova["data"], hoje_iso) if prova else None
+    fase = fase_periodizacao(semanas_ate(prova["data"], hoje_iso)) if prova else None
+    modo, tipo_menu, prova_block = resolver_nutricao_prova(tipo, prova, dias, fase, _quer_nutricao(u))
+
+    # gasto do treino de hoje: real (Garmin) se houver, senão estimado
+    treino_kcal = 0
+    treino_dur = None
+    if doc:
+        for t in doc.get("treinos", []):
+            if t.get("data") == hoje_iso:
+                treino_kcal = (t.get("resultado") or {}).get("calorias") or 0
+                treino_dur = t.get("duracao_min")
+                break
+    basal = manutencao_basal(u.get("perfil"))
+    kcal_alvo = None
+    if basal is not None:
+        manut = basal + (int(treino_kcal) or estimar_kcal_treino(tipo, treino_dur))
+        kcal_alvo = int(round(manut - (_DEFICIT_KCAL if modo == "deficit" else 0)))
+    elif modo == "performance":
+        tipo_menu = bump_performance(tipo_menu)  # fallback sem perfil completo
+
+    plano = plano_para_tipo(tipo_menu, hoje_iso, cfg, periodo=periodo,
+                            extras=ajuste["extras"], corte_kcal=ajuste["corte_kcal"],
+                            overrides=overrides, kcal_alvo=kcal_alvo)
+    if modo in ("performance", "carga"):
+        plano["estrategia"] = _ESTRAT_PERFORMANCE
 
     # Salva versão compatível com os lembretes de refeição (PlanoAlimentar)
     await db.planos.insert_one({
@@ -253,6 +285,64 @@ async def job_strava_sync():
             )
 
 
+async def _enviar_alerta_prova_usuario(u: dict) -> bool:
+    """Alerta semanal da próxima prova para UM usuário. Retorna True se enviou."""
+    from app.services.prova_service import (
+        proxima_prova, dias_ate, semanas_ate, fase_periodizacao, FASE_LABEL, salvar_focos,
+    )
+    user_id = str(u["_id"])
+    telefone = u.get("telefone")
+    if not telefone:
+        return False
+
+    prova = await proxima_prova(user_id)
+    if not prova:
+        return False
+
+    dias = dias_ate(prova["data"])
+    if dias < 0:
+        return False
+    fase = fase_periodizacao(semanas_ate(prova["data"]))
+
+    # Focos: usa o cache (atualizado pelo portal); gera se ausente.
+    focos = (prova.get("focos") or {}).get("itens")
+    if not focos:
+        try:
+            from app.services.ai_service import gerar_focos_prova
+            focos = await gerar_focos_prova(user_id, prova, fase, dias)
+            if focos:
+                await salvar_focos(prova["_id"], focos)
+        except Exception:
+            focos = []
+
+    count = "é HOJE! 🏁" if dias == 0 else (f"falta {dias} dia" if dias == 1 else f"faltam {dias} dias")
+    linhas = [
+        f"🎯 *Próxima prova: {prova['nome']}*",
+        f"📅 {prova['data']} — {count}",
+        f"📈 Fase: {FASE_LABEL.get(fase, fase)}",
+    ]
+    if focos:
+        linhas += ["", "*Focos até a prova:*"] + [f"  • {f}" for f in focos]
+    linhas += ["", "_MTB Nutrition Bot 🤖_"]
+    await send_message(telefone, "\n".join(linhas))
+    return True
+
+
+async def job_alerta_prova():
+    """Roda semanalmente (segunda 8h05) — alerta cada usuário sobre a próxima prova."""
+    print(f"[{datetime.now()}] Enviando alertas de prova...")
+    usuarios = await _usuarios_ativos()
+    enviados = 0
+    for u in usuarios:
+        try:
+            if await _enviar_alerta_prova_usuario(u):
+                enviados += 1
+                await asyncio.sleep(1)   # throttle Twilio
+        except Exception as e:
+            logger.error("job_alerta_prova p/ %s: %s", u.get("login"), e)
+    print(f"[{datetime.now()}] Alertas de prova enviados para {enviados} usuário(s).")
+
+
 def start_scheduler():
     scheduler.add_job(
         job_plano_diario,
@@ -274,6 +364,14 @@ def start_scheduler():
         job_strava_sync,
         IntervalTrigger(minutes=10),
         id="strava_sync",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        job_alerta_prova,
+        CronTrigger(day_of_week="mon", hour=8, minute=5, timezone=TZ),
+        id="alerta_prova",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

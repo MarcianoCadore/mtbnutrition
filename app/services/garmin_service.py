@@ -617,7 +617,7 @@ async def sync_atividades(user_id: str, semana_inicio: str) -> int:
         # análise IA
         try:
             from app.services.ai_service import analisar_atividade_pos_treino
-            analise_ia = await analisar_atividade_pos_treino(treino_planejado, resultado, user_id)
+            analise_ia = await analisar_atividade_pos_treino(treino_planejado, resultado, user_id, fit_path)
             resultado["analise_ia"] = analise_ia
         except Exception as e:
             logger.error("IA pós-treino error: %s", e)
@@ -718,6 +718,11 @@ def _formatar_pos_treino(data: str, planejado: dict, resultado: dict) -> str:
     analise = resultado.get("analise_ia", {})
 
     linhas = [f"🚵 *Pós-treino — {dia}, {data_fmt}*", ""]
+
+    if analise.get("nota") is not None:
+        nota = analise["nota"]
+        nota_txt = f"{nota:.1f}".rstrip("0").rstrip(".")
+        linhas += [f"⭐ *Nota do treino: {nota_txt}/10*", ""]
 
     if analise.get("resumo"):
         linhas += [f"_{_bullet(analise['resumo'], 240)}_", ""]

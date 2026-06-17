@@ -572,6 +572,123 @@ async def pagina_integracao(request: Request):
             .replace("{{STRAVA_BLOCO}}", strava_html))
 
 
+# ─── Provas (calendário de competições) ───────────────────────────────────────
+
+class ProvaIn(BaseModel):
+    nome: str
+    data: str                       # YYYY-MM-DD
+    local: Optional[str] = None
+    distancia_km: Optional[float] = None
+    altimetria_m: Optional[int] = None
+    terreno: Optional[str] = None   # XCO | maratona/XCM | trail | gravel | ...
+    prioridade: Optional[str] = "B"  # A | B | C
+    meta: Optional[str] = None
+
+
+@router.get("/provas")
+async def listar_provas_rt(request: Request):
+    from app.services.prova_service import listar_provas
+    return await listar_provas(request.state.user_id)
+
+
+@router.post("/provas")
+async def criar_prova_rt(request: Request, prova: ProvaIn):
+    from app.services.prova_service import criar_prova
+    try:
+        return await criar_prova(request.state.user_id, prova.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/provas/proxima")
+async def proxima_prova_rt(request: Request):
+    """Próxima prova + dias/semanas restantes, fase de periodização e focos (cache 1x/dia)."""
+    from datetime import datetime
+    from app.services.prova_service import (
+        proxima_prova, dias_ate, semanas_ate, fase_periodizacao, FASE_LABEL, salvar_focos,
+    )
+    from app.services.ai_service import gerar_focos_prova
+
+    user_id = request.state.user_id
+    prova = await proxima_prova(user_id)
+    if not prova:
+        return {"prova": None}
+
+    dias = dias_ate(prova["data"])
+    semanas = semanas_ate(prova["data"])
+    fase = fase_periodizacao(semanas)
+
+    focos_doc = prova.get("focos") or {}
+    itens = focos_doc.get("itens")
+    gerado_em = focos_doc.get("gerado_em")
+    precisa = (not itens) or (not gerado_em) or ((datetime.now() - gerado_em).days >= 1)
+    if precisa:
+        novos = await gerar_focos_prova(user_id, prova, fase, dias)
+        if novos:
+            itens = novos
+            await salvar_focos(prova["_id"], novos)
+
+    return {
+        "prova": prova,
+        "dias_restantes": dias,
+        "semanas_restantes": semanas,
+        "fase": fase,
+        "fase_label": FASE_LABEL.get(fase, fase),
+        "focos": itens or [],
+    }
+
+
+@router.put("/provas/{prova_id}")
+async def atualizar_prova_rt(request: Request, prova_id: str, prova: ProvaIn):
+    from app.services.prova_service import atualizar_prova
+    try:
+        await atualizar_prova(request.state.user_id, prova_id, prova.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "ok"}
+
+
+@router.delete("/provas/{prova_id}")
+async def remover_prova_rt(request: Request, prova_id: str):
+    from app.services.prova_service import remover_prova
+    await remover_prova(request.state.user_id, prova_id)
+    return {"status": "ok"}
+
+
+@router.get("/calendario", response_class=HTMLResponse)
+async def pagina_calendario():
+    return _PAGINA_CALENDARIO
+
+
+@router.get("/perfil", response_class=HTMLResponse)
+async def pagina_perfil(request: Request):
+    from app.services.user_service import get_por_id
+    u = await get_por_id(request.state.user_id) or {}
+    p = u.get("perfil") or {}
+    val = lambda x: "" if x in (None, 0) else str(x)
+    sexo = str(p.get("sexo") or "M").upper()
+    return (_PAGINA_PERFIL
+            .replace("{{IDADE}}", val(p.get("idade")))
+            .replace("{{PESO}}", val(p.get("peso_kg")))
+            .replace("{{ALTURA}}", val(p.get("altura_cm")))
+            .replace("{{SEXO_M}}", "selected" if sexo.startswith("M") else "")
+            .replace("{{SEXO_F}}", "selected" if sexo.startswith("F") else ""))
+
+
+@router.post("/perfil")
+async def salvar_perfil(request: Request, idade: int = Form(...), peso_kg: float = Form(...),
+                        altura_cm: int = Form(...), sexo: str = Form("M")):
+    """Atualiza peso/idade/altura/sexo do perfil (base do cálculo de TDEE)."""
+    from app.services.user_service import atualizar_usuario
+    await atualizar_usuario(request.state.user_id, {
+        "perfil.idade": int(idade),
+        "perfil.peso_kg": float(peso_kg),
+        "perfil.altura_cm": int(altura_cm),
+        "perfil.sexo": str(sexo).upper()[:1],
+    })
+    return {"status": "ok"}
+
+
 @router.post("/fit/{semana_inicio}/{data}")
 async def upload_fit(request: Request, semana_inicio: str, data: str, arquivo: UploadFile = File(...)):
     user_id = request.state.user_id
@@ -982,6 +1099,350 @@ _PAGINA_INTEGRACAO = """<!DOCTYPE html>
       if (btn) { btn.disabled = false; btn.textContent = 'Desconectar Strava'; }
     }
   }
+</script>
+</body>
+</html>"""
+
+
+_PAGINA_CALENDARIO = """<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MTB Nutrition — Calendário de provas</title>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  :root { --green:#0e8a7d; --text:#1f2937; --muted:#6b7280; --border:#e5e7eb; --bg:#f0f2f5; }
+  body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; background:var(--bg); color:var(--text); }
+  nav { background:#fff; border-bottom:1px solid var(--border); padding:14px 20px; display:flex; align-items:center; gap:10px; }
+  nav .logo { font-weight:800; color:var(--green); }
+  nav a { margin-left:auto; color:var(--muted); text-decoration:none; font-size:.9rem; font-weight:600; }
+  main { max-width:620px; margin:0 auto; padding:24px 16px 60px; }
+  h1 { font-size:1.4rem; margin-bottom:6px; }
+  .sub { color:var(--muted); margin-bottom:22px; font-size:.92rem; }
+  .card { background:#fff; border-radius:14px; padding:22px; box-shadow:0 1px 4px rgba(0,0,0,.06); margin-bottom:18px; }
+  .card h2 { font-size:1.05rem; color:var(--green); margin-bottom:14px; }
+  label.fld { display:block; font-size:.72rem; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; margin-bottom:3px; margin-top:12px; }
+  input, select, textarea { width:100%; border:1.5px solid var(--border); border-radius:9px; padding:10px; font-size:1rem; outline:none; font-family:inherit; }
+  input:focus, select:focus, textarea:focus { border-color:var(--green); }
+  textarea { resize:vertical; min-height:54px; font-size:.92rem; }
+  .duo { display:flex; gap:12px; }
+  .duo > div { flex:1; }
+  button { width:100%; padding:14px; background:var(--green); color:#fff; border:none; border-radius:10px; font-size:1rem; font-weight:700; cursor:pointer; margin-top:16px; }
+  button:hover:not(:disabled) { background:#0c7669; }
+  button:disabled { opacity:.6; cursor:not-allowed; }
+  button.sec { background:#374151; }
+  .status { margin-top:14px; padding:12px; border-radius:10px; font-size:.9rem; display:none; }
+  .ok { background:#e8f5e9; color:#2e7d32; display:block; }
+  .err { background:#fdecea; color:#c62828; display:block; }
+  .prova-item { border:1px solid var(--border); border-radius:12px; padding:14px; margin-bottom:12px; }
+  .prova-item.passada { opacity:.55; }
+  .prova-top { display:flex; align-items:center; gap:8px; }
+  .prova-nome { font-weight:800; font-size:1rem; flex:1; }
+  .prio { font-size:.7rem; font-weight:800; color:#fff; border-radius:6px; padding:2px 7px; }
+  .prio.A { background:#ef4444; } .prio.B { background:#f59e0b; } .prio.C { background:#9ca3af; }
+  .prova-meta { font-size:.85rem; color:var(--muted); margin-top:5px; }
+  .prova-count { font-size:.82rem; color:var(--green); font-weight:700; margin-top:4px; }
+  .prova-acoes { display:flex; gap:8px; margin-top:10px; }
+  .prova-acoes button { width:auto; flex:1; margin-top:0; padding:8px; font-size:.82rem; }
+  .prova-acoes .del { background:#fdecea; color:#c62828; }
+  .vazio { color:var(--muted); font-size:.9rem; text-align:center; padding:18px 0; }
+</style>
+</head>
+<body>
+<nav>
+  <span style="font-size:1.4rem">📅</span>
+  <span class="logo">MTB Nutrition</span>
+  <a href="/portal/">← Voltar ao portal</a>
+</nav>
+<main>
+  <h1>Calendário de provas</h1>
+  <p class="sub">Cadastre as provas que vai disputar. A IA usa a próxima prova para periodizar seus treinos (base → construção → pico → polimento) e apontar focos de melhoria.</p>
+
+  <div class="card">
+    <h2 id="formTitulo">➕ Nova prova</h2>
+    <form id="form" onsubmit="salvar(event)">
+      <input type="hidden" id="prova_id">
+      <label class="fld">Nome da prova *</label>
+      <input id="nome" required placeholder="Ex.: Copa MTB Serra — Etapa 3">
+      <div class="duo">
+        <div>
+          <label class="fld">Data *</label>
+          <input id="data" type="date" required>
+        </div>
+        <div>
+          <label class="fld">Prioridade</label>
+          <select id="prioridade">
+            <option value="A">A — principal</option>
+            <option value="B" selected>B — importante</option>
+            <option value="C">C — treino/preparação</option>
+          </select>
+        </div>
+      </div>
+      <label class="fld">Local</label>
+      <input id="local" placeholder="Cidade / clube">
+      <div class="duo">
+        <div>
+          <label class="fld">Distância (km)</label>
+          <input id="distancia_km" type="number" step="0.1" min="0" placeholder="Ex.: 45">
+        </div>
+        <div>
+          <label class="fld">Altimetria (m)</label>
+          <input id="altimetria_m" type="number" step="1" min="0" placeholder="Ex.: 1200">
+        </div>
+      </div>
+      <label class="fld">Tipo de terreno</label>
+      <select id="terreno">
+        <option value="">—</option>
+        <option>XCO (cross-country olímpico)</option>
+        <option>Maratona / XCM</option>
+        <option>Trail / técnico</option>
+        <option>Gravel / estrada de terra</option>
+        <option>Subida longa</option>
+        <option>Misto</option>
+      </select>
+      <label class="fld">Meta / observações</label>
+      <textarea id="meta" placeholder="Ex.: Terminar entre os 10 primeiros; melhorar nas subidas longas."></textarea>
+      <button type="submit" id="btnSalvar">Salvar prova</button>
+      <button type="button" class="sec" id="btnCancelar" style="display:none" onclick="resetForm()">Cancelar edição</button>
+      <div id="st" class="status"></div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Minhas provas</h2>
+    <div id="lista"><div class="vazio">Carregando…</div></div>
+  </div>
+</main>
+
+<script>
+let PROVAS = [];
+
+function hojeISO(){ return new Date().toISOString().slice(0,10); }
+
+function diasAte(d){
+  const a = new Date(d + 'T00:00'), b = new Date(hojeISO() + 'T00:00');
+  return Math.round((a - b) / 86400000);
+}
+
+function fmtData(d){
+  const [y,m,dd] = d.split('-');
+  return dd + '/' + m + '/' + y;
+}
+
+function countdownTxt(dias){
+  if (dias < 0) return 'Realizada';
+  if (dias === 0) return '🏁 É hoje!';
+  if (dias === 1) return 'Falta 1 dia';
+  return 'Faltam ' + dias + ' dias';
+}
+
+async function carregar(){
+  const r = await fetch('/workout/provas');
+  PROVAS = r.ok ? await r.json() : [];
+  render();
+}
+
+function render(){
+  const el = document.getElementById('lista');
+  if (!PROVAS.length){ el.innerHTML = '<div class="vazio">Nenhuma prova cadastrada ainda.</div>'; return; }
+  el.innerHTML = PROVAS.map(p => {
+    const dias = diasAte(p.data);
+    const meta = [];
+    if (p.local) meta.push('📍 ' + p.local);
+    if (p.distancia_km) meta.push(p.distancia_km + ' km');
+    if (p.altimetria_m) meta.push(p.altimetria_m + ' m');
+    if (p.terreno) meta.push(p.terreno);
+    const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    return `<div class="prova-item ${dias < 0 ? 'passada' : ''}">
+      <div class="prova-top">
+        <span class="prova-nome">${esc(p.nome)}</span>
+        <span class="prio ${p.prioridade || 'B'}">${p.prioridade || 'B'}</span>
+      </div>
+      <div class="prova-count">${fmtData(p.data)} · ${countdownTxt(dias)}</div>
+      ${meta.length ? `<div class="prova-meta">${esc(meta.join('  ·  '))}</div>` : ''}
+      ${p.meta ? `<div class="prova-meta">🎯 ${esc(p.meta)}</div>` : ''}
+      <div class="prova-acoes">
+        <button onclick="editar('${p._id}')">✏️ Editar</button>
+        <button class="del" onclick="remover('${p._id}')">🗑️ Excluir</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function editar(id){
+  const p = PROVAS.find(x => x._id === id);
+  if (!p) return;
+  document.getElementById('prova_id').value = p._id;
+  document.getElementById('nome').value = p.nome || '';
+  document.getElementById('data').value = p.data || '';
+  document.getElementById('prioridade').value = p.prioridade || 'B';
+  document.getElementById('local').value = p.local || '';
+  document.getElementById('distancia_km').value = p.distancia_km ?? '';
+  document.getElementById('altimetria_m').value = p.altimetria_m ?? '';
+  document.getElementById('terreno').value = p.terreno || '';
+  document.getElementById('meta').value = p.meta || '';
+  document.getElementById('formTitulo').textContent = '✏️ Editar prova';
+  document.getElementById('btnCancelar').style.display = 'block';
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+
+function resetForm(){
+  document.getElementById('form').reset();
+  document.getElementById('prova_id').value = '';
+  document.getElementById('prioridade').value = 'B';
+  document.getElementById('formTitulo').textContent = '➕ Nova prova';
+  document.getElementById('btnCancelar').style.display = 'none';
+  document.getElementById('st').className = 'status';
+}
+
+async function salvar(ev){
+  ev.preventDefault();
+  const st = document.getElementById('st'), btn = document.getElementById('btnSalvar');
+  const id = document.getElementById('prova_id').value;
+  const num = v => v === '' ? null : Number(v);
+  const body = {
+    nome: document.getElementById('nome').value.trim(),
+    data: document.getElementById('data').value,
+    prioridade: document.getElementById('prioridade').value,
+    local: document.getElementById('local').value.trim() || null,
+    distancia_km: num(document.getElementById('distancia_km').value),
+    altimetria_m: num(document.getElementById('altimetria_m').value),
+    terreno: document.getElementById('terreno').value || null,
+    meta: document.getElementById('meta').value.trim() || null,
+  };
+  btn.disabled = true; btn.textContent = 'Salvando…';
+  try {
+    const url = id ? '/workout/provas/' + id : '/workout/provas';
+    const r = await fetch(url, {
+      method: id ? 'PUT' : 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || 'Erro ao salvar');
+    st.className = 'status ok'; st.textContent = '✅ Prova salva!';
+    resetForm();
+    await carregar();
+  } catch(e){
+    st.className = 'status err'; st.textContent = '❌ ' + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Salvar prova';
+  }
+}
+
+async function remover(id){
+  if (!confirm('Excluir esta prova?')) return;
+  await fetch('/workout/provas/' + id, { method:'DELETE' });
+  await carregar();
+}
+
+carregar();
+</script>
+</body>
+</html>"""
+
+
+_PAGINA_PERFIL = """<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MTB Nutrition — Meu perfil</title>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  :root { --green:#0e8a7d; --text:#1f2937; --muted:#6b7280; --border:#e5e7eb; --bg:#f0f2f5; }
+  body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; background:var(--bg); color:var(--text); }
+  nav { background:#fff; border-bottom:1px solid var(--border); padding:14px 20px; display:flex; align-items:center; gap:10px; }
+  nav .logo { font-weight:800; color:var(--green); }
+  nav a { margin-left:auto; color:var(--muted); text-decoration:none; font-size:.9rem; font-weight:600; }
+  main { max-width:520px; margin:0 auto; padding:24px 16px 60px; }
+  h1 { font-size:1.4rem; margin-bottom:6px; }
+  .sub { color:var(--muted); margin-bottom:22px; font-size:.92rem; }
+  .card { background:#fff; border-radius:14px; padding:22px; box-shadow:0 1px 4px rgba(0,0,0,.06); margin-bottom:18px; }
+  label.fld { display:block; font-size:.72rem; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; margin-bottom:3px; margin-top:14px; }
+  input, select { width:100%; border:1.5px solid var(--border); border-radius:9px; padding:11px; font-size:1rem; outline:none; font-family:inherit; }
+  input:focus, select:focus { border-color:var(--green); }
+  .duo { display:flex; gap:12px; }
+  .duo > div { flex:1; }
+  button { width:100%; padding:14px; background:var(--green); color:#fff; border:none; border-radius:10px; font-size:1rem; font-weight:700; cursor:pointer; margin-top:18px; }
+  button:disabled { opacity:.6; }
+  .status { margin-top:14px; padding:12px; border-radius:10px; font-size:.9rem; display:none; }
+  .ok { background:#e8f5e9; color:#2e7d32; display:block; }
+  .err { background:#fdecea; color:#c62828; display:block; }
+  .tdee { background:#eef6ff; border-radius:10px; padding:12px 14px; margin-top:16px; font-size:.9rem; color:#1d4ed8; }
+  .tdee b { font-size:1.1rem; }
+</style>
+</head>
+<body>
+<nav>
+  <span style="font-size:1.4rem">👤</span>
+  <span class="logo">MTB Nutrition</span>
+  <a href="/portal/">← Voltar ao portal</a>
+</nav>
+<main>
+  <h1>Meu perfil</h1>
+  <p class="sub">Esses dados alimentam o cálculo de calorias de manutenção (TDEE) que ajusta seu cardápio conforme a fase da prova.</p>
+  <div class="card">
+    <form id="form" onsubmit="salvar(event)">
+      <div class="duo">
+        <div>
+          <label class="fld">Peso (kg)</label>
+          <input id="peso_kg" type="number" step="0.1" min="30" max="200" value="{{PESO}}" required>
+        </div>
+        <div>
+          <label class="fld">Altura (cm)</label>
+          <input id="altura_cm" type="number" min="100" max="250" value="{{ALTURA}}" required>
+        </div>
+      </div>
+      <div class="duo">
+        <div>
+          <label class="fld">Idade</label>
+          <input id="idade" type="number" min="10" max="100" value="{{IDADE}}" required>
+        </div>
+        <div>
+          <label class="fld">Sexo</label>
+          <select id="sexo">
+            <option value="M" {{SEXO_M}}>Masculino</option>
+            <option value="F" {{SEXO_F}}>Feminino</option>
+          </select>
+        </div>
+      </div>
+      <div class="tdee" id="tdee"></div>
+      <button type="submit" id="btn">Salvar perfil</button>
+      <div id="st" class="status"></div>
+    </form>
+  </div>
+</main>
+<script>
+function calcTDEE(){
+  const peso=+document.getElementById('peso_kg').value, alt=+document.getElementById('altura_cm').value;
+  const idade=+document.getElementById('idade').value, sexo=document.getElementById('sexo').value;
+  const el=document.getElementById('tdee');
+  if(!peso||!alt||!idade){ el.textContent='Preencha peso, altura e idade para ver a estimativa.'; return; }
+  const bmr = 10*peso + 6.25*alt - 5*idade + (sexo==='M'?5:-161);
+  const basal = Math.round(bmr*1.3);
+  el.innerHTML = `Gasto basal estimado (sem treino): <b>${basal} kcal/dia</b>.<br>O gasto do treino é somado por cima, dia a dia.`;
+}
+['peso_kg','altura_cm','idade','sexo'].forEach(id=>document.getElementById(id).addEventListener('input',calcTDEE));
+calcTDEE();
+
+async function salvar(ev){
+  ev.preventDefault();
+  const st=document.getElementById('st'), btn=document.getElementById('btn');
+  btn.disabled=true; btn.textContent='Salvando…';
+  const body=new URLSearchParams({
+    idade:document.getElementById('idade').value,
+    peso_kg:document.getElementById('peso_kg').value,
+    altura_cm:document.getElementById('altura_cm').value,
+    sexo:document.getElementById('sexo').value,
+  });
+  try{
+    const r=await fetch('/workout/perfil',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});
+    if(!r.ok) throw new Error('Erro ao salvar');
+    st.className='status ok'; st.textContent='✅ Perfil salvo!';
+  }catch(e){ st.className='status err'; st.textContent='❌ '+e.message; }
+  finally{ btn.disabled=false; btn.textContent='Salvar perfil'; }
+}
 </script>
 </body>
 </html>"""

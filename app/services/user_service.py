@@ -187,6 +187,7 @@ async def criar_usuario(dados: dict) -> dict:
             "idade": int(perfil.get("idade") or 0),
             "peso_kg": float(perfil.get("peso_kg") or 0),
             "altura_cm": int(perfil.get("altura_cm") or 0),
+            "sexo": (str(perfil.get("sexo") or "M").upper()[:1]),
             "fc_max": fc_max,
             "limiar_bpm": limiar_bpm,
         },
