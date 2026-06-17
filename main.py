@@ -69,8 +69,21 @@ _PUBLIC_PATHS = {
 
 # ─── Token com identidade de usuário ─────────────────────────────────────────
 
-def _assinar(user_id: str, ts: int) -> str:
-    """Assinatura HMAC-SHA256 de (user_id + timestamp)."""
+_TTL_SESSAO = None  # sentinel: usa PORTAL_SESSAO_MIN
+_TTL_LEMBRAR = 30 * 24 * 3600  # 30 dias
+
+
+def _assinar(user_id: str, ts: int, ttl: int) -> str:
+    """Assinatura HMAC-SHA256 de (user_id + timestamp + ttl)."""
+    return hmac.new(
+        _SEGREDO.encode(),
+        f"{user_id}:{ts}:{ttl}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _assinar_legado(user_id: str, ts: int) -> str:
+    """Assinatura do formato antigo (sem ttl) — só para validar tokens legados."""
     return hmac.new(
         _SEGREDO.encode(),
         f"{user_id}:{ts}".encode(),
@@ -78,40 +91,60 @@ def _assinar(user_id: str, ts: int) -> str:
     ).hexdigest()
 
 
-def _gerar_token(user_id: str) -> str:
-    """Gera um token de sessão no formato `{user_id}.{ts}.{sig}`."""
+def _gerar_token(user_id: str, ttl: int | None = None) -> str:
+    """Gera um token no formato `{user_id}.{ts}.{ttl}.{sig}`.
+
+    ttl=None usa a janela de inatividade padrão (PORTAL_SESSAO_MIN).
+    """
+    if ttl is None:
+        ttl = settings.PORTAL_SESSAO_MIN * 60
     ts = int(time.time())
-    sig = _assinar(user_id, ts)
-    return f"{user_id}.{ts}.{sig}"
+    sig = _assinar(user_id, ts, ttl)
+    return f"{user_id}.{ts}.{ttl}.{sig}"
 
 
-def _token_valido(token: str) -> str | None:
-    """Valida assinatura E idade do token.
+def _token_valido(token: str) -> tuple[str | None, int | None]:
+    """Valida assinatura e idade do token.
 
-    Retorna o `user_id` se o token for válido; caso contrário, retorna None.
+    Retorna (user_id, ttl) se válido; (None, None) caso contrário.
+    Suporta o formato legado de 3 partes (sem ttl) para compatibilidade.
     """
     try:
-        partes = token.split(".", 2)
-        if len(partes) != 3:
-            return None
-        user_id, ts_str, sig = partes
-        ts = int(ts_str)
+        partes = token.split(".")
+        if len(partes) == 4:
+            user_id, ts_str, ttl_str, sig = partes
+            ttl = int(ttl_str)
+            ts = int(ts_str)
+            if not hmac.compare_digest(sig, _assinar(user_id, ts, ttl)):
+                return None, None
+        elif len(partes) == 3:
+            # token legado sem ttl
+            user_id, ts_str, sig = partes
+            ttl = settings.PORTAL_SESSAO_MIN * 60
+            ts = int(ts_str)
+            if not hmac.compare_digest(sig, _assinar_legado(user_id, ts)):
+                return None, None
+        else:
+            return None, None
     except (ValueError, AttributeError):
-        return None
-
-    if not hmac.compare_digest(sig, _assinar(user_id, ts)):
-        return None
+        return None, None
 
     idade = int(time.time()) - ts
-    if not (0 <= idade <= settings.PORTAL_SESSAO_MIN * 60):
-        return None
+    if not (0 <= idade <= ttl):
+        return None, None
 
-    return user_id
+    return user_id, ttl
 
 
-def _set_auth_cookie(resp, token: str) -> None:
-    """Grava o cookie de autenticação como cookie de SESSÃO (sem max_age/expires)."""
-    resp.set_cookie(_COOKIE, token, httponly=True, samesite="lax")
+def _set_auth_cookie(resp, token: str, ttl: int | None = None) -> None:
+    """Grava o cookie de autenticação.
+
+    ttl > PORTAL_SESSAO_MIN*60 → cookie persistente com max_age=ttl.
+    ttl menor ou None → cookie de sessão (sem max_age).
+    """
+    sessao_seg = settings.PORTAL_SESSAO_MIN * 60
+    max_age = ttl if (ttl and ttl > sessao_seg) else None
+    resp.set_cookie(_COOKIE, token, httponly=True, samesite="lax", max_age=max_age)
 
 
 # ─── Middleware de autenticação ───────────────────────────────────────────────
@@ -123,13 +156,13 @@ async def auth(request: Request, call_next):
         return await call_next(request)
 
     token = request.cookies.get(_COOKIE, "")
-    user_id = _token_valido(token) if token else None
+    user_id, ttl = _token_valido(token) if token else (None, None)
 
     if user_id:
         request.state.user_id = user_id
         response = await call_next(request)
-        # renova a janela de inatividade a cada requisição autenticada
-        _set_auth_cookie(response, _gerar_token(user_id))
+        # renova a janela de inatividade preservando o ttl original
+        _set_auth_cookie(response, _gerar_token(user_id, ttl), ttl)
         return response
 
     # Não autenticado (ou sessão expirada) → redireciona para login
@@ -178,6 +211,9 @@ LOGIN_HTML = """<!DOCTYPE html>
     .login-link { text-align:center; margin-top:16px; font-size:.88rem; color:var(--muted); }
     .login-link a { color:var(--green); text-decoration:none; font-weight:600; }
     .login-link a:hover { text-decoration:underline; }
+    .lembrar-row { display:flex; align-items:center; gap:8px; margin-bottom:18px; }
+    .lembrar-row input[type=checkbox] { width:18px; height:18px; accent-color:var(--green); cursor:pointer; }
+    .lembrar-row label { font-size:.88rem; color:var(--muted); cursor:pointer; margin:0; text-transform:none; letter-spacing:0; font-weight:500; }
   </style>
 </head>
 <body>
@@ -193,6 +229,10 @@ LOGIN_HTML = """<!DOCTYPE html>
       <input id="usuario" name="usuario" autocomplete="username" autofocus required>
       <label for="senha">Senha</label>
       <input id="senha" name="senha" type="password" autocomplete="current-password" required>
+      <div class="lembrar-row">
+        <input type="checkbox" id="lembrar" name="lembrar" value="1" checked>
+        <label for="lembrar">Lembrar de mim por 30 dias</label>
+      </div>
       <button class="login-btn" type="submit">Entrar</button>
       <div class="login-link"><a href="/signup">Criar conta</a></div>
     </div>
@@ -435,6 +475,7 @@ async def login_submit(request: Request):
     form = await request.form()
     usuario = str(form.get("usuario", "")).strip().lower()
     senha = str(form.get("senha", ""))
+    lembrar = bool(form.get("lembrar"))
 
     u = await user_service.get_por_login(usuario)
     if not u or not user_service.verificar_senha(senha, u.get("senha_hash", "")):
@@ -445,9 +486,10 @@ async def login_submit(request: Request):
         tel = u.get("telefone", "")
         return RedirectResponse(url=f"/verificar?tel={tel}", status_code=303)
 
-    token = _gerar_token(str(u["_id"]))
+    ttl = _TTL_LEMBRAR if lembrar else None
+    token = _gerar_token(str(u["_id"]), ttl)
     resp = RedirectResponse(url="/", status_code=303)
-    _set_auth_cookie(resp, token)
+    _set_auth_cookie(resp, token, ttl)
     return resp
 
 
