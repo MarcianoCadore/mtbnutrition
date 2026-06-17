@@ -660,31 +660,41 @@ async def pagina_calendario():
     return _PAGINA_CALENDARIO
 
 
+_OBJETIVOS_VALIDOS = {"performance_mtb", "aumentar_potencia", "base_aerobica", "manter_performance", "emagrecimento"}
+
 @router.get("/perfil", response_class=HTMLResponse)
 async def pagina_perfil(request: Request):
     from app.services.user_service import get_por_id
     u = await get_por_id(request.state.user_id) or {}
     p = u.get("perfil") or {}
+    pref = u.get("preferencias") or {}
     val = lambda x: "" if x in (None, 0) else str(x)
     sexo = str(p.get("sexo") or "M").upper()
-    return (_PAGINA_PERFIL
+    obj = pref.get("objetivo") or "performance_mtb"
+    html = (_PAGINA_PERFIL
             .replace("{{IDADE}}", val(p.get("idade")))
             .replace("{{PESO}}", val(p.get("peso_kg")))
             .replace("{{ALTURA}}", val(p.get("altura_cm")))
             .replace("{{SEXO_M}}", "selected" if sexo.startswith("M") else "")
             .replace("{{SEXO_F}}", "selected" if sexo.startswith("F") else ""))
+    for o in _OBJETIVOS_VALIDOS:
+        html = html.replace(f"{{{{OBJ_{o}}}}}", "selected" if obj == o else "")
+    return html
 
 
 @router.post("/perfil")
 async def salvar_perfil(request: Request, idade: int = Form(...), peso_kg: float = Form(...),
-                        altura_cm: int = Form(...), sexo: str = Form("M")):
-    """Atualiza peso/idade/altura/sexo do perfil (base do cálculo de TDEE)."""
+                        altura_cm: int = Form(...), sexo: str = Form("M"),
+                        objetivo: str = Form("performance_mtb")):
+    """Atualiza peso/idade/altura/sexo/objetivo do perfil."""
     from app.services.user_service import atualizar_usuario
+    obj = objetivo if objetivo in _OBJETIVOS_VALIDOS else "performance_mtb"
     await atualizar_usuario(request.state.user_id, {
         "perfil.idade": int(idade),
         "perfil.peso_kg": float(peso_kg),
         "perfil.altura_cm": int(altura_cm),
         "perfil.sexo": str(sexo).upper()[:1],
+        "preferencias.objetivo": obj,
     })
     return {"status": "ok"}
 
@@ -1408,12 +1418,34 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
         </div>
       </div>
       <div class="tdee" id="tdee"></div>
+      <label class="fld" style="margin-top:18px">Objetivo de treinamento</label>
+      <select id="objetivo" onchange="atualizarDescObjetivo()">
+        <option value="performance_mtb" {{OBJ_performance_mtb}}>Performance MTB geral</option>
+        <option value="aumentar_potencia" {{OBJ_aumentar_potencia}}>Aumentar potência / FTP</option>
+        <option value="base_aerobica" {{OBJ_base_aerobica}}>Construir base aeróbica</option>
+        <option value="manter_performance" {{OBJ_manter_performance}}>Manter performance</option>
+        <option value="emagrecimento" {{OBJ_emagrecimento}}>Emagrecer</option>
+      </select>
+      <div id="desc-objetivo" style="margin-top:10px;padding:12px 14px;border-radius:10px;background:#f0f9f8;font-size:.88rem;color:#065f46;line-height:1.5;"></div>
       <button type="submit" id="btn">Salvar perfil</button>
       <div id="st" class="status"></div>
     </form>
   </div>
 </main>
 <script>
+const _OBJ_DESC = {
+  performance_mtb: '🚵 Modelo polarizado: até 2 sessões duras por semana (VO2max + Tiros), dias fáceis em Z2 puro. A IA maximiza seu pico de performance para MTB.',
+  aumentar_potencia: '⚡ Foco em sessões de limiar e VO2max para elevar FTP. A IA prioriza qualidade sobre quantidade e garante recuperação entre os dias duros.',
+  base_aerobica: '🟢 Muito Z2, longões de fim de semana, sem sessões duras. A IA constrói sua base aeróbica progressivamente — essencial antes de uma temporada de provas.',
+  manter_performance: '⚖️ Equilíbrio entre volume e intensidade. A IA mantém o padrão atual sem sobrecarregar nem reduzir demais.',
+  emagrecimento: '🔥 Mais volume em Z2 (alto gasto calórico, baixo cortisol), 1 sessão dura por semana para preservar músculo. A IA orienta treino e nutrição para déficit calórico saudável.',
+};
+function atualizarDescObjetivo(){
+  const v = document.getElementById('objetivo').value;
+  document.getElementById('desc-objetivo').textContent = _OBJ_DESC[v] || '';
+}
+atualizarDescObjetivo();
+
 function calcTDEE(){
   const peso=+document.getElementById('peso_kg').value, alt=+document.getElementById('altura_cm').value;
   const idade=+document.getElementById('idade').value, sexo=document.getElementById('sexo').value;
@@ -1435,6 +1467,7 @@ async function salvar(ev){
     peso_kg:document.getElementById('peso_kg').value,
     altura_cm:document.getElementById('altura_cm').value,
     sexo:document.getElementById('sexo').value,
+    objetivo:document.getElementById('objetivo').value,
   });
   try{
     const r=await fetch('/workout/perfil',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});

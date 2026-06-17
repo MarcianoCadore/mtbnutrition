@@ -11,16 +11,16 @@ from app.services.nutricao_service import DEFAULT_HORARIOS
 
 _RE_HORA = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
-# Zonas de FC padrão (as configuradas hoje no Garmin do Marciano).
+# Zonas de FC padrão calibradas com FC máx 185 e LTHR 165 (89% de 185).
 DEFAULT_ZONAS = {
-    "fc_max": 190,
-    "limiar": 172,
+    "fc_max": 185,
+    "limiar": 165,
     "zonas": [
-        {"zona": 1, "min": 123, "max": 145},
-        {"zona": 2, "min": 146, "max": 158},
-        {"zona": 3, "min": 159, "max": 165},
-        {"zona": 4, "min": 166, "max": 177},
-        {"zona": 5, "min": 178, "max": 190},
+        {"zona": 1, "min": 120, "max": 141},
+        {"zona": 2, "min": 142, "max": 154},
+        {"zona": 3, "min": 155, "max": 161},
+        {"zona": 4, "min": 162, "max": 172},
+        {"zona": 5, "min": 173, "max": 185},
     ],
 }
 

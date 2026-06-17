@@ -335,7 +335,15 @@ async def analisar_atividade_pos_treino(planejado: dict, resultado: dict, user_i
                 idade_atleta = perfil_u.get("idade") or None
                 peso_atleta = perfil_u.get("peso_kg") or None
                 pref_u = u.get("preferencias") or {}
-                objetivo_atleta = pref_u.get("objetivo") or "melhorar performance MTB"
+                _OBJ_LABEL = {
+                    "performance_mtb": "melhorar performance MTB (modelo polarizado)",
+                    "aumentar_potencia": "aumentar potência e FTP",
+                    "base_aerobica": "construir base aeróbica (volume Z2)",
+                    "manter_performance": "manter a performance atual",
+                    "emagrecimento": "emagrecer mantendo massa muscular e potência",
+                }
+                obj_key = pref_u.get("objetivo") or "performance_mtb"
+                objetivo_atleta = _OBJ_LABEL.get(obj_key, obj_key)
         except Exception:
             pass  # mantém defaults genéricos
 

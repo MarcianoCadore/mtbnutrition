@@ -47,6 +47,44 @@ _DESCRICAO_PADRAO = {
 }
 
 
+_INSTRUCOES_OBJETIVO = {
+    "performance_mtb": """OBJETIVO — PERFORMANCE MTB (modelo polarizado):
+- No máximo 2 dias DUROS na semana (ex.: VO2MAX e TIROS, ou VO2MAX e TEMPO), bem ESPAÇADOS (não em dias seguidos).
+- Dias fáceis (Z2/RECUPERACAO) devem ser REALMENTE fáceis (FC baixa, Z2 puro) — evite a "zona cinza".
+- Garanta recuperação: pelo menos 1 dia de descanso/recuperação entre blocos duros.
+- Os dias DUROS rendem mais descansados — nunca dois dias pesados grudados nem antes do longão.""",
+
+    "aumentar_potencia": """OBJETIVO — AUMENTAR POTÊNCIA / FTP:
+- Priorize 2 sessões de qualidade por semana: TEMPO (limiar) + TIROS ou VO2MAX, bem espaçadas.
+- Sessões de TEMPO sustentado (Z3-Z4) são prioritárias para elevar FTP.
+- Inclua VO2MAX a cada 2 semanas para elevar o teto aeróbico.
+- Dias de recuperação em Z1/Z2 puro — o atleta deve chegar DESCANSADO nas sessões duras.
+- Reduza Z2_LONGO se necessário para não comprometer qualidade das sessões duras.""",
+
+    "base_aerobica": """OBJETIVO — CONSTRUIR BASE AERÓBICA:
+- Maximizar volume em Z2 (FC abaixo do limiar de lactato). Sem sessões VO2MAX ou TIROS.
+- Apenas Z2_LONGO, RECUPERACAO e TEMPO ocasional (1x semana no máximo).
+- O longão de fim de semana é o treino central da semana — preservar sempre.
+- Progressão de volume gradual (+5-10% por semana). Priorize consistência sobre intensidade.""",
+
+    "manter_performance": """OBJETIVO — MANTER PERFORMANCE:
+- Equilíbrio: 1 sessão dura (VO2MAX ou TIROS) + 2-3 Z2 + longão.
+- Não reduza volume bruscamente nem aumente carga: mantenha o padrão das semanas anteriores.
+- Foque em consistência — complete os treinos planejados sem sobrecarga.""",
+
+    "emagrecimento": """OBJETIVO — EMAGRECIMENTO:
+- Priorize volume de Z2 (alto gasto calórico, baixo cortisol, preserva músculo).
+- Máximo 1 sessão dura por semana (VO2MAX ou TIROS) para manter estímulo metabólico.
+- Longões de fim de semana são ESSENCIAIS: maior queima de gordura em Z2 prolongado.
+- Evite 2 dias duros consecutivos — má recuperação sabota a perda de peso.
+- Prefira Z2_LONGO e RECUPERACAO nos dias úteis.""",
+}
+
+
+def _instrucoes_objetivo(objetivo: str) -> str:
+    return _INSTRUCOES_OBJETIVO.get(objetivo) or _INSTRUCOES_OBJETIVO["performance_mtb"]
+
+
 def _proxima_semana(semana_atual: str) -> str:
     d = datetime.strptime(semana_atual, "%Y-%m-%d").date()
     return (d + timedelta(days=7)).isoformat()
@@ -290,11 +328,7 @@ RESTRIÇÕES DE AGENDA (OBRIGATÓRIAS):
 {restricao_fds}
 - Dias SEM treino: DESCANSO obrigatório — não gere treino nesses dias.
 
-PRIORIZE GANHO DE PERFORMANCE (modelo polarizado):
-- No máximo 2 dias DUROS na semana (ex.: VO2MAX e TIROS, ou VO2MAX e TEMPO), bem ESPAÇADOS (não em dias seguidos).
-- Dias fáceis (Z2/RECUPERACAO) devem ser REALMENTE fáceis (FC baixa, Z2 puro) para recuperar — evite a "zona cinza" (treinar sempre em intensidade média).
-- Garanta recuperação suficiente: pelo menos 1 dia de descanso/recuperação entre blocos duros.
-- Os dias DUROS rendem mais descansados — não coloque dois dias pesados grudados nem antes do longão.
+{_instrucoes_objetivo(objetivo)}
 
 REGRAS DE PROGRESSÃO:
 - Aumentar volume (+5-10% em duracao_min) quando a semana foi bem executada, respeitando o teto de 120 min em dias úteis.
