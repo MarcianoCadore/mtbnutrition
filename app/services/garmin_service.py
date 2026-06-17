@@ -614,13 +614,17 @@ async def sync_atividades(user_id: str, semana_inicio: str) -> int:
             limiar = None
         resultado.update(_metricas_extra(treino_planejado, resultado, limiar, act.get("averageSpeed"), fit_path))
 
-        # análise IA
-        try:
-            from app.services.ai_service import analisar_atividade_pos_treino
-            analise_ia = await analisar_atividade_pos_treino(treino_planejado, resultado, user_id, fit_path)
-            resultado["analise_ia"] = analise_ia
-        except Exception as e:
-            logger.error("IA pós-treino error: %s", e)
+        # análise IA — reutiliza se já existe para não consumir API desnecessariamente
+        analise_ia_existente = (treino_planejado.get("resultado") or {}).get("analise_ia")
+        if analise_ia_existente:
+            resultado["analise_ia"] = analise_ia_existente
+        else:
+            try:
+                from app.services.ai_service import analisar_atividade_pos_treino
+                analise_ia = await analisar_atividade_pos_treino(treino_planejado, resultado, user_id, fit_path)
+                resultado["analise_ia"] = analise_ia
+            except Exception as e:
+                logger.error("IA pós-treino error: %s", e)
 
         tipo_real = analise.get("tipo", "Z2_LONGO")
 

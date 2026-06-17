@@ -308,13 +308,17 @@ async def sync_atividades_strava(user_id: str, semana_inicio: str) -> int:
                     treino_planejado = t
                     break
 
-        # Análise IA pós-treino (best-effort)
-        try:
-            from app.services.ai_service import analisar_atividade_pos_treino
-            analise_ia = await analisar_atividade_pos_treino(treino_planejado, resultado, user_id)
-            resultado["analise_ia"] = analise_ia
-        except Exception as exc:
-            logger.warning("strava sync_atividades: IA pós-treino falhou (user_id=%s) — %s", user_id, exc)
+        # Análise IA pós-treino — reutiliza se já existe para não consumir API desnecessariamente
+        analise_ia_existente = (treino_planejado.get("resultado") or {}).get("analise_ia")
+        if analise_ia_existente:
+            resultado["analise_ia"] = analise_ia_existente
+        else:
+            try:
+                from app.services.ai_service import analisar_atividade_pos_treino
+                analise_ia = await analisar_atividade_pos_treino(treino_planejado, resultado, user_id)
+                resultado["analise_ia"] = analise_ia
+            except Exception as exc:
+                logger.warning("strava sync_atividades: IA pós-treino falhou (user_id=%s) — %s", user_id, exc)
 
         # Persiste em db.semanas
         tipo_existente = treino_planejado.get("tipo")
