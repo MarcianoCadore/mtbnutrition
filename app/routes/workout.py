@@ -1420,7 +1420,7 @@ function calcTDEE(){
   const el=document.getElementById('tdee');
   if(!peso||!alt||!idade){ el.textContent='Preencha peso, altura e idade para ver a estimativa.'; return; }
   const bmr = 10*peso + 6.25*alt - 5*idade + (sexo==='M'?5:-161);
-  const basal = Math.round(bmr*1.3);
+  const basal = Math.round(bmr*1.2);
   el.innerHTML = `Gasto basal estimado (sem treino): <b>${basal} kcal/dia</b>.<br>O gasto do treino é somado por cima, dia a dia.`;
 }
 ['peso_kg','altura_cm','idade','sexo'].forEach(id=>document.getElementById(id).addEventListener('input',calcTDEE));

@@ -544,7 +544,7 @@ def orientacao_prova(dias: int | None, prova: dict) -> dict | None:
 # ── Metabolismo (TDEE) ──────────────────────────────────────────────────────
 # Manutenção = BMR (Mifflin-St Jeor) × fator basal (vida diária fora do treino)
 # + gasto do treino do dia (real, do Garmin, ou estimado pelo planejado).
-_FATOR_BASAL = 1.3        # NEAT/trabalho leve; o treino é somado à parte
+_FATOR_BASAL = 1.2        # sedentário fora do treino; o treino é somado à parte
 _DEFICIT_KCAL = 400       # déficit moderado p/ emagrecer (só na fase base)
 
 # Estimativa de gasto por minuto de treino (kcal/min) quando ainda não há o
