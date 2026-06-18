@@ -315,6 +315,13 @@ async def inject_chat(request: Request, call_next):
     ct = response.headers.get("content-type", "")
     if "text/html" not in ct:
         return response
+    user_id = getattr(request.state, "user_id", None)
+    if user_id:
+        db = get_db()
+        from bson import ObjectId
+        u = await db.users.find_one({"_id": ObjectId(user_id)}, {"features": 1})
+        if u and u.get("features", {}).get("chat") is False:
+            return response
     body = b"".join([chunk async for chunk in response.body_iterator])
     html = body.decode("utf-8", errors="replace")
     if "</body>" in html:
