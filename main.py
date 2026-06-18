@@ -12,7 +12,7 @@ from fastapi.responses import RedirectResponse, HTMLResponse
 from contextlib import asynccontextmanager
 
 from app.tasks.scheduler import start_scheduler, stop_scheduler
-from app.routes import workout, nutrition, whatsapp, portal
+from app.routes import workout, nutrition, whatsapp, portal, chat as chat_router
 from app.services import user_service
 from app.services.whatsapp_service import send_message
 from app.services.mongo_service import get_db
@@ -65,6 +65,142 @@ _PUBLIC_PATHS = {
     "/whatsapp/webhook",
     "/workout/strava/callback",
 }
+
+
+# ─── Widget de chat flutuante ────────────────────────────────────────────────
+
+_CHAT_WIDGET = """
+<style>
+#cw-btn{position:fixed;bottom:22px;right:22px;z-index:9998;width:54px;height:54px;border-radius:50%;background:#128c7e;border:none;color:#fff;font-size:1.5rem;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center;transition:transform .15s}
+#cw-btn:hover{transform:scale(1.08)}
+#cw-panel{position:fixed;bottom:88px;right:22px;z-index:9999;width:360px;max-width:calc(100vw - 32px);height:500px;max-height:calc(100vh - 110px);background:#fff;border-radius:16px;box-shadow:0 8px 32px rgba(0,0,0,.22);display:none;flex-direction:column;overflow:hidden}
+#cw-head{background:#128c7e;color:#fff;padding:12px 16px;display:flex;align-items:center;gap:8px;font-weight:700;font-size:.95rem;flex-shrink:0}
+#cw-head-title{flex:1}
+#cw-close{background:none;border:none;color:#fff;font-size:1.2rem;cursor:pointer;line-height:1;padding:2px 4px}
+#cw-msgs{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;scroll-behavior:smooth}
+#cw-msgs::-webkit-scrollbar{width:4px}
+#cw-msgs::-webkit-scrollbar-thumb{background:#ccc;border-radius:4px}
+.cw-msg{max-width:85%;padding:9px 12px;border-radius:12px;font-size:.88rem;line-height:1.45;word-break:break-word;white-space:pre-wrap}
+.cw-msg.user{align-self:flex-end;background:#128c7e;color:#fff;border-bottom-right-radius:3px}
+.cw-msg.assistant{align-self:flex-start;background:#f0f2f5;color:#1a1a2e;border-bottom-left-radius:3px}
+.cw-typing{align-self:flex-start;background:#f0f2f5;border-radius:12px;border-bottom-left-radius:3px;padding:10px 14px;display:flex;gap:5px}
+.cw-typing span{width:7px;height:7px;border-radius:50%;background:#888;animation:cw-bounce .9s infinite}
+.cw-typing span:nth-child(2){animation-delay:.18s}
+.cw-typing span:nth-child(3){animation-delay:.36s}
+@keyframes cw-bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-6px)}}
+#cw-foot{padding:10px 12px;border-top:1px solid #e0e0e0;display:flex;gap:8px;flex-shrink:0}
+#cw-input{flex:1;border:1.5px solid #e0e0e0;border-radius:10px;padding:9px 12px;font-size:.88rem;font-family:inherit;resize:none;outline:none;max-height:100px;overflow-y:auto;line-height:1.4}
+#cw-input:focus{border-color:#128c7e}
+#cw-send{background:#128c7e;color:#fff;border:none;border-radius:10px;padding:9px 14px;font-size:.88rem;font-weight:700;cursor:pointer;flex-shrink:0}
+#cw-send:disabled{opacity:.5;cursor:default}
+</style>
+<div id="cw-panel">
+  <div id="cw-head">
+    <span>🚵</span>
+    <span id="cw-head-title">Assistente MTB</span>
+    <button id="cw-close" onclick="cwToggle()" title="Fechar">✕</button>
+  </div>
+  <div id="cw-msgs"></div>
+  <div id="cw-foot">
+    <textarea id="cw-input" rows="1" placeholder="Pergunte sobre treinos, nutrição..."></textarea>
+    <button id="cw-send" onclick="cwSend()">Enviar</button>
+  </div>
+</div>
+<button id="cw-btn" onclick="cwToggle()" title="Assistente MTB">💬</button>
+<script>
+(function(){
+  let _aberto = false, _carregado = false, _enviando = false;
+
+  function cwToggle(){
+    _aberto = !_aberto;
+    document.getElementById('cw-panel').style.display = _aberto ? 'flex' : 'none';
+    if(_aberto && !_carregado){ cwCarregarHistorico(); }
+    if(_aberto){ setTimeout(()=>document.getElementById('cw-input').focus(),80); }
+  }
+  window.cwToggle = cwToggle;
+
+  async function cwCarregarHistorico(){
+    _carregado = true;
+    try{
+      const r = await fetch('/chat/historico');
+      const d = await r.json();
+      const msgs = d.mensagens || [];
+      msgs.forEach(m => cwAddMsg(m.role, m.texto));
+      cwScroll();
+    }catch(e){ cwAddMsg('assistant','Não foi possível carregar o histórico.'); }
+  }
+
+  function cwAddMsg(role, texto){
+    const el = document.createElement('div');
+    el.className = 'cw-msg ' + role;
+    el.textContent = texto;
+    document.getElementById('cw-msgs').appendChild(el);
+  }
+
+  function cwAddTyping(){
+    const el = document.createElement('div');
+    el.className = 'cw-typing';
+    el.id = 'cw-typing';
+    el.innerHTML = '<span></span><span></span><span></span>';
+    document.getElementById('cw-msgs').appendChild(el);
+    cwScroll();
+    return el;
+  }
+
+  function cwScroll(){
+    const m = document.getElementById('cw-msgs');
+    m.scrollTop = m.scrollHeight;
+  }
+
+  async function cwSend(){
+    if(_enviando) return;
+    const inp = document.getElementById('cw-input');
+    const texto = inp.value.trim();
+    if(!texto) return;
+
+    inp.value = '';
+    inp.style.height = '';
+    cwAddMsg('user', texto);
+    cwScroll();
+
+    _enviando = true;
+    document.getElementById('cw-send').disabled = true;
+    const typing = cwAddTyping();
+
+    try{
+      const r = await fetch('/chat/mensagem',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({texto})
+      });
+      const d = await r.json();
+      typing.remove();
+      cwAddMsg('assistant', d.resposta || d.erro || 'Erro ao obter resposta.');
+    }catch(e){
+      typing.remove();
+      cwAddMsg('assistant','Erro de conexão. Tente novamente.');
+    }finally{
+      _enviando = false;
+      document.getElementById('cw-send').disabled = false;
+      cwScroll();
+    }
+  }
+  window.cwSend = cwSend;
+
+  // Enter envia; Shift+Enter quebra linha
+  document.addEventListener('DOMContentLoaded',function(){
+    const inp = document.getElementById('cw-input');
+    inp.addEventListener('keydown',function(e){
+      if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); cwSend(); }
+    });
+    inp.addEventListener('input',function(){
+      this.style.height='';
+      this.style.height=Math.min(this.scrollHeight,100)+'px';
+    });
+  });
+})();
+</script>
+"""
 
 
 # ─── Token com identidade de usuário ─────────────────────────────────────────
@@ -169,12 +305,30 @@ async def auth(request: Request, call_next):
     return RedirectResponse(url="/login", status_code=303)
 
 
+# ─── Middleware: injeta widget de chat em páginas HTML autenticadas ──────────
+
+@app.middleware("http")
+async def inject_chat(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path in _PUBLIC_PATHS:
+        return response
+    ct = response.headers.get("content-type", "")
+    if "text/html" not in ct:
+        return response
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    html = body.decode("utf-8", errors="replace")
+    if "</body>" in html:
+        html = html.replace("</body>", _CHAT_WIDGET + "</body>", 1)
+    return HTMLResponse(html, status_code=response.status_code)
+
+
 # ─── Routers ─────────────────────────────────────────────────────────────────
 
-app.include_router(portal.router,    prefix="/portal",    tags=["Portal"])
-app.include_router(workout.router,   prefix="/workout",   tags=["Treinos"])
-app.include_router(nutrition.router, prefix="/nutrition", tags=["Nutrição"])
-app.include_router(whatsapp.router,  prefix="/whatsapp",  tags=["WhatsApp"])
+app.include_router(portal.router,          prefix="/portal",    tags=["Portal"])
+app.include_router(workout.router,         prefix="/workout",   tags=["Treinos"])
+app.include_router(nutrition.router,       prefix="/nutrition", tags=["Nutrição"])
+app.include_router(whatsapp.router,        prefix="/whatsapp",  tags=["WhatsApp"])
+app.include_router(chat_router.router,     prefix="/chat",      tags=["Chat"])
 
 
 # ─── Health ───────────────────────────────────────────────────────────────────
