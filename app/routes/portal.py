@@ -373,6 +373,7 @@ function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); retu
 function fmt(d) { return d.toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit'}); }
 
 function iso(d) { return d.toISOString().split('T')[0]; }
+function localIso(d) { const y=d.getFullYear(); const m=String(d.getMonth()+1).padStart(2,'0'); const day=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${day}`; }
 
 function updateLabel() {
   document.getElementById('weekLabel').textContent = fmt(monday) + ' — ' + fmt(addDays(monday, 6));
@@ -386,7 +387,7 @@ function buildCards(treinos) {
   grid.innerHTML = '';
   const map = {};
   (treinos||[]).forEach(t => { map[t.data] = t; });
-  const todayISO = iso(new Date());
+  const todayISO = localIso(new Date());
 
   for (let i = 0; i < 7; i++) {
     const d   = addDays(monday, i);
@@ -395,7 +396,7 @@ function buildCards(treinos) {
     const isToday = key === todayISO;
     const isRealizado = !!t.resultado;
     const isPerdido = !isRealizado && key < todayISO && t.tipo !== 'DESCANSO';
-    const isFuturo = key > todayISO;
+    const isFuturo = key >= todayISO && !isRealizado;
 
     const c = document.createElement('div');
     c.className = 'day-card' + (isToday ? ' today' : '') + (isRealizado ? ' realizado' : '') + (isPerdido ? ' perdido' : '') + (isFuturo ? ' futuro' : '');

@@ -85,13 +85,14 @@ async def get_semana(request: Request, semana_inicio: str):
 
 @router.post("/semana")
 async def salvar_semana(request: Request, plano: PlanoSemanal):
-    from datetime import date as _date
+    from datetime import datetime as _dt, timezone, timedelta
     db = get_db()
     user_id = request.state.user_id
-    today_iso = _date.today().isoformat()
+    # usa horário de Brasília (UTC-3) para evitar que às 21h o servidor veja o dia seguinte
+    today_iso = _dt.now(timezone(timedelta(hours=-3))).date().isoformat()
 
     # preserva resultado e garmin_workout_id que vêm do sync automático
-    # e bloqueia edição manual de treinos futuros (apenas IA pode sobrescrever)
+    # e bloqueia edição manual de treinos presentes/futuros sem resultado (apenas IA pode sobrescrever)
     existing = await db.semanas.find_one(
         {"semana_inicio": plano.semana_inicio, "user_id": user_id})
     data = plano.model_dump()
@@ -108,8 +109,8 @@ async def salvar_semana(request: Request, plano: PlanoSemanal):
                 t["resultado"] = saved["resultado"]
             if saved.get("garmin_workout_id") and not t.get("garmin_workout_id"):
                 t["garmin_workout_id"] = saved["garmin_workout_id"]
-            # bloqueia alteração de treinos futuros pelo usuário
-            if t["data"] > today_iso and saved:
+            # bloqueia alteração se data >= hoje E treino ainda não foi realizado
+            if t["data"] >= today_iso and not saved.get("resultado") and saved:
                 data["treinos"][i] = saved
 
     await db.semanas.replace_one(
