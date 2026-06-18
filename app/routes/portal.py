@@ -66,6 +66,14 @@ HTML = """<!DOCTYPE html>
     .day-card.realizado .day-body { background: #d9f7e1; }
     .day-card.perdido { background: #ffe2bf; }
     .day-card.perdido .day-body { background: #ffe2bf; }
+    .day-card.futuro { opacity: .72; }
+    .day-card.futuro .day-body select,
+    .day-card.futuro .day-body textarea,
+    .day-card.futuro .day-body input[type=file] { pointer-events: none; opacity: .6; }
+    .day-card.futuro .rest-toggle,
+    .day-card.futuro .fit-label,
+    .day-card.futuro .fit-remove { pointer-events: none; opacity: .4; }
+    .lock-badge { font-size: .7rem; color: var(--muted); text-align: center; padding: 4px 0 2px; letter-spacing: .02em; }
     .day-head { padding: 10px 12px; color: #fff; }
     .day-name { font-weight: 700; font-size: .88rem; }
     .day-date { font-size: .73rem; opacity: .85; }
@@ -387,9 +395,10 @@ function buildCards(treinos) {
     const isToday = key === todayISO;
     const isRealizado = !!t.resultado;
     const isPerdido = !isRealizado && key < todayISO && t.tipo !== 'DESCANSO';
+    const isFuturo = key > todayISO;
 
     const c = document.createElement('div');
-    c.className = 'day-card' + (isToday ? ' today' : '') + (isRealizado ? ' realizado' : '') + (isPerdido ? ' perdido' : '');
+    c.className = 'day-card' + (isToday ? ' today' : '') + (isRealizado ? ' realizado' : '') + (isPerdido ? ' perdido' : '') + (isFuturo ? ' futuro' : '');
 
     const opts = TIPOS.map(tp =>
       `<option value="${tp.v}" ${tp.v===t.tipo?'selected':''}>${tp.s}</option>`
@@ -404,6 +413,7 @@ function buildCards(treinos) {
     const periodo = t.periodo       || '';
     const hide    = t.tipo === 'DESCANSO';
     const tipoLbl = (TIPOS.find(tp => tp.v === t.tipo) || {l: t.tipo}).l;
+    const lockAttr = isFuturo ? 'disabled' : '';
 
     _planejado[key] = {tipo: t.tipo, duracao_min: t.duracao_min, cadencia_rpm: t.cadencia_rpm, descricao: t.descricao};
     const res = t.resultado || null;
@@ -438,7 +448,7 @@ function buildCards(treinos) {
 
     c.innerHTML = `
       <div class="day-head tipo-${t.tipo}" id="h-${key}">
-        <div class="day-name">${DIAS[i]}${isToday ? ' ●' : ''}</div>
+        <div class="day-name">${DIAS[i]}${isToday ? ' ●' : ''}${isFuturo ? ' 🔒' : ''}</div>
         <div class="day-date">${fmt(d)}</div>
       </div>
       <div class="day-body">
@@ -447,10 +457,11 @@ function buildCards(treinos) {
         <input type="hidden" id="elev-${key}"    value="${elev}">
         <input type="hidden" id="cad-${key}"     value="${cad}">
         <input type="hidden" id="fitfile-${key}" value="${fitFile}">
-        <select id="tp-${key}" style="${hide ? 'display:none' : ''}" onchange="onTipo('${key}')">
+        ${isFuturo ? `<div class="lock-badge">🔒 Treino planejado — edição disponível no dia</div>` : ''}
+        <select id="tp-${key}" style="${hide ? 'display:none' : ''}" onchange="onTipo('${key}')" ${lockAttr}>
           ${opts}
         </select>
-        <select id="pd-${key}" class="periodo-sel" style="${hide ? 'display:none' : ''}" title="Quando você vai treinar">
+        <select id="pd-${key}" class="periodo-sel" style="${hide ? 'display:none' : ''}" title="Quando você vai treinar" ${lockAttr}>
           <option value="">⏰ Quando treina?</option>
           <option value="manha"    ${periodo==='manha'   ?'selected':''}>🌅 Manhã</option>
           <option value="meio_dia" ${periodo==='meio_dia'?'selected':''}>☀️ Meio-dia</option>
@@ -462,26 +473,26 @@ function buildCards(treinos) {
           ${resumoHTML}
           ${metricsHTML}
 
-          <div class="fit-area">
+          ${!isFuturo ? `<div class="fit-area">
             <label class="fit-label" for="fit-${key}">📎 Enviar arquivo .fit</label>
             <input type="file" id="fit-${key}" accept=".fit" onchange="uploadFit('${key}', this)">
             <div id="fitinfo-${key}">${fitInfoHTML}</div>
-          </div>
+          </div>` : ''}
           <div>
             <div class="notas-head">
               <label>Notas</label>
               <button class="info-treino" onclick="abrirTreinoInfo('${key}')" title="Ver especificação do treino"><span class="ic">ⓘ</span> saber mais</button>
             </div>
-            <textarea id="desc-${key}" placeholder="Detalhes...">${desc}</textarea>
+            <textarea id="desc-${key}" placeholder="Detalhes..." ${lockAttr}>${desc}</textarea>
           </div>
         </div>
 
         <div id="rest-${key}" style="${hide ? '' : 'display:none'}">
           <div class="rest-badge"><span class="icon">😴</span>Dia de descanso</div>
         </div>
-        <button class="rest-toggle" id="resttoggle-${key}" onclick="toggleRest('${key}')">
+        ${!isFuturo ? `<button class="rest-toggle" id="resttoggle-${key}" onclick="toggleRest('${key}')">
           ${hide ? '🏃 Adicionar treino' : '🛌 Marcar descanso'}
-        </button>
+        </button>` : ''}
 
         ${window.NUTRICAO_ON ? `<div class="nutri-area">
           <button class="nutri-toggle" onclick="abrirNutriModal('${key}')">

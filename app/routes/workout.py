@@ -85,28 +85,32 @@ async def get_semana(request: Request, semana_inicio: str):
 
 @router.post("/semana")
 async def salvar_semana(request: Request, plano: PlanoSemanal):
+    from datetime import date as _date
     db = get_db()
     user_id = request.state.user_id
+    today_iso = _date.today().isoformat()
 
     # preserva resultado e garmin_workout_id que vêm do sync automático
+    # e bloqueia edição manual de treinos futuros (apenas IA pode sobrescrever)
     existing = await db.semanas.find_one(
         {"semana_inicio": plano.semana_inicio, "user_id": user_id})
     data = plano.model_dump()
     data["user_id"] = user_id
     if existing:
-        preserve_map = {
-            t["data"]: {
-                "resultado": t.get("resultado"),
-                "garmin_workout_id": t.get("garmin_workout_id"),
-            }
+        existing_map = {
+            t["data"]: t
             for t in existing.get("treinos", [])
         }
-        for t in data["treinos"]:
-            saved = preserve_map.get(t["data"], {})
+        for i, t in enumerate(data["treinos"]):
+            saved = existing_map.get(t["data"], {})
+            # preserva resultado e garmin_workout_id do sync
             if saved.get("resultado") and not t.get("resultado"):
                 t["resultado"] = saved["resultado"]
             if saved.get("garmin_workout_id") and not t.get("garmin_workout_id"):
                 t["garmin_workout_id"] = saved["garmin_workout_id"]
+            # bloqueia alteração de treinos futuros pelo usuário
+            if t["data"] > today_iso and saved:
+                data["treinos"][i] = saved
 
     await db.semanas.replace_one(
         {"semana_inicio": plano.semana_inicio, "user_id": user_id},
