@@ -227,6 +227,59 @@ async def gerar_proxima_semana(request: Request, semana_atual: str):
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@router.post("/gerar-primeira-semana/{semana_inicio}")
+async def gerar_primeira_semana(request: Request, semana_inicio: str):
+    """Monta a 1ª semana de um atleta sem histórico (a partir do perfil) e SALVA.
+
+    Marca a semana com origem='auto' para que o usuário possa apagá-la depois
+    caso se arrependa (enquanto não houver nenhum treino já realizado)."""
+    from app.services.plano_semana_service import gerar_primeira_semana as _gerar
+
+    db = get_db()
+    user_id = request.state.user_id
+
+    # Não sobrescreve uma semana que já tem treino real registrado.
+    existing = await db.semanas.find_one(
+        {"semana_inicio": semana_inicio, "user_id": user_id})
+    if existing and any(
+        (t.get("tipo") != "DESCANSO" and t.get("duracao_min")) or t.get("resultado")
+        for t in existing.get("treinos", [])
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Esta semana já tem treinos. Apague-os antes de gerar de novo.")
+
+    plano = await _gerar(user_id, semana_inicio)
+    doc = {
+        "semana_inicio": semana_inicio,
+        "user_id": user_id,
+        "objetivo": plano.get("progressao", ""),
+        "origem": "auto",
+        "treinos": plano["treinos"],
+    }
+    await db.semanas.replace_one(
+        {"semana_inicio": semana_inicio, "user_id": user_id}, doc, upsert=True)
+    return plano
+
+
+@router.delete("/primeira-semana/{semana_inicio}")
+async def apagar_primeira_semana(request: Request, semana_inicio: str):
+    """Apaga uma semana gerada automaticamente (undo), desde que nenhum treino
+    já tenha sido realizado (resultado) — não deixa apagar histórico real."""
+    db = get_db()
+    user_id = request.state.user_id
+    doc = await db.semanas.find_one(
+        {"semana_inicio": semana_inicio, "user_id": user_id})
+    if not doc:
+        return {"status": "vazio"}
+    if any(t.get("resultado") for t in doc.get("treinos", [])):
+        raise HTTPException(
+            status_code=409,
+            detail="Já há treino realizado nesta semana — não dá para apagar tudo.")
+    await db.semanas.delete_one({"semana_inicio": semana_inicio, "user_id": user_id})
+    return {"status": "apagado", "semana": semana_inicio}
+
+
 class EnviarGarminBody(BaseModel):
     semana_inicio: str
     objetivo: str = ""
@@ -811,9 +864,10 @@ _PAGINA_ZONAS = """<!DOCTYPE html>
   * { box-sizing:border-box; margin:0; padding:0; }
   :root { --green:#0e8a7d; --text:#1f2937; --muted:#6b7280; --border:#e5e7eb; --bg:#f0f2f5; }
   body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; background:var(--bg); color:var(--text); }
-  nav { background:#fff; border-bottom:1px solid var(--border); padding:14px 20px; display:flex; align-items:center; gap:10px; }
-  nav .logo { font-weight:800; color:var(--green); }
-  nav a { margin-left:auto; color:var(--muted); text-decoration:none; font-size:.9rem; font-weight:600; }
+  nav { background:var(--green); color:#fff; padding:14px 20px; display:flex; align-items:center; gap:10px; box-shadow:0 2px 8px rgba(0,0,0,.2); }
+  nav .logo { font-weight:800; font-size:1.1rem; }
+  nav a { margin-left:auto; color:rgba(255,255,255,.85); text-decoration:none; font-size:.9rem; font-weight:600; white-space:nowrap; }
+  nav a:hover { color:#fff; text-decoration:underline; }
   main { max-width:560px; margin:0 auto; padding:24px 16px 60px; }
   h1 { font-size:1.4rem; margin-bottom:6px; }
   .sub { color:var(--muted); margin-bottom:22px; font-size:.92rem; }
@@ -993,9 +1047,10 @@ _PAGINA_INTEGRACAO = """<!DOCTYPE html>
   * { box-sizing:border-box; margin:0; padding:0; }
   :root { --green:#0e8a7d; --text:#1f2937; --muted:#6b7280; --border:#e5e7eb; --bg:#f0f2f5; }
   body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; background:var(--bg); color:var(--text); }
-  nav { background:#fff; border-bottom:1px solid var(--border); padding:14px 20px; display:flex; align-items:center; gap:10px; }
-  nav .logo { font-weight:800; color:var(--green); }
-  nav a { margin-left:auto; color:var(--muted); text-decoration:none; font-size:.9rem; font-weight:600; }
+  nav { background:var(--green); color:#fff; padding:14px 20px; display:flex; align-items:center; gap:10px; box-shadow:0 2px 8px rgba(0,0,0,.2); }
+  nav .logo { font-weight:800; font-size:1.1rem; }
+  nav a { margin-left:auto; color:rgba(255,255,255,.85); text-decoration:none; font-size:.9rem; font-weight:600; white-space:nowrap; }
+  nav a:hover { color:#fff; text-decoration:underline; }
   main { max-width:560px; margin:0 auto; padding:24px 16px 60px; }
   h1 { font-size:1.4rem; margin-bottom:6px; }
   .sub { color:var(--muted); margin-bottom:22px; font-size:.92rem; line-height:1.5; }
@@ -1129,9 +1184,10 @@ _PAGINA_CALENDARIO = """<!DOCTYPE html>
   * { box-sizing:border-box; margin:0; padding:0; }
   :root { --green:#0e8a7d; --text:#1f2937; --muted:#6b7280; --border:#e5e7eb; --bg:#f0f2f5; }
   body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; background:var(--bg); color:var(--text); }
-  nav { background:#fff; border-bottom:1px solid var(--border); padding:14px 20px; display:flex; align-items:center; gap:10px; }
-  nav .logo { font-weight:800; color:var(--green); }
-  nav a { margin-left:auto; color:var(--muted); text-decoration:none; font-size:.9rem; font-weight:600; }
+  nav { background:var(--green); color:#fff; padding:14px 20px; display:flex; align-items:center; gap:10px; box-shadow:0 2px 8px rgba(0,0,0,.2); }
+  nav .logo { font-weight:800; font-size:1.1rem; }
+  nav a { margin-left:auto; color:rgba(255,255,255,.85); text-decoration:none; font-size:.9rem; font-weight:600; white-space:nowrap; }
+  nav a:hover { color:#fff; text-decoration:underline; }
   main { max-width:620px; margin:0 auto; padding:24px 16px 60px; }
   h1 { font-size:1.4rem; margin-bottom:6px; }
   .sub { color:var(--muted); margin-bottom:22px; font-size:.92rem; }
@@ -1365,40 +1421,58 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
 <title>MTB Nutrition — Meu perfil</title>
 <style>
   * { box-sizing:border-box; margin:0; padding:0; }
-  :root { --green:#0e8a7d; --text:#1f2937; --muted:#6b7280; --border:#e5e7eb; --bg:#f0f2f5; }
+  :root { --green:#128c7e; --text:#1f2937; --muted:#6b7280; --border:#e5e7eb; --bg:#f0f2f5; }
   body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; background:var(--bg); color:var(--text); }
-  nav { background:#fff; border-bottom:1px solid var(--border); padding:14px 20px; display:flex; align-items:center; gap:10px; }
-  nav .logo { font-weight:800; color:var(--green); }
-  nav a { margin-left:auto; color:var(--muted); text-decoration:none; font-size:.9rem; font-weight:600; }
-  main { max-width:520px; margin:0 auto; padding:24px 16px 60px; }
+  nav { background:var(--green); color:#fff; padding:14px 20px; display:flex; align-items:center; gap:10px; box-shadow:0 2px 8px rgba(0,0,0,.2); }
+  nav .logo { font-weight:800; font-size:1.1rem; }
+  nav a { margin-left:auto; color:rgba(255,255,255,.85); text-decoration:none; font-size:.9rem; font-weight:600; white-space:nowrap; }
+  nav a:hover { color:#fff; text-decoration:underline; }
+  main { max-width:560px; margin:0 auto; padding:24px 16px 60px; }
   h1 { font-size:1.4rem; margin-bottom:6px; }
   .sub { color:var(--muted); margin-bottom:22px; font-size:.92rem; }
-  .card { background:#fff; border-radius:14px; padding:22px; box-shadow:0 1px 4px rgba(0,0,0,.06); margin-bottom:18px; }
+  .section-title { font-size:1rem; font-weight:800; color:var(--text); margin:28px 0 12px; display:flex; align-items:center; gap:8px; }
+  .section-title::after { content:''; flex:1; height:1px; background:var(--border); }
+  .card { background:#fff; border-radius:14px; padding:22px; box-shadow:0 1px 4px rgba(0,0,0,.06); margin-bottom:14px; }
+  .card h2 { font-size:1rem; color:var(--green); margin-bottom:6px; }
+  .card p.hint { font-size:.85rem; color:var(--muted); margin-bottom:14px; line-height:1.5; }
   label.fld { display:block; font-size:.72rem; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; margin-bottom:3px; margin-top:14px; }
   input, select { width:100%; border:1.5px solid var(--border); border-radius:9px; padding:11px; font-size:1rem; outline:none; font-family:inherit; }
   input:focus, select:focus { border-color:var(--green); }
+  input[type=file] { padding:8px; font-size:.85rem; }
   .duo { display:flex; gap:12px; }
   .duo > div { flex:1; }
-  button { width:100%; padding:14px; background:var(--green); color:#fff; border:none; border-radius:10px; font-size:1rem; font-weight:700; cursor:pointer; margin-top:18px; }
-  button:disabled { opacity:.6; }
-  .status { margin-top:14px; padding:12px; border-radius:10px; font-size:.9rem; display:none; }
-  .ok { background:#e8f5e9; color:#2e7d32; display:block; }
+  button { width:100%; padding:13px; background:var(--green); color:#fff; border:none; border-radius:10px; font-size:1rem; font-weight:700; cursor:pointer; margin-top:14px; }
+  button:hover:not(:disabled) { background:#0c7669; }
+  button:disabled { opacity:.6; cursor:not-allowed; }
+  button.sec { background:#374151; margin-top:8px; }
+  button.sec:hover:not(:disabled) { background:#1f2937; }
+  .status { margin-top:12px; padding:11px; border-radius:10px; font-size:.88rem; display:none; }
+  .ok  { background:#e8f5e9; color:#2e7d32; display:block; }
   .err { background:#fdecea; color:#c62828; display:block; }
-  .tdee { background:#eef6ff; border-radius:10px; padding:12px 14px; margin-top:16px; font-size:.9rem; color:#1d4ed8; }
-  .tdee b { font-size:1.1rem; }
+  .info { background:#eef6ff; color:#1d4ed8; display:block; }
+  .tdee { background:#eef6ff; border-radius:10px; padding:12px 14px; margin-top:14px; font-size:.9rem; color:#1d4ed8; }
+  .tdee b { font-size:1.05rem; }
+  .upload-row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .zona-row { display:grid; grid-template-columns:54px 1fr 14px 1fr; gap:10px; align-items:center; margin-bottom:12px; }
+  .zona-tag { font-weight:800; color:#fff; text-align:center; border-radius:6px; padding:6px 0; font-size:.85rem; }
+  .z1{background:#9ca3af;} .z2{background:#3b82f6;} .z3{background:#10b981;}
+  .z4{background:#f59e0b;} .z5{background:#ef4444;}
+  .sep { text-align:center; color:var(--muted); }
 </style>
 </head>
 <body>
 <nav>
-  <span style="font-size:1.4rem">👤</span>
+  <span style="font-size:1.3rem">👤</span>
   <span class="logo">MTB Nutrition</span>
   <a href="/portal/">← Voltar ao portal</a>
 </nav>
 <main>
   <h1>Meu perfil</h1>
-  <p class="sub">Esses dados alimentam o cálculo de calorias de manutenção (TDEE) que ajusta seu cardápio conforme a fase da prova.</p>
+  <p class="sub">Dados pessoais, objetivo de treino e zonas de frequência cardíaca.</p>
+
+  <!-- ── Dados pessoais ── -->
   <div class="card">
-    <form id="form" onsubmit="salvar(event)">
+    <form id="form" onsubmit="salvarPerfil(event)">
       <div class="duo">
         <div>
           <label class="fld">Peso (kg)</label>
@@ -1432,12 +1506,51 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
         <option value="emagrecimento" {{OBJ_emagrecimento}}>Emagrecer</option>
       </select>
       <div id="desc-objetivo" style="margin-top:10px;padding:12px 14px;border-radius:10px;background:#f0f9f8;font-size:.88rem;color:#065f46;line-height:1.5;"></div>
-      <button type="submit" id="btn">Salvar perfil</button>
-      <div id="st" class="status"></div>
+      <button type="submit" id="btn-perfil">Salvar perfil</button>
+      <div id="st-perfil" class="status"></div>
     </form>
+  </div>
+
+  <!-- ── Zonas de FC ── -->
+  <div class="section-title">❤️ Zonas de frequência cardíaca</div>
+
+  <div class="card">
+    <h2>📥 Importar do Garmin</h2>
+    <p class="hint">Puxa as zonas oficiais do seu perfil de ciclismo direto da conta Garmin — sem print, sem IA.</p>
+    <button id="btnGarmin" onclick="importarGarmin()">📥 Importar zonas do Garmin</button>
+    <div id="stGarmin" class="status"></div>
+  </div>
+
+  <div class="card">
+    <h2>📷 Ler de uma imagem</h2>
+    <p class="hint">Tire um print da tela de zonas no app/relógio Garmin e envie — a IA preenche os campos.</p>
+    <div class="upload-row">
+      <input type="file" id="img" accept="image/*">
+      <button class="sec" id="btnLer" style="width:auto;padding:11px 16px;margin-top:0" onclick="lerImagem()">🤖 Ler zonas</button>
+    </div>
+    <div id="stImg" class="status"></div>
+  </div>
+
+  <div class="card">
+    <h2>✏️ Zonas (bpm)</h2>
+    <p class="hint">Min e max de cada zona. Edite manualmente a qualquer momento.</p>
+    <div id="zonas"></div>
+    <div class="duo" style="margin-top:14px">
+      <div>
+        <label class="fld">FC máxima</label>
+        <input type="number" id="fc_max" min="100" max="230">
+      </div>
+      <div>
+        <label class="fld">Limiar de lactato</label>
+        <input type="number" id="limiar" min="100" max="230">
+      </div>
+    </div>
+    <button id="btnSalvarZonas" onclick="salvarZonas()">💾 Salvar zonas</button>
+    <div id="st-zonas" class="status"></div>
   </div>
 </main>
 <script>
+// ── Perfil ──
 const _OBJ_DESC = {
   performance_mtb: '🚵 Modelo polarizado: até 2 sessões duras por semana (VO2max + Tiros), dias fáceis em Z2 puro. A IA maximiza seu pico de performance para MTB.',
   aumentar_potencia: '⚡ Foco em sessões de limiar e VO2max para elevar FTP. A IA prioriza qualidade sobre quantidade e garante recuperação entre os dias duros.',
@@ -1463,9 +1576,9 @@ function calcTDEE(){
 ['peso_kg','altura_cm','idade','sexo'].forEach(id=>document.getElementById(id).addEventListener('input',calcTDEE));
 calcTDEE();
 
-async function salvar(ev){
+async function salvarPerfil(ev){
   ev.preventDefault();
-  const st=document.getElementById('st'), btn=document.getElementById('btn');
+  const st=document.getElementById('st-perfil'), btn=document.getElementById('btn-perfil');
   btn.disabled=true; btn.textContent='Salvando…';
   const body=new URLSearchParams({
     idade:document.getElementById('idade').value,
@@ -1481,6 +1594,92 @@ async function salvar(ev){
   }catch(e){ st.className='status err'; st.textContent='❌ '+e.message; }
   finally{ btn.disabled=false; btn.textContent='Salvar perfil'; }
 }
+
+// ── Zonas de FC ──
+const CORES = ['z1','z2','z3','z4','z5'];
+function renderZonas(zonas) {
+  const box = document.getElementById('zonas');
+  box.innerHTML = '';
+  for (let i = 1; i <= 5; i++) {
+    const z = (zonas || []).find(x => Number(x.zona) === i) || {min:'', max:''};
+    const row = document.createElement('div');
+    row.className = 'zona-row';
+    row.innerHTML = `
+      <div class="zona-tag ${CORES[i-1]}">Z${i}</div>
+      <div><label class="fld">min</label><input type="number" id="z${i}_min" min="60" max="230" value="${z.min ?? ''}"></div>
+      <div class="sep">–</div>
+      <div><label class="fld">max</label><input type="number" id="z${i}_max" min="60" max="230" value="${z.max ?? ''}"></div>`;
+    box.appendChild(row);
+  }
+}
+function coletarZonas() {
+  const zonas = [];
+  for (let i = 1; i <= 5; i++) {
+    zonas.push({
+      zona: i,
+      min: Number(document.getElementById(`z${i}_min`).value),
+      max: Number(document.getElementById(`z${i}_max`).value),
+    });
+  }
+  const fc = document.getElementById('fc_max').value;
+  const lim = document.getElementById('limiar').value;
+  return { fc_max: fc ? Number(fc) : null, limiar: lim ? Number(lim) : null, zonas };
+}
+function aplicarZonas(d) {
+  renderZonas(d.zonas);
+  if (d.fc_max != null) document.getElementById('fc_max').value = d.fc_max;
+  if (d.limiar != null) document.getElementById('limiar').value = d.limiar;
+}
+async function carregarZonas() {
+  try {
+    const r = await fetch('/workout/zonas/dados');
+    aplicarZonas(await r.json());
+  } catch(e) { renderZonas([]); }
+}
+async function importarGarmin() {
+  const btn=document.getElementById('btnGarmin'), st=document.getElementById('stGarmin');
+  btn.disabled=true; btn.textContent='Importando...'; st.className='status info'; st.textContent='📡 Lendo zonas do Garmin...';
+  try {
+    const r = await fetch('/workout/zonas/importar-garmin', {method:'POST'});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Erro');
+    aplicarZonas(d);
+    const esporte = d.sport ? ' (perfil ' + d.sport.toLowerCase() + ')' : '';
+    st.className='status ok'; st.textContent='✅ Zonas importadas do Garmin' + esporte + '! Confira e clique em Salvar.';
+  } catch(e) { st.className='status err'; st.textContent='❌ ' + e.message; }
+  finally { btn.disabled=false; btn.textContent='📥 Importar zonas do Garmin'; }
+}
+async function lerImagem() {
+  const inp=document.getElementById('img'), st=document.getElementById('stImg'), btn=document.getElementById('btnLer');
+  if (!inp.files.length) { st.className='status err'; st.textContent='⚠️ Escolha uma imagem primeiro.'; return; }
+  btn.disabled=true; btn.textContent='Lendo...'; st.className='status info'; st.textContent='🤖 Analisando a imagem...';
+  try {
+    const fd = new FormData(); fd.append('imagem', inp.files[0]);
+    const r = await fetch('/workout/zonas/extrair', {method:'POST', body: fd});
+    const d = await r.json();
+    if (!r.ok) { const err = new Error(d.detail || 'Erro'); err.cota = (r.status === 429); throw err; }
+    aplicarZonas(d);
+    st.className='status ok'; st.textContent='✅ Zonas preenchidas! Confira e clique em Salvar.';
+  } catch(e) {
+    if (e.cota) { st.className='status info'; st.textContent='⏳ ' + e.message; }
+    else { st.className='status err'; st.textContent='❌ ' + e.message; }
+  }
+  finally { btn.disabled=false; btn.textContent='🤖 Ler zonas'; }
+}
+async function salvarZonas() {
+  const btn=document.getElementById('btnSalvarZonas'), st=document.getElementById('st-zonas');
+  btn.disabled=true; btn.textContent='Salvando...'; st.className='status';
+  try {
+    const r = await fetch('/workout/zonas/salvar', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(coletarZonas())});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Erro');
+    aplicarZonas(d);
+    const sync = (d.garmin_sync && d.garmin_sync.ok) ? ' e sincronizadas com o Garmin 📤' : '';
+    st.className='status ok'; st.textContent='✅ Zonas salvas' + sync;
+  } catch(e) { st.className='status err'; st.textContent='❌ ' + e.message; }
+  finally { btn.disabled=false; btn.textContent='💾 Salvar zonas'; }
+}
+carregarZonas();
 </script>
 </body>
 </html>"""

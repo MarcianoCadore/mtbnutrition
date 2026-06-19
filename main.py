@@ -12,7 +12,7 @@ from fastapi.responses import RedirectResponse, HTMLResponse
 from contextlib import asynccontextmanager
 
 from app.tasks.scheduler import start_scheduler, stop_scheduler
-from app.routes import workout, nutrition, whatsapp, portal, chat as chat_router
+from app.routes import workout, nutrition, whatsapp, portal, chat as chat_router, admin as admin_router
 from app.services import user_service
 from app.services.whatsapp_service import send_message
 from app.services.mongo_service import get_db
@@ -305,6 +305,8 @@ async def auth(request: Request, call_next):
 
 # ─── Middleware: injeta widget de chat em páginas HTML autenticadas ──────────
 
+_ADMIN_NAV_LINK = '<a href="/admin" class="admin-nav-link">⚙ Admin</a>'
+
 @app.middleware("http")
 async def inject_chat(request: Request, call_next):
     response = await call_next(request)
@@ -314,16 +316,37 @@ async def inject_chat(request: Request, call_next):
     if "text/html" not in ct:
         return response
     user_id = getattr(request.state, "user_id", None)
-    if user_id:
-        db = get_db()
-        from bson import ObjectId
-        u = await db.users.find_one({"_id": ObjectId(user_id)}, {"features": 1})
-        if u and u.get("features", {}).get("chat") is False:
-            return response
+    if not user_id:
+        return response
+
+    db = get_db()
+    from bson import ObjectId
+    u = await db.users.find_one({"_id": ObjectId(user_id)}, {"login": 1, "features": 1})
+    if not u:
+        return response
+
+    is_admin = u.get("login") == "marciano"
+    chat_ativo = u.get("features", {}).get("chat") is not False
+
+    # Nada a injetar: não é admin e chat está desativado
+    if not is_admin and not chat_ativo:
+        return response
+
     body = b"".join([chunk async for chunk in response.body_iterator])
     html = body.decode("utf-8", errors="replace")
-    if "</body>" in html:
+
+    # Injeta link Admin antes do "Sair" (ou antes de </nav> como fallback)
+    if is_admin and not request.url.path.startswith("/admin"):
+        _LOGOUT_ANCHOR = '<a href="/logout">'
+        if _LOGOUT_ANCHOR in html:
+            html = html.replace(_LOGOUT_ANCHOR, _ADMIN_NAV_LINK + _LOGOUT_ANCHOR, 1)
+        elif "</nav>" in html:
+            html = html.replace("</nav>", _ADMIN_NAV_LINK + "</nav>", 1)
+
+    # Injeta widget de chat
+    if chat_ativo and "</body>" in html:
         html = html.replace("</body>", _CHAT_WIDGET + "</body>", 1)
+
     return HTMLResponse(html, status_code=response.status_code)
 
 
@@ -334,6 +357,7 @@ app.include_router(workout.router,         prefix="/workout",   tags=["Treinos"]
 app.include_router(nutrition.router,       prefix="/nutrition", tags=["Nutrição"])
 app.include_router(whatsapp.router,        prefix="/whatsapp",  tags=["WhatsApp"])
 app.include_router(chat_router.router,     prefix="/chat",      tags=["Chat"])
+app.include_router(admin_router.router,    prefix="/admin",     tags=["Admin"])
 
 
 # ─── Health ───────────────────────────────────────────────────────────────────

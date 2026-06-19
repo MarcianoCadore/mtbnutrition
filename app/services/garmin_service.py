@@ -364,8 +364,10 @@ async def sync_treinos_planejados(user_id: str, semana_inicio: str) -> int:
     if mudancas:
         try:
             from app.services.whatsapp_service import send_message
-            if settings.WHATSAPP_TO:
-                await send_message(settings.WHATSAPP_TO, _formatar_mudancas_treino(mudancas))
+            from app.services.user_service import telefone_notificavel
+            telefone = await telefone_notificavel(user_id)
+            if telefone:
+                await send_message(telefone, _formatar_mudancas_treino(mudancas))
         except Exception as e:
             logger.error("WhatsApp mudanças de treino error: %s", e)
 
@@ -677,9 +679,11 @@ async def sync_atividades(user_id: str, semana_inicio: str) -> int:
         if primeira_vez:
             try:
                 from app.services.whatsapp_service import send_message
-                if settings.WHATSAPP_TO and resultado.get("analise_ia"):
+                from app.services.user_service import telefone_notificavel
+                telefone = await telefone_notificavel(user_id)
+                if telefone and resultado.get("analise_ia"):
                     msg = _formatar_pos_treino(act_date, treino_planejado, resultado)
-                    await send_message(settings.WHATSAPP_TO, msg)
+                    await send_message(telefone, msg)
             except Exception as e:
                 logger.error("WhatsApp pós-treino error: %s", e)
 
