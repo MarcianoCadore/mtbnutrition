@@ -6,6 +6,11 @@ venv/
 .venv/
 *.egg-info/
 
+# Testes / cobertura
+.coverage
+coverage.xml
+htmlcov/
+
 # Env
 .env
 
