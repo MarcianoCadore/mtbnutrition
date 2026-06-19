@@ -299,7 +299,7 @@ def _content_to_api(content) -> list[dict]:
     return result
 
 
-async def responder(user_id: str, mensagem: str) -> str:
+async def responder(user_id: str, mensagem: str) -> tuple[str, bool]:
     historico = await get_historico(user_id)
     sistema = await _build_sistema(user_id)
 
@@ -310,6 +310,7 @@ async def responder(user_id: str, mensagem: str) -> str:
     messages.append({"role": "user", "content": mensagem})
 
     resposta = None
+    ferramentas_usadas = False
     for _ in range(8):
         try:
             resp = await _client.messages.create(
@@ -324,6 +325,7 @@ async def responder(user_id: str, mensagem: str) -> str:
             break
 
         if resp.stop_reason == "tool_use":
+            ferramentas_usadas = True
             assistant_content = _content_to_api(resp.content)
             messages.append({"role": "assistant", "content": assistant_content})
 
@@ -352,4 +354,4 @@ async def responder(user_id: str, mensagem: str) -> str:
 
     await _salvar_mensagem(user_id, "user", mensagem)
     await _salvar_mensagem(user_id, "assistant", resposta)
-    return resposta
+    return resposta, ferramentas_usadas

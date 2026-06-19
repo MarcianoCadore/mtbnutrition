@@ -24,5 +24,5 @@ async def mensagem(request: Request, body: MensagemInput):
     texto = body.texto.strip()
     if not texto:
         return JSONResponse({"erro": "Mensagem vazia"}, status_code=400)
-    resposta = await chat_service.responder(user_id, texto)
-    return JSONResponse({"resposta": resposta})
+    resposta, recarregar = await chat_service.responder(user_id, texto)
+    return JSONResponse({"resposta": resposta, "recarregar": recarregar})

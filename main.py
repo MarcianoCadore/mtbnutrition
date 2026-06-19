@@ -88,7 +88,7 @@ _CHAT_WIDGET = """
 .cw-typing span:nth-child(2){animation-delay:.18s}
 .cw-typing span:nth-child(3){animation-delay:.36s}
 @keyframes cw-bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-6px)}}
-#cw-foot{padding:10px 12px;border-top:1px solid #e0e0e0;display:flex;gap:8px;flex-shrink:0}
+#cw-foot{padding:10px 12px;border-top:1px solid #e0e0e0;display:flex;gap:8px;flex-shrink:0;align-items:flex-end}
 #cw-input{flex:1;border:1.5px solid #e0e0e0;border-radius:10px;padding:9px 12px;font-size:.88rem;font-family:inherit;resize:none;outline:none;max-height:100px;overflow-y:auto;line-height:1.4}
 #cw-input:focus{border-color:#128c7e}
 #cw-send{background:#128c7e;color:#fff;border:none;border-radius:10px;padding:9px 14px;font-size:.88rem;font-weight:700;cursor:pointer;flex-shrink:0}
@@ -177,6 +177,7 @@ _CHAT_WIDGET = """
       const d = await r.json();
       typing.remove();
       cwAddMsg('assistant', d.resposta || d.erro || 'Erro ao obter resposta.');
+      if(d.recarregar){ setTimeout(()=>location.reload(), 1500); }
     }catch(e){
       typing.remove();
       cwAddMsg('assistant','Erro de conexão. Tente novamente.');
