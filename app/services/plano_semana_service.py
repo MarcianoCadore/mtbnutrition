@@ -4,7 +4,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 
-import google.generativeai as genai
+from google import genai as _genai_sdk
 
 from config.settings import settings
 from app.services.mongo_service import get_db
@@ -12,8 +12,19 @@ from app.services.user_service import get_por_id
 
 logger = logging.getLogger(__name__)
 
-genai.configure(api_key=settings.GEMINI_API_KEY)
-_client = genai.GenerativeModel("gemini-2.5-flash-lite")
+
+class _GeminiClient:
+    """Thin wrapper preserving the .generate_content(prompt) interface."""
+
+    def __init__(self, model: str):
+        self._sdk = _genai_sdk.Client(api_key=settings.GEMINI_API_KEY)
+        self._model = model
+
+    def generate_content(self, prompt: str):
+        return self._sdk.models.generate_content(model=self._model, contents=prompt)
+
+
+_client = _GeminiClient("gemini-2.5-flash-lite")
 
 _TIPOS_VALIDOS = {"Z2_LONGO", "TIROS", "VO2MAX", "TEMPO", "FORCA", "RECUPERACAO", "DESCANSO"}
 
@@ -419,3 +430,166 @@ def _fallback(treinos_atuais: list, proxima: str, preferencias: dict | None = No
         "progressao": "Duração de cada treino aumentada em 5%.",
         "treinos": novos,
     }
+
+
+# ─── Primeira semana (cold start, sem histórico nem Garmin) ───────────────────
+
+# Sequência base de sessões para a 1ª semana de um atleta SEM histórico.
+# Pensada para iniciante: volume modesto, muita base aeróbica (Z2) e
+# recuperação, no máximo 1 dia de qualidade por objetivo. Os dias úteis recebem
+# essa sequência em ordem; o dia de fim de semana (sáb>dom) vira um longão leve.
+_PRIMEIRA_SEMANA_SEQ = {
+    "performance_mtb":    ["RECUPERACAO", "TEMPO", "RECUPERACAO", "VO2MAX", "RECUPERACAO"],
+    "aumentar_potencia":  ["RECUPERACAO", "TEMPO", "RECUPERACAO", "TIROS", "RECUPERACAO"],
+    "base_aerobica":      ["Z2_LONGO", "RECUPERACAO", "Z2_LONGO", "RECUPERACAO", "Z2_LONGO"],
+    "manter_performance": ["RECUPERACAO", "TEMPO", "RECUPERACAO", "FORCA", "RECUPERACAO"],
+    "emagrecimento":      ["Z2_LONGO", "RECUPERACAO", "Z2_LONGO", "TEMPO", "RECUPERACAO"],
+}
+
+# Durações gentis para a 1ª semana (min). Mais curtas que os defaults: o novato
+# está começando, então não queremos sobrecarregar logo de cara.
+_PRIMEIRA_SEMANA_DUR = {
+    "RECUPERACAO": 45,
+    "Z2_LONGO":    75,
+    "TEMPO":       55,
+    "FORCA":       50,
+    "TIROS":       50,
+    "VO2MAX":      50,
+}
+_PRIMEIRA_SEMANA_LONGAO_MIN = 90   # longão leve de fim de semana p/ iniciante
+
+
+def _dia_treino(data_iso: str, tipo: str, duracao=None, descricao="", cadencia=None) -> dict:
+    return {
+        "data": data_iso,
+        "tipo": tipo,
+        "duracao_min": duracao if tipo != "DESCANSO" else None,
+        "descricao": descricao,
+        "cadencia_rpm": cadencia,
+    }
+
+
+def _montar_primeira_semana_template(semana_inicio: str, objetivo: str,
+                                     dias_treino: list[int]) -> list[dict]:
+    """Monta deterministicamente a 1ª semana a partir do perfil. Sempre válida.
+
+    - Dias fora de dias_treino → DESCANSO.
+    - Dia de fim de semana (sáb>dom, se houver treino) → longão leve Z2.
+    - Demais dias de treino → sequência base do objetivo, em ordem.
+    """
+    seq = _PRIMEIRA_SEMANA_SEQ.get(objetivo) or _PRIMEIRA_SEMANA_SEQ["performance_mtb"]
+    dias_treino = sorted(dias_treino or _DIAS_TREINO_PADRAO)
+
+    # Define o dia do longão (fim de semana com treino): sábado tem prioridade.
+    dia_longao = next((c for c in (5, 6) if c in dias_treino), None)
+
+    treinos: list[dict] = []
+    slot = 0
+    for offset in range(7):
+        data = _shift_data(semana_inicio, offset)
+        wd = offset  # semana_inicio é segunda → offset == weekday (0=seg..6=dom)
+
+        if wd not in dias_treino:
+            treinos.append(_dia_treino(data, "DESCANSO"))
+            continue
+
+        if wd == dia_longao:
+            treinos.append(_dia_treino(
+                data, "Z2_LONGO", _PRIMEIRA_SEMANA_LONGAO_MIN,
+                "Longão leve de base aeróbica (Z2). Ritmo de conversa, sem forçar — "
+                "objetivo é tempo em movimento, não velocidade.", "85-95"))
+            continue
+
+        tipo = seq[slot % len(seq)]
+        slot += 1
+        treinos.append(_dia_treino(
+            data, tipo, _PRIMEIRA_SEMANA_DUR.get(tipo, 50),
+            _DESCRICAO_PADRAO.get(tipo, ""), "85-95"))
+
+    return treinos
+
+
+async def gerar_primeira_semana(user_id: str, semana_inicio: str) -> dict:
+    """Gera a 1ª semana de treinos de um atleta SEM histórico nem Garmin.
+
+    Backbone determinístico montado a partir do perfil (objetivo, dias de treino).
+    Se a IA estiver disponível, refina as DESCRIÇÕES dos treinos (mantendo os
+    tipos/durações conservadores do template). Nunca falha: se a IA der erro,
+    devolve o template puro.
+    """
+    u = await get_por_id(user_id)
+    u = u or {}
+    nome_atleta = u.get("nome") or "Atleta"
+    perfil = u.get("perfil") or {}
+    pref = u.get("preferencias") or {}
+    zonas_doc = u.get("zonas") or {}
+
+    objetivo = pref.get("objetivo") or "performance_mtb"
+    dias_treino = pref.get("dias_treino") or _DIAS_TREINO_PADRAO
+    idade = int(perfil.get("idade") or 34)
+    peso = float(perfil.get("peso_kg") or 80)
+    fc_max = int(zonas_doc.get("fc_max") or perfil.get("fc_max") or 190)
+
+    treinos = _montar_primeira_semana_template(semana_inicio, objetivo, dias_treino)
+
+    # ── Refinamento opcional das descrições via IA (best-effort) ──────────────
+    analise = (
+        "Primeira semana montada a partir do seu perfil — volume leve para começar "
+        "com segurança. Conforme você treinar e conectar o Garmin, os próximos planos "
+        "ficam mais personalizados."
+    )
+    progressao = "Semana inicial conservadora: base aeróbica, recuperação e um toque de qualidade."
+
+    resumo_dias = "\n".join(
+        f"  {t['data']} ({_NOMES_DIA_CURTO(t['data'])}) → {t['tipo']}"
+        f"{' ' + str(t['duracao_min']) + 'min' if t['duracao_min'] else ''}"
+        for t in treinos
+    )
+    prompt = f"""Você é um coach de ciclismo MTB. Escreva descrições curtas e motivadoras
+para a PRIMEIRA semana de treinos de um INICIANTE que não tem histórico.
+
+ATLETA: {nome_atleta}, {idade} anos, {peso:.0f} kg, FCmáx {fc_max} bpm, objetivo: {objetivo}.
+
+Mantenha EXATAMENTE os tipos e durações abaixo (não invente treinos novos, não mude dias):
+{resumo_dias}
+
+Para cada dia com treino, escreva uma descrição clara de 1-2 frases que um iniciante
+entenda (o que fazer, intensidade em zona de FC, cadência). Para DESCANSO, deixe vazio.
+
+Responda APENAS JSON válido, sem markdown:
+{{
+  "treinos": [
+    {{"data": "YYYY-MM-DD", "descricao": "..."}}
+  ]
+}}"""
+
+    try:
+        response = _client.generate_content(prompt)
+        raw = response.text.strip().replace("```json", "").replace("```", "").strip()
+        data = json.loads(raw)
+        desc_por_data = {
+            t.get("data"): (t.get("descricao") or "").strip()
+            for t in data.get("treinos", [])
+        }
+        for t in treinos:
+            if t["tipo"] != "DESCANSO" and desc_por_data.get(t["data"]):
+                t["descricao"] = desc_por_data[t["data"]]
+    except Exception as e:
+        logger.info("IA indisponível para refinar 1ª semana (%s) — usando template puro", e)
+
+    return {
+        "semana_inicio": semana_inicio,
+        "analise_semana": analise,
+        "progressao": progressao,
+        "treinos": treinos,
+    }
+
+
+_NOMES_DIA_C = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]
+
+
+def _NOMES_DIA_CURTO(data_iso: str) -> str:
+    try:
+        return _NOMES_DIA_C[datetime.strptime(data_iso, "%Y-%m-%d").weekday()]
+    except (ValueError, TypeError):
+        return "?"

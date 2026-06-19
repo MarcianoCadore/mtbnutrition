@@ -20,11 +20,13 @@ HTML = """<!DOCTYPE html>
     nav { background: var(--green); color: #fff; padding: 14px 24px; display: flex; align-items: center; gap: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
     nav .logo { font-size: 1.35rem; font-weight: 700; }
     nav .sub  { font-size: 0.8rem; opacity: .8; }
-    nav .nav-links { margin-left: auto; display: flex; gap: 16px; }
+    nav > div:first-of-type { flex-shrink: 0; }
+    nav .nav-links { margin-left: auto; display: flex; gap: 16px; align-items: center; }
     nav .nav-links a { color: #fff; text-decoration: none; font-size: 0.88rem; opacity: .85; white-space: nowrap; }
     nav .nav-links a:hover { opacity: 1; text-decoration: underline; }
     nav .nav-toggle { display: none; margin-left: auto; background: rgba(255,255,255,.15); border: none; color: #fff; font-size: 1.4rem; line-height: 1; width: 42px; height: 42px; border-radius: 8px; cursor: pointer; }
     nav .nav-user { color: rgba(255,255,255,.75); font-size: 0.85rem; font-weight: 600; white-space: nowrap; }
+    .admin-nav-link { color:#fff; text-decoration:none; font-size:.8rem; font-weight:700; background:rgba(255,255,255,.22); padding:4px 13px; border-radius:20px; white-space:nowrap; }
 
     main { max-width: 1400px; margin: 0 auto; padding: 24px 20px 80px; }
 
@@ -54,6 +56,12 @@ HTML = """<!DOCTYPE html>
     .card textarea { width: 100%; border: 1.5px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: .95rem; font-family: inherit; resize: vertical; min-height: 72px; outline: none; transition: border-color .2s; line-height: 1.5; }
     .card textarea:focus { border-color: var(--green); }
 
+    .novato-panel { background: #fff; border: 1.5px dashed var(--green); border-radius: 14px; padding: 28px 22px; margin-bottom: 24px; text-align: center; }
+    .novato-panel .np-emoji { font-size: 2.4rem; margin-bottom: 8px; }
+    .novato-panel .np-titulo { font-size: 1.15rem; font-weight: 800; margin-bottom: 6px; }
+    .novato-panel .np-sub { font-size: .92rem; color: var(--muted); line-height: 1.55; max-width: 560px; margin: 0 auto 18px; }
+    .novato-panel .np-botoes { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .novato-panel .np-botoes .btn { text-decoration: none; }
     .days-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; margin-bottom: 24px; }
     @media(max-width:1000px){ .days-grid { grid-template-columns: repeat(4,1fr); } }
     @media(max-width:760px) { .days-grid { grid-template-columns: repeat(2,1fr); } }
@@ -211,16 +219,29 @@ HTML = """<!DOCTYPE html>
 
     /* Ajustes para celular */
     @media(max-width:640px) {
-      nav { flex-wrap: wrap; padding: 12px 16px; gap: 8px; }
+      nav { position: relative; padding: 12px 16px; }
       nav .nav-toggle { display: block; }
       nav .nav-links {
-        display: none; width: 100%; flex-direction: column; gap: 0;
-        margin-left: 0; margin-top: 8px;
+        display: none;
+        position: absolute; top: 100%; left: 0; right: 0;
+        flex-direction: column; gap: 0;
+        background: var(--green);
+        box-shadow: 0 8px 24px rgba(0,0,0,.28);
+        z-index: 999;
+        margin-left: 0;
       }
       nav.open .nav-links { display: flex; }
-      nav .nav-links a {
-        font-size: 1rem; opacity: 1; padding: 13px 6px;
-        border-top: 1px solid rgba(255,255,255,.18);
+      nav .nav-links a, nav .nav-links .admin-nav-link {
+        font-size: 1rem; opacity: 1; padding: 14px 20px;
+        border-top: 1px solid rgba(255,255,255,.15);
+      }
+      nav .nav-links .admin-nav-link {
+        background: none; border-radius: 0; color: #fff; font-size: 1rem;
+        font-weight: 600; white-space: normal;
+      }
+      nav .nav-links .nav-user {
+        font-size: 1rem; padding: 14px 20px; opacity: .75;
+        border-top: 1px solid rgba(255,255,255,.15); display: block;
       }
       main { padding: 16px 12px 80px; }
       .card { padding: 16px; }
@@ -242,7 +263,6 @@ HTML = """<!DOCTYPE html>
     {{NAV_NUTRI}}
     <a href="/workout/calendario">📅 Provas</a>
     <a href="/workout/perfil">👤 Perfil</a>
-    <a href="/workout/zonas">❤️ Zonas FC</a>
     <a href="/workout/integracao">⌚ Conectar dispositivo</a>
     {{NAV_USER}}
     <a href="/logout">🚪 Sair</a>
@@ -265,12 +285,25 @@ HTML = """<!DOCTYPE html>
   </div>
 
   <div class="section-label" style="margin-bottom:12px">📅 Treinos da Semana</div>
+  <div class="novato-panel" id="novatoPanel" style="display:none">
+    <div class="np-emoji">🚴</div>
+    <div class="np-titulo">Sua semana está vazia</div>
+    <div class="np-sub">Você ainda não tem treinos nesta semana. Posso montar um plano pra você
+      a partir do seu perfil (idade, peso, objetivo e dias de treino) — ou você conecta
+      o Garmin para importar seus treinos.</div>
+    <div class="np-botoes">
+      <button class="btn btn-save" id="btnGerarNovato" onclick="gerarPrimeiraSemana()">✨ Montar minha semana</button>
+      <a class="btn btn-sec" href="/workout/integracao">⌚ Conectar Garmin</a>
+    </div>
+  </div>
+
   <div class="days-grid" id="daysGrid"></div>
 
   <div class="actions">
     <button class="btn btn-save" id="btnSave" onclick="salvar()">💾 Salvar Semana</button>
     <button class="btn btn-sec"  id="btnGarmin" onclick="sincronizarGarmin()">🔄 Sincronizar Garmin</button>
     <button class="btn btn-test" id="btnGenSemana" onclick="gerarProximaSemana()">🤖 Gerar próxima semana</button>
+    <button class="btn btn-sec"  id="btnApagarGerados" style="display:none" onclick="apagarTreinosGerados()">🗑 Apagar treinos gerados</button>
   </div>
 </main>
 
@@ -715,9 +748,64 @@ async function load() {
     document.getElementById('objetivo').value = d.objetivo || '';
     buildCards(d.treinos || []);
     _atualizarBotaoProximaSemana(d.treinos || []);
+    _atualizarBotoesNovato(d);
   } catch {
     buildCards([]);
     _atualizarBotaoProximaSemana([]);
+    _atualizarBotoesNovato({treinos: []});
+  }
+}
+
+function _temTreinoReal(treinos) {
+  return (treinos || []).some(t => t.tipo !== 'DESCANSO' && t.duracao_min);
+}
+
+function _atualizarBotoesNovato(d) {
+  const treinos = d.treinos || [];
+  const vazia = !_temTreinoReal(treinos);
+  // Painel de boas-vindas (gerar / conectar Garmin): só quando a semana está vazia.
+  const panel = document.getElementById('novatoPanel');
+  if (panel) panel.style.display = vazia ? '' : 'none';
+  // Botão de apagar: só para semana gerada automaticamente e ainda não realizada.
+  const btnApagar = document.getElementById('btnApagarGerados');
+  if (btnApagar) {
+    const geradaAuto = d.origem === 'auto' && !treinos.some(t => t.resultado);
+    btnApagar.style.display = (geradaAuto && !vazia) ? '' : 'none';
+  }
+}
+
+async function gerarPrimeiraSemana() {
+  const btn = document.getElementById('btnGerarNovato');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Montando sua semana...';
+  try {
+    const r = await fetch(`/workout/gerar-primeira-semana/${iso(monday)}`, {method: 'POST'});
+    if (!r.ok) throw new Error(await r.text());
+    toast('✅ Semana montada! Bons treinos.', 'ok');
+    await load();
+  } catch(e) {
+    toast('Erro ao montar a semana: ' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '✨ Montar minha semana';
+  }
+}
+
+async function apagarTreinosGerados() {
+  if (!confirm('Apagar todos os treinos gerados automaticamente nesta semana?')) return;
+  const btn = document.getElementById('btnApagarGerados');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Apagando...';
+  try {
+    const r = await fetch(`/workout/primeira-semana/${iso(monday)}`, {method: 'DELETE'});
+    if (!r.ok) throw new Error(await r.text());
+    toast('🗑 Treinos gerados apagados.', 'ok');
+    await load();
+  } catch(e) {
+    toast('Erro ao apagar: ' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '🗑 Apagar treinos gerados';
   }
 }
 

@@ -510,9 +510,10 @@ async def guia_nutricao(request: Request):
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   :root {{ --green:#0e8a7d; --text:#1f2937; --muted:#6b7280; --border:#e5e7eb; --bg:#f0f2f5; }}
   body {{ font-family:-apple-system,BlinkMacSystemFont,sans-serif; background:var(--bg); color:var(--text); line-height:1.5; }}
-  nav {{ background:#fff; border-bottom:1px solid var(--border); padding:14px 20px; display:flex; align-items:center; gap:10px; }}
-  nav .logo {{ font-weight:800; color:var(--green); }}
-  nav a {{ margin-left:auto; color:var(--muted); text-decoration:none; font-size:.9rem; font-weight:600; }}
+  nav {{ background:var(--green); color:#fff; padding:14px 20px; display:flex; align-items:center; gap:10px; box-shadow:0 2px 8px rgba(0,0,0,.2); }}
+  nav .logo {{ font-weight:800; font-size:1.1rem; }}
+  nav a {{ margin-left:auto; color:rgba(255,255,255,.85); text-decoration:none; font-size:.9rem; font-weight:600; white-space:nowrap; }}
+  nav a:hover {{ color:#fff; text-decoration:underline; }}
   main {{ max-width:760px; margin:0 auto; padding:24px 16px 60px; }}
   h1 {{ font-size:1.5rem; margin-bottom:6px; }}
   .sub {{ color:var(--muted); margin-bottom:24px; }}
@@ -612,9 +613,10 @@ async def guia_alimentos(request: Request):
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   :root {{ --green:#0e8a7d; --text:#1f2937; --muted:#6b7280; --border:#e5e7eb; --bg:#f0f2f5; }}
   body {{ font-family:-apple-system,BlinkMacSystemFont,sans-serif; background:var(--bg); color:var(--text); line-height:1.5; }}
-  nav {{ background:#fff; border-bottom:1px solid var(--border); padding:14px 20px; display:flex; align-items:center; gap:10px; }}
-  nav .logo {{ font-weight:800; color:var(--green); }}
-  nav a {{ margin-left:auto; color:var(--muted); text-decoration:none; font-size:.9rem; font-weight:600; }}
+  nav {{ background:var(--green); color:#fff; padding:14px 20px; display:flex; align-items:center; gap:10px; box-shadow:0 2px 8px rgba(0,0,0,.2); }}
+  nav .logo {{ font-weight:800; font-size:1.1rem; }}
+  nav a {{ margin-left:auto; color:rgba(255,255,255,.85); text-decoration:none; font-size:.9rem; font-weight:600; white-space:nowrap; }}
+  nav a:hover {{ color:#fff; text-decoration:underline; }}
   main {{ max-width:760px; margin:0 auto; padding:24px 16px 60px; }}
   h1 {{ font-size:1.5rem; margin-bottom:6px; }}
   .sub {{ color:var(--muted); margin-bottom:24px; }}
@@ -660,9 +662,10 @@ async def pagina_ajuste():
   * { box-sizing:border-box; margin:0; padding:0; }
   :root { --green:#0e8a7d; --text:#1f2937; --muted:#6b7280; --border:#e5e7eb; --bg:#f0f2f5; }
   body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; background:var(--bg); color:var(--text); }
-  nav { background:#fff; border-bottom:1px solid var(--border); padding:14px 20px; display:flex; align-items:center; gap:10px; }
-  nav .logo { font-weight:800; color:var(--green); }
-  nav a { margin-left:auto; color:var(--muted); text-decoration:none; font-size:.9rem; font-weight:600; }
+  nav { background:var(--green); color:#fff; padding:14px 20px; display:flex; align-items:center; gap:10px; box-shadow:0 2px 8px rgba(0,0,0,.2); }
+  nav .logo { font-weight:800; font-size:1.1rem; }
+  nav a { margin-left:auto; color:rgba(255,255,255,.85); text-decoration:none; font-size:.9rem; font-weight:600; white-space:nowrap; }
+  nav a:hover { color:#fff; text-decoration:underline; }
   main { max-width:560px; margin:0 auto; padding:24px 16px 60px; }
   h1 { font-size:1.4rem; margin-bottom:6px; }
   .sub { color:var(--muted); margin-bottom:20px; font-size:.92rem; }
@@ -835,9 +838,10 @@ async def pagina_chat():
   * { box-sizing:border-box; margin:0; padding:0; }
   :root { --green:#0e8a7d; --text:#1f2937; --muted:#6b7280; --border:#e5e7eb; --bg:#f0f2f5; }
   body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; background:var(--bg); color:var(--text); }
-  nav { background:#fff; border-bottom:1px solid var(--border); padding:14px 20px; display:flex; align-items:center; gap:10px; }
-  nav .logo { font-weight:800; color:var(--green); }
-  nav a { margin-left:auto; color:var(--muted); text-decoration:none; font-size:.9rem; font-weight:600; }
+  nav { background:var(--green); color:#fff; padding:14px 20px; display:flex; align-items:center; gap:10px; box-shadow:0 2px 8px rgba(0,0,0,.2); }
+  nav .logo { font-weight:800; font-size:1.1rem; }
+  nav a { margin-left:auto; color:rgba(255,255,255,.85); text-decoration:none; font-size:.9rem; font-weight:600; white-space:nowrap; }
+  nav a:hover { color:#fff; text-decoration:underline; }
   main { max-width:560px; margin:0 auto; padding:24px 16px 60px; }
   h1 { font-size:1.4rem; margin-bottom:6px; }
   .sub { color:var(--muted); margin-bottom:20px; font-size:.92rem; }
@@ -1020,9 +1024,10 @@ async def config_horarios():
   * { box-sizing:border-box; margin:0; padding:0; }
   :root { --green:#0e8a7d; --text:#1f2937; --muted:#6b7280; --border:#e5e7eb; --bg:#f0f2f5; }
   body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; background:var(--bg); color:var(--text); }
-  nav { background:#fff; border-bottom:1px solid var(--border); padding:14px 20px; display:flex; align-items:center; gap:10px; }
-  nav .logo { font-weight:800; color:var(--green); }
-  nav a { margin-left:auto; color:var(--muted); text-decoration:none; font-size:.9rem; font-weight:600; }
+  nav { background:var(--green); color:#fff; padding:14px 20px; display:flex; align-items:center; gap:10px; box-shadow:0 2px 8px rgba(0,0,0,.2); }
+  nav .logo { font-weight:800; font-size:1.1rem; }
+  nav a { margin-left:auto; color:rgba(255,255,255,.85); text-decoration:none; font-size:.9rem; font-weight:600; white-space:nowrap; }
+  nav a:hover { color:#fff; text-decoration:underline; }
   main { max-width:520px; margin:0 auto; padding:24px 16px 60px; }
   h1 { font-size:1.4rem; margin-bottom:6px; }
   .sub { color:var(--muted); margin-bottom:22px; font-size:.92rem; }

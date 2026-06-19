@@ -266,6 +266,22 @@ async def listar_usuarios() -> list[dict]:
     return await cursor.to_list(length=None)
 
 
+async def telefone_notificavel(user_id) -> str | None:
+    """Telefone (E.164) para onde notificar ESTE usuário, ou None.
+
+    Só devolve o número se o usuário verificou o telefone E tem o WhatsApp ativo.
+    Evita o bug multiusuário de notificações caírem num número global/fixo:
+    callers DEVEM usar este helper e, se vier None, simplesmente não enviar.
+    """
+    u = await get_por_id(user_id)
+    if not u or not u.get("telefone_verificado"):
+        return None
+    if not (u.get("whatsapp") or {}).get("ativo"):
+        return None
+    tel = (u.get("telefone") or "").strip()
+    return tel or None
+
+
 # ─── Índices únicos ───────────────────────────────────────────────────────────
 
 async def garantir_indices() -> None:
