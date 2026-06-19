@@ -93,6 +93,7 @@ _CHAT_WIDGET = """
 #cw-input:focus{border-color:#128c7e}
 #cw-send{background:#128c7e;color:#fff;border:none;border-radius:10px;padding:9px 14px;font-size:.88rem;font-weight:700;cursor:pointer;flex-shrink:0}
 #cw-send:disabled{opacity:.5;cursor:default}
+@media(max-width:600px){#cw-input{font-size:1rem}}
 </style>
 <div id="cw-panel">
   <div id="cw-head">
@@ -187,12 +188,8 @@ _CHAT_WIDGET = """
   }
   window.cwSend = cwSend;
 
-  // Enter envia; Shift+Enter quebra linha
   document.addEventListener('DOMContentLoaded',function(){
     const inp = document.getElementById('cw-input');
-    inp.addEventListener('keydown',function(e){
-      if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); cwSend(); }
-    });
     inp.addEventListener('input',function(){
       this.style.height='';
       this.style.height=Math.min(this.scrollHeight,100)+'px';
