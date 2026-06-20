@@ -812,14 +812,14 @@ async function apagarTreinosGerados() {
 function _atualizarBotaoProximaSemana(treinos) {
   const btn = document.getElementById('btnGenSemana');
   if (!btn) return;
-  const hoje = new Date();
-  hoje.setHours(0, 0, 0, 0);
-  const ehDomingo = hoje.getDay() === 0;
   const semanaAtual = iso(getMonday(new Date())) === iso(monday);
-  const todosConcluidos = treinos
-    .filter(t => t.tipo !== 'DESCANSO')
-    .every(t => new Date(t.data + 'T12:00:00') < hoje);
-  btn.style.display = (semanaAtual && (ehDomingo || todosConcluidos)) ? '' : 'none';
+  const treinosAtivos = treinos.filter(t => t.tipo !== 'DESCANSO');
+  const todosConcluidos = treinosAtivos.length > 0 && treinosAtivos.every(t => !!t.resultado);
+  const habilitado = semanaAtual && todosConcluidos;
+  btn.disabled = !habilitado;
+  btn.title = habilitado ? '' : 'Conclua todos os treinos da semana para gerar a próxima semana';
+  btn.style.opacity = habilitado ? '1' : '0.5';
+  btn.style.cursor = habilitado ? 'pointer' : 'not-allowed';
 }
 
 async function salvar() {
