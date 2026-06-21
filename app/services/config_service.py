@@ -121,7 +121,10 @@ def _validar_zonas(data: dict) -> dict:
     except (TypeError, ValueError):
         raise ValueError("FC máxima e limiar devem ser números inteiros.")
 
-    return {"fc_max": fc_max, "limiar": limiar, "zonas": zonas}
+    metodo = str(data.get("metodo") or "fcmax")
+    if metodo not in ("fcmax", "ll"):
+        metodo = "fcmax"
+    return {"fc_max": fc_max, "limiar": limiar, "metodo": metodo, "zonas": zonas}
 
 
 async def salvar_zonas(user_id: str, data: dict) -> dict:

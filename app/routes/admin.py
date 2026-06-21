@@ -45,6 +45,9 @@ _HTML = """<!DOCTYPE html>
     .user-login { font-family:monospace; font-weight:700; font-size:.9rem; }
     .user-nome { font-size:.82rem; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .user-tel { font-size:.78rem; color:var(--muted); margin-top:1px; }
+    .user-cadastro { font-size:.72rem; color:var(--muted); margin-top:2px; }
+    .pending-banner { background:#fff8e1; border:1.5px solid #f59e0b; border-radius:10px; padding:12px 16px; margin-bottom:18px; font-size:.88rem; color:#92400e; display:none; }
+    .pending-banner b { font-size:1rem; }
 
     .user-rows { display:flex; flex-direction:column; gap:8px; }
     .user-row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
@@ -87,6 +90,7 @@ _HTML = """<!DOCTYPE html>
   <h1>Administração</h1>
   <p class="sub-title">Gerencie acesso e chat por usuário.</p>
 
+  <div id="pending-banner" class="pending-banner"></div>
   <div class="stats" id="stats"></div>
   <div class="user-list" id="user-list"></div>
 </main>
@@ -137,6 +141,7 @@ function renderCard(u) {
         <div class="user-login">${u.login}</div>
         <div class="user-nome">${u.nome || '—'}</div>
         <div class="user-tel">${u.tel || '—'}</div>
+        ${u.criado_em ? `<div class="user-cadastro">📅 Cadastro: ${u.criado_em}</div>` : ''}
       </div>
     </div>
     <div class="user-rows">
@@ -155,6 +160,15 @@ function renderCard(u) {
 function renderAll() {
   renderStats();
   document.getElementById('user-list').innerHTML = USERS.map(renderCard).join('');
+  const pend = USERS.filter(u => !acessoAtivo(u));
+  const banner = document.getElementById('pending-banner');
+  if (pend.length > 0) {
+    banner.style.display = 'block';
+    const nomes = pend.map(u => u.nome || u.login).join(', ');
+    banner.innerHTML = `<b>⏳ ${pend.length} usuário${pend.length > 1 ? 's' : ''} aguardando acesso:</b> ${nomes}<br><span style="font-size:.8rem">Clique em <b>Habilitar</b> no cartão do usuário para liberar o acesso.</span>`;
+  } else {
+    banner.style.display = 'none';
+  }
 }
 
 async function toggleAcesso(id, currentAtivo) {
@@ -224,7 +238,7 @@ async def admin_page(request: Request):
 
     db = get_db()
     cursor = db.users.find(
-        {}, {"login": 1, "nome": 1, "telefone": 1, "telefone_verificado": 1, "features": 1}
+        {}, {"login": 1, "nome": 1, "telefone": 1, "telefone_verificado": 1, "features": 1, "criado_em": 1}
     )
     usuarios = await cursor.to_list(length=None)
 
@@ -237,9 +251,12 @@ async def admin_page(request: Request):
             "tel": u.get("telefone", ""),
             "telefone_verificado": bool(u.get("telefone_verificado", False)),
             "features": u.get("features", {}),
+            "criado_em": u["criado_em"].strftime("%d/%m/%Y %H:%M") if u.get("criado_em") else "",
         }
         for u in usuarios
     ]
+    # Pendentes primeiro, depois por data de cadastro (mais recentes primeiro)
+    dados.sort(key=lambda x: (x["telefone_verificado"], x["criado_em"]))
     users_json = json.dumps(dados, ensure_ascii=False)
     html = _HTML.replace("__USERS_JSON__", users_json)
     return HTMLResponse(html)

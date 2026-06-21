@@ -79,48 +79,44 @@ def verificar_senha(senha: str, senha_hash: str) -> bool:
 
 # ─── Derivação de zonas de FC ─────────────────────────────────────────────────
 
-def derivar_zonas(fc_max: int, limiar_bpm: int | None = None) -> dict:
-    """Deriva as 5 zonas de FC a partir da FC máxima.
+def derivar_zonas(fc_max: int, limiar_bpm: int | None = None, metodo: str = "fcmax") -> dict:
+    """Deriva as 5 zonas de FC.
 
-    Percentuais usados (modelo clássico por %FCmáx):
+    metodo="fcmax" (padrão) — percentuais do FCmáx clássico:
         Z1: 64–76 %  → fácil / regenerativo
         Z2: 77–85 %  → base aeróbica
         Z3: 86–89 %  → aeróbico moderado / tempo
         Z4: 90–94 %  → limiar
         Z5: 95–100 % → máximo / VO2max
 
-    O resultado replica exatamente o formato de DEFAULT_ZONAS / get_zonas:
-        {
-            "fc_max": int,
-            "limiar": int | None,
-            "zonas": [
-                {"zona": 1, "min": int, "max": int},
-                ...  (5 entradas)
-            ]
-        }
+    metodo="ll" — percentuais do Limiar Lático (modelo Friel):
+        Z1: 65–84 %  → regenerativo
+        Z2: 85–89 %  → base aeróbica
+        Z3: 90–94 %  → tempo / sub-limiar
+        Z4: 95–99 %  → limiar
+        Z5: 100–105 % → VO2max (teto = fc_max se disponível)
     """
-    percentuais = [
-        (0.64, 0.76),   # Z1
-        (0.77, 0.85),   # Z2
-        (0.86, 0.89),   # Z3
-        (0.90, 0.94),   # Z4
-        (0.95, 1.00),   # Z5
-    ]
-
-    zonas = []
-    for numero, (pct_min, pct_max) in enumerate(percentuais, start=1):
-        zonas.append({
-            "zona": numero,
-            "min": round(fc_max * pct_min),
-            "max": round(fc_max * pct_max),
-        })
-
-    # Garante que Z5.max == fc_max exato (evita arredondamento)
-    zonas[-1]["max"] = fc_max
+    if metodo == "ll" and limiar_bpm:
+        pcts = [(0.65, 0.84), (0.85, 0.89), (0.90, 0.94), (0.95, 0.99), (1.00, 1.05)]
+        ref = limiar_bpm
+        zonas = [
+            {"zona": i + 1, "min": round(ref * mn), "max": round(ref * mx)}
+            for i, (mn, mx) in enumerate(pcts)
+        ]
+        zonas[-1]["max"] = fc_max if fc_max and fc_max > limiar_bpm else round(ref * 1.05)
+    else:
+        metodo = "fcmax"
+        pcts = [(0.64, 0.76), (0.77, 0.85), (0.86, 0.89), (0.90, 0.94), (0.95, 1.00)]
+        zonas = [
+            {"zona": i + 1, "min": round(fc_max * mn), "max": round(fc_max * mx)}
+            for i, (mn, mx) in enumerate(pcts)
+        ]
+        zonas[-1]["max"] = fc_max
 
     return {
         "fc_max": fc_max,
         "limiar": limiar_bpm,
+        "metodo": metodo,
         "zonas": zonas,
     }
 

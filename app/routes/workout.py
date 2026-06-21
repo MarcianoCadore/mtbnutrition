@@ -455,6 +455,7 @@ class ZonaItem(BaseModel):
 class ZonasBody(BaseModel):
     fc_max: Optional[int] = None
     limiar: Optional[int] = None
+    metodo: str = "fcmax"
     zonas: list[ZonaItem]
 
 
@@ -558,8 +559,14 @@ async def garmin_desconectar(request: Request):
 
 
 @router.get("/zonas", response_class=HTMLResponse)
-async def pagina_zonas():
-    return _PAGINA_ZONAS
+async def pagina_zonas(request: Request):
+    from app.services.user_service import get_por_id
+    try:
+        u = await get_por_id(request.state.user_id) or {}
+    except Exception:
+        u = {}
+    garmin_email = str(((u.get("integracao") or {}).get("garmin") or {}).get("email") or "")
+    return _PAGINA_ZONAS.replace("{{GARMIN_EMAIL}}", garmin_email)
 
 
 @router.get("/integracao", response_class=HTMLResponse)
@@ -703,12 +710,16 @@ async def pagina_perfil(request: Request):
     val = lambda x: "" if x in (None, 0) else str(x)
     sexo = str(p.get("sexo") or "M").upper()
     obj = pref.get("objetivo") or "performance_mtb"
+    metodo_zonas = (u.get("zonas") or {}).get("metodo") or "fcmax"
+    garmin_email = str(((u.get("integracao") or {}).get("garmin") or {}).get("email") or "")
     html = (_PAGINA_PERFIL
             .replace("{{IDADE}}", val(p.get("idade")))
             .replace("{{PESO}}", val(p.get("peso_kg")))
             .replace("{{ALTURA}}", val(p.get("altura_cm")))
             .replace("{{SEXO_M}}", "selected" if sexo.startswith("M") else "")
-            .replace("{{SEXO_F}}", "selected" if sexo.startswith("F") else ""))
+            .replace("{{SEXO_F}}", "selected" if sexo.startswith("F") else "")
+            .replace("{{METODO_ZONAS}}", metodo_zonas)
+            .replace("{{GARMIN_EMAIL}}", garmin_email))
     for o in _OBJETIVOS_VALIDOS:
         html = html.replace(f"{{{{OBJ_{o}}}}}", "selected" if obj == o else "")
     return html
@@ -869,6 +880,16 @@ _PAGINA_ZONAS = """<!DOCTYPE html>
   .ok { background:#e8f5e9; color:#2e7d32; display:block; }
   .err { background:#fdecea; color:#c62828; display:block; }
   .info { background:#eef6ff; color:#1d4ed8; display:block; }
+  .metodo-tabs { display:flex; gap:8px; margin:10px 0 14px; }
+  .tab-btn { flex:1; padding:9px; border-radius:9px; border:1.5px solid var(--border); background:#fff; font-size:.88rem; font-weight:600; cursor:pointer; color:var(--muted); transition:.15s; }
+  .tab-btn.active { background:var(--green); color:#fff; border-color:var(--green); }
+  .tab-btn:hover:not(.active) { border-color:var(--green); color:var(--green); }
+  .metodo-desc { font-size:.85rem; color:#374151; line-height:1.6; background:#f9fafb; border-radius:9px; padding:11px 13px; border-left:3px solid var(--green); }
+  .metodo-desc b { color:var(--text); }
+  .garmin-badge { display:inline-flex; align-items:center; gap:5px; background:#e8f5e9; color:#2e7d32; border-radius:20px; padding:3px 10px; font-size:.75rem; font-weight:700; }
+  .garmin-warn { background:#fef3c7; border:1.5px solid #fbbf24; border-radius:9px; padding:10px 13px; font-size:.84rem; color:#92400e; margin-bottom:12px; }
+  .garmin-warn a { color:#b45309; font-weight:700; text-decoration:none; }
+  .garmin-warn a:hover { text-decoration:underline; }
 </style>
 </head>
 <body>
@@ -882,8 +903,46 @@ _PAGINA_ZONAS = """<!DOCTYPE html>
   <p class="sub">Configure as faixas de bpm de cada zona. Elas são enviadas como alvo nos treinos que vão para o Garmin.</p>
 
   <div class="card">
-    <h2>📥 Importar do Garmin</h2>
+    <h2>⚙️ Como calcular suas zonas?</h2>
+    <p class="hint">Existem dois métodos. Não sabe qual usar? Comece pelo <b>% FC Máxima</b> — é o mais simples.</p>
+    <div class="metodo-tabs">
+      <button class="tab-btn active" id="tab-fcmax" onclick="setMetodo('fcmax')">% FC Máxima</button>
+      <button class="tab-btn" id="tab-ll" onclick="setMetodo('ll')">% Limiar Lático (LL)</button>
+    </div>
+    <div id="desc-fcmax" class="metodo-desc">
+      <b>Simples e popular</b> — usa o maior batimento cardíaco que seu coração consegue atingir.
+      Ideal para quem está começando. Estimativa rápida: <b>220 − sua idade</b>. Para medir de verdade:
+      faça um sprint de 3 min no limite e anote a FC mais alta que aparecer.
+    </div>
+    <div id="desc-ll" class="metodo-desc" style="display:none">
+      <b>Mais preciso</b> — usa o ponto onde seu corpo começa a acumular ácido lático e você
+      fica ofegante sem conseguir manter o ritmo por muito tempo.
+      <b>Como medir:</b> pedala em ritmo forte e constante por 30 min e anota a FC média dos <em>últimos 20 min</em>.
+      Não sabe? Estime como <b>90% da sua FC máxima</b>.
+    </div>
+    <div class="duo" style="margin-top:14px">
+      <div>
+        <label class="fld">FC Máxima (bpm)</label>
+        <input type="number" id="fc_max" min="100" max="230" placeholder="ex: 185">
+      </div>
+      <div id="ll-field" style="display:none">
+        <label class="fld">Limiar Lático (bpm)</label>
+        <input type="number" id="limiar" min="100" max="210" placeholder="ex: 165">
+      </div>
+    </div>
+    <button class="sec" onclick="calcularZonasAuto()" style="margin-top:12px">⚡ Calcular zonas automaticamente</button>
+    <div id="st-calc" class="status"></div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <h2 style="margin-bottom:0">📥 Importar do Garmin</h2>
+      <span id="garmin-badge" class="garmin-badge" style="display:none">✓ Conectado</span>
+    </div>
     <p class="hint">Puxa as zonas oficiais do seu perfil de ciclismo direto da conta Garmin — sem print, sem IA. É o jeito mais confiável.</p>
+    <div id="garmin-warn" class="garmin-warn" style="display:none">
+      ⚠️ Garmin não conectado. <a href="/workout/integracao">Conectar agora →</a>
+    </div>
     <button id="btnGarmin" onclick="importarGarmin()">📥 Importar zonas do Garmin</button>
     <div id="stGarmin" class="status"></div>
   </div>
@@ -902,16 +961,6 @@ _PAGINA_ZONAS = """<!DOCTYPE html>
     <h2>✏️ Zonas (bpm)</h2>
     <p class="hint">Min e max de cada zona. Você pode editar manualmente a qualquer momento.</p>
     <div id="zonas"></div>
-    <div class="duo">
-      <div>
-        <label class="fld">FC máxima</label>
-        <input type="number" id="fc_max" min="100" max="230">
-      </div>
-      <div>
-        <label class="fld">Limiar de lactato</label>
-        <input type="number" id="limiar" min="100" max="230">
-      </div>
-    </div>
     <div style="margin-top:18px">
       <button id="btnSalvar" onclick="salvar()">💾 Salvar zonas</button>
     </div>
@@ -920,6 +969,50 @@ _PAGINA_ZONAS = """<!DOCTYPE html>
 </main>
 <script>
   const CORES = ['z1','z2','z3','z4','z5'];
+  const GARMIN_EMAIL = '{{GARMIN_EMAIL}}';
+  let _metodo = 'fcmax';
+
+  function configurarGarmin() {
+    const badge = document.getElementById('garmin-badge');
+    const warn = document.getElementById('garmin-warn');
+    const btn = document.getElementById('btnGarmin');
+    if (GARMIN_EMAIL) {
+      badge.textContent = '✓ ' + GARMIN_EMAIL;
+      badge.style.display = '';
+      btn.textContent = '🔄 Reimportar zonas do Garmin';
+    } else {
+      warn.style.display = '';
+      btn.disabled = true;
+    }
+  }
+  configurarGarmin();
+
+  function setMetodo(m) {
+    _metodo = m;
+    document.getElementById('tab-fcmax').classList.toggle('active', m === 'fcmax');
+    document.getElementById('tab-ll').classList.toggle('active', m === 'll');
+    document.getElementById('desc-fcmax').style.display = m === 'fcmax' ? '' : 'none';
+    document.getElementById('desc-ll').style.display = m === 'll' ? '' : 'none';
+    document.getElementById('ll-field').style.display = m === 'll' ? '' : 'none';
+  }
+
+  function calcularZonasAuto() {
+    const fc = Number(document.getElementById('fc_max').value);
+    const st = document.getElementById('st-calc');
+    if (_metodo === 'fcmax') {
+      if (!fc || fc < 100 || fc > 230) { st.className='status err'; st.textContent='⚠️ Informe a FC Máxima (100–230 bpm).'; return; }
+      const pcts = [[0.64,0.76],[0.77,0.85],[0.86,0.89],[0.90,0.94],[0.95,1.00]];
+      renderZonas(pcts.map(([mn,mx],i) => ({zona:i+1,min:Math.round(fc*mn),max:i===4?fc:Math.round(fc*mx)})));
+      st.className='status ok'; st.textContent='✅ Calculado por % FC Máxima. Revise e salve.';
+    } else {
+      const lim = Number(document.getElementById('limiar').value);
+      if (!lim || lim < 100 || lim > 210) { st.className='status err'; st.textContent='⚠️ Informe o Limiar Lático (100–210 bpm).'; return; }
+      const pcts = [[0.65,0.84],[0.85,0.89],[0.90,0.94],[0.95,0.99],[1.00,1.05]];
+      renderZonas(pcts.map(([mn,mx],i) => ({zona:i+1,min:Math.round(lim*mn),max:i===4?(fc&&fc>lim?fc:Math.round(lim*mx)):Math.round(lim*mx)})));
+      st.className='status ok'; st.textContent='✅ Calculado por % Limiar Lático. Revise e salve.';
+    }
+  }
+
   function renderZonas(zonas) {
     const box = document.getElementById('zonas');
     box.innerHTML = '';
@@ -945,13 +1038,15 @@ _PAGINA_ZONAS = """<!DOCTYPE html>
       });
     }
     const fc = document.getElementById('fc_max').value;
-    const lim = document.getElementById('limiar').value;
-    return { fc_max: fc ? Number(fc) : null, limiar: lim ? Number(lim) : null, zonas };
+    const lim = document.getElementById('limiar') ? document.getElementById('limiar').value : '';
+    return { fc_max: fc ? Number(fc) : null, limiar: lim ? Number(lim) : null, metodo: _metodo, zonas };
   }
   function aplicar(d) {
     renderZonas(d.zonas);
     if (d.fc_max != null) document.getElementById('fc_max').value = d.fc_max;
-    if (d.limiar != null) document.getElementById('limiar').value = d.limiar;
+    const limEl = document.getElementById('limiar');
+    if (limEl && d.limiar != null) limEl.value = d.limiar;
+    if (d.metodo) setMetodo(d.metodo);
   }
   async function carregar() {
     try {
@@ -1404,6 +1499,16 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
   .z1{background:#9ca3af;} .z2{background:#3b82f6;} .z3{background:#10b981;}
   .z4{background:#f59e0b;} .z5{background:#ef4444;}
   .sep { text-align:center; color:var(--muted); }
+  .metodo-tabs { display:flex; gap:8px; margin:10px 0 14px; }
+  .tab-btn { flex:1; padding:9px; border-radius:9px; border:1.5px solid var(--border); background:#fff; font-size:.88rem; font-weight:600; cursor:pointer; color:var(--muted); transition:.15s; }
+  .tab-btn.active { background:var(--green); color:#fff; border-color:var(--green); }
+  .tab-btn:hover:not(.active) { border-color:var(--green); color:var(--green); }
+  .metodo-desc { font-size:.85rem; color:#374151; line-height:1.6; background:#f9fafb; border-radius:9px; padding:11px 13px; border-left:3px solid var(--green); }
+  .metodo-desc b { color:var(--text); }
+  .garmin-badge { display:inline-flex; align-items:center; gap:5px; background:#e8f5e9; color:#2e7d32; border-radius:20px; padding:3px 10px; font-size:.75rem; font-weight:700; }
+  .garmin-warn { background:#fef3c7; border:1.5px solid #fbbf24; border-radius:9px; padding:10px 13px; font-size:.84rem; color:#92400e; margin-bottom:12px; }
+  .garmin-warn a { color:#b45309; font-weight:700; text-decoration:none; }
+  .garmin-warn a:hover { text-decoration:underline; }
 </style>
 </head>
 <body>
@@ -1461,8 +1566,46 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
   <div class="section-title">❤️ Zonas de frequência cardíaca</div>
 
   <div class="card">
-    <h2>📥 Importar do Garmin</h2>
+    <h2>⚙️ Como calcular suas zonas?</h2>
+    <p class="hint">Existem dois métodos. Não sabe qual usar? Comece pelo <b>% FC Máxima</b> — é o mais simples.</p>
+    <div class="metodo-tabs">
+      <button class="tab-btn" id="tab-fcmax" onclick="setMetodo('fcmax')">% FC Máxima</button>
+      <button class="tab-btn" id="tab-ll" onclick="setMetodo('ll')">% Limiar Lático (LL)</button>
+    </div>
+    <div id="desc-fcmax" class="metodo-desc">
+      <b>Simples e popular</b> — usa o maior batimento cardíaco que seu coração consegue atingir.
+      Ideal para quem está começando. Estimativa rápida: <b>220 − sua idade</b>. Para medir de verdade:
+      faça um sprint de 3 min no limite e anote a FC mais alta que aparecer.
+    </div>
+    <div id="desc-ll" class="metodo-desc" style="display:none">
+      <b>Mais preciso</b> — usa o ponto onde seu corpo começa a acumular ácido lático e você
+      fica ofegante sem conseguir manter o ritmo por muito tempo.
+      <b>Como medir:</b> pedala em ritmo forte e constante por 30 min e anota a FC média dos <em>últimos 20 min</em>.
+      Não sabe? Estime como <b>90% da sua FC máxima</b>.
+    </div>
+    <div class="duo" style="margin-top:14px">
+      <div>
+        <label class="fld">FC Máxima (bpm)</label>
+        <input type="number" id="fc_max" min="100" max="230" placeholder="ex: 185">
+      </div>
+      <div id="ll-field" style="display:none">
+        <label class="fld">Limiar Lático (bpm)</label>
+        <input type="number" id="limiar" min="100" max="210" placeholder="ex: 165">
+      </div>
+    </div>
+    <button class="sec" onclick="calcularZonasAuto()" style="margin-top:12px">⚡ Calcular zonas automaticamente</button>
+    <div id="st-calc" class="status"></div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <h2 style="margin-bottom:0">📥 Importar do Garmin</h2>
+      <span id="garmin-badge" class="garmin-badge" style="display:none">✓ Conectado</span>
+    </div>
     <p class="hint">Puxa as zonas oficiais do seu perfil de ciclismo direto da conta Garmin — sem print, sem IA.</p>
+    <div id="garmin-warn" class="garmin-warn" style="display:none">
+      ⚠️ Garmin não conectado. <a href="/workout/integracao">Conectar agora →</a>
+    </div>
     <button id="btnGarmin" onclick="importarGarmin()">📥 Importar zonas do Garmin</button>
     <div id="stGarmin" class="status"></div>
   </div>
@@ -1481,16 +1624,6 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
     <h2>✏️ Zonas (bpm)</h2>
     <p class="hint">Min e max de cada zona. Edite manualmente a qualquer momento.</p>
     <div id="zonas"></div>
-    <div class="duo" style="margin-top:14px">
-      <div>
-        <label class="fld">FC máxima</label>
-        <input type="number" id="fc_max" min="100" max="230">
-      </div>
-      <div>
-        <label class="fld">Limiar de lactato</label>
-        <input type="number" id="limiar" min="100" max="230">
-      </div>
-    </div>
     <button id="btnSalvarZonas" onclick="salvarZonas()">💾 Salvar zonas</button>
     <div id="st-zonas" class="status"></div>
   </div>
@@ -1543,6 +1676,51 @@ async function salvarPerfil(ev){
 
 // ── Zonas de FC ──
 const CORES = ['z1','z2','z3','z4','z5'];
+const GARMIN_EMAIL = '{{GARMIN_EMAIL}}';
+let _metodo = '{{METODO_ZONAS}}' || 'fcmax';
+
+function configurarGarmin() {
+  const badge = document.getElementById('garmin-badge');
+  const warn = document.getElementById('garmin-warn');
+  const btn = document.getElementById('btnGarmin');
+  if (GARMIN_EMAIL) {
+    badge.textContent = '✓ ' + GARMIN_EMAIL;
+    badge.style.display = '';
+    btn.textContent = '🔄 Reimportar zonas do Garmin';
+  } else {
+    warn.style.display = '';
+    btn.disabled = true;
+  }
+}
+configurarGarmin();
+
+function setMetodo(m) {
+  _metodo = m;
+  document.getElementById('tab-fcmax').classList.toggle('active', m === 'fcmax');
+  document.getElementById('tab-ll').classList.toggle('active', m === 'll');
+  document.getElementById('desc-fcmax').style.display = m === 'fcmax' ? '' : 'none';
+  document.getElementById('desc-ll').style.display = m === 'll' ? '' : 'none';
+  document.getElementById('ll-field').style.display = m === 'll' ? '' : 'none';
+}
+setMetodo(_metodo);
+
+function calcularZonasAuto() {
+  const fc = Number(document.getElementById('fc_max').value);
+  const st = document.getElementById('st-calc');
+  if (_metodo === 'fcmax') {
+    if (!fc || fc < 100 || fc > 230) { st.className='status err'; st.textContent='⚠️ Informe a FC Máxima (100–230 bpm).'; return; }
+    const pcts = [[0.64,0.76],[0.77,0.85],[0.86,0.89],[0.90,0.94],[0.95,1.00]];
+    renderZonas(pcts.map(([mn,mx],i) => ({zona:i+1,min:Math.round(fc*mn),max:i===4?fc:Math.round(fc*mx)})));
+    st.className='status ok'; st.textContent='✅ Calculado por % FC Máxima. Revise e salve.';
+  } else {
+    const lim = Number(document.getElementById('limiar').value);
+    if (!lim || lim < 100 || lim > 210) { st.className='status err'; st.textContent='⚠️ Informe o Limiar Lático (100–210 bpm).'; return; }
+    const pcts = [[0.65,0.84],[0.85,0.89],[0.90,0.94],[0.95,0.99],[1.00,1.05]];
+    renderZonas(pcts.map(([mn,mx],i) => ({zona:i+1,min:Math.round(lim*mn),max:i===4?(fc&&fc>lim?fc:Math.round(lim*mx)):Math.round(lim*mx)})));
+    st.className='status ok'; st.textContent='✅ Calculado por % Limiar Lático. Revise e salve.';
+  }
+}
+
 function renderZonas(zonas) {
   const box = document.getElementById('zonas');
   box.innerHTML = '';
@@ -1568,13 +1746,16 @@ function coletarZonas() {
     });
   }
   const fc = document.getElementById('fc_max').value;
-  const lim = document.getElementById('limiar').value;
-  return { fc_max: fc ? Number(fc) : null, limiar: lim ? Number(lim) : null, zonas };
+  const limEl = document.getElementById('limiar');
+  const lim = limEl ? limEl.value : '';
+  return { fc_max: fc ? Number(fc) : null, limiar: lim ? Number(lim) : null, metodo: _metodo, zonas };
 }
 function aplicarZonas(d) {
   renderZonas(d.zonas);
   if (d.fc_max != null) document.getElementById('fc_max').value = d.fc_max;
-  if (d.limiar != null) document.getElementById('limiar').value = d.limiar;
+  const limEl = document.getElementById('limiar');
+  if (limEl && d.limiar != null) limEl.value = d.limiar;
+  if (d.metodo) setMetodo(d.metodo);
 }
 async function carregarZonas() {
   try {
