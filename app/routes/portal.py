@@ -263,7 +263,7 @@ HTML = """<!DOCTYPE html>
     {{NAV_NUTRI}}
     <a href="/workout/calendario">📅 Provas</a>
     <a href="/workout/perfil">👤 Perfil</a>
-    <a href="/workout/integracao">⌚ Conectar dispositivo</a>
+    {{GARMIN_NAV}}
     {{NAV_USER}}
     <a href="/logout">🚪 Sair</a>
   </div>
@@ -293,7 +293,7 @@ HTML = """<!DOCTYPE html>
       o Garmin para importar seus treinos.</div>
     <div class="np-botoes">
       <button class="btn btn-save" id="btnGerarNovato" onclick="gerarPrimeiraSemana()">✨ Montar minha semana</button>
-      <a class="btn btn-sec" href="/workout/integracao">⌚ Conectar Garmin</a>
+      {{GARMIN_BTN}}
     </div>
   </div>
 
@@ -301,7 +301,7 @@ HTML = """<!DOCTYPE html>
 
   <div class="actions">
     <button class="btn btn-save" id="btnSave" onclick="salvar()">💾 Salvar Semana</button>
-    <button class="btn btn-sec"  id="btnGarmin" onclick="sincronizarGarmin()">🔄 Sincronizar Garmin</button>
+    <button class="btn btn-sec"  id="btnGarmin" onclick="sincronizarGarmin()">📡 Enviar + Sincronizar Garmin</button>
     <button class="btn btn-test" id="btnGenSemana" onclick="gerarProximaSemana()">🤖 Gerar próxima semana</button>
     <button class="btn btn-sec"  id="btnApagarGerados" style="display:none" onclick="apagarTreinosGerados()">🗑 Apagar treinos gerados</button>
   </div>
@@ -985,19 +985,26 @@ async function removerFit(key) {
 async function sincronizarGarmin() {
   const btn = document.getElementById('btnGarmin');
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner" style="border-color:rgba(0,0,0,.2);border-top-color:#333"></span> Sincronizando...';
+  btn.innerHTML = '<span class="spinner" style="border-color:rgba(0,0,0,.2);border-top-color:#333"></span> Enviando e sincronizando...';
   try {
-    const r = await fetch(`/workout/garmin/sync/${iso(monday)}`, {method: 'POST'});
-    if (!r.ok) throw new Error(await r.text());
-    const d = await r.json();
-    const msg = `✅ Garmin: ${d.treinos_importados} treino(s) · ${d.atividades_processadas} atividade(s)`;
+    // 1. Envia treinos da semana pro Garmin (push)
+    const rEnv = await fetch(`/workout/reenviar-garmin/${iso(monday)}`, {method: 'POST'});
+    if (!rEnv.ok) throw new Error(await rEnv.text());
+    const dEnv = await rEnv.json();
+
+    // 2. Sincroniza atividades e treinos planejados do Garmin (pull)
+    const rSync = await fetch(`/workout/garmin/sync/${iso(monday)}`, {method: 'POST'});
+    if (!rSync.ok) throw new Error(await rSync.text());
+    const dSync = await rSync.json();
+
+    const msg = `✅ ${dEnv.enviados} enviado(s) · ${dSync.atividades_processadas} atividade(s) importada(s)`;
     toast(msg, 'ok');
     await load();
   } catch(e) {
     toast('❌ Garmin: ' + e.message, 'err');
   } finally {
     btn.disabled = false;
-    btn.innerHTML = '🔄 Sincronizar Garmin';
+    btn.innerHTML = '📡 Enviar + Sincronizar Garmin';
   }
 }
 
@@ -1203,9 +1210,23 @@ async def portal(request: Request):
 
     nutricao_on_js = "true" if perder_peso else "false"
 
+    garmin_conectado = bool((u.get("integracao") or {}).get("garmin", {}).get("email"))
+    garmin_nav = (
+        '<a href="/workout/integracao">✅ Garmin conectado</a>'
+        if garmin_conectado else
+        '<a href="/workout/integracao">⌚ Conectar Garmin</a>'
+    )
+    garmin_btn = (
+        '<a class="btn btn-sec" href="/workout/integracao">✅ Garmin conectado</a>'
+        if garmin_conectado else
+        '<a class="btn btn-sec" href="/workout/integracao">⌚ Conectar Garmin</a>'
+    )
+
     return (
         HTML
         .replace("{{NAV_NUTRI}}", nav_nutri)
         .replace("{{NAV_USER}}", nav_user)
         .replace("{{NUTRICAO_ON}}", nutricao_on_js)
+        .replace("{{GARMIN_NAV}}", garmin_nav)
+        .replace("{{GARMIN_BTN}}", garmin_btn)
     )

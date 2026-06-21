@@ -256,10 +256,7 @@ async def upload_e_agendar(
         elif hasattr(result, "workoutId"):
             workout_id = str(result.workoutId)
         if workout_id:
-            try:
-                api.schedule_workout(workout_id, data_iso)
-            except Exception as e:
-                logger.warning("schedule_workout falhou para %s: %s", workout_id, e)
+            api.schedule_workout(workout_id, data_iso)
         return workout_id
 
     try:

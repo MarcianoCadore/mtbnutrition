@@ -346,6 +346,58 @@ async def enviar_para_garmin(request: Request, body: EnviarGarminBody):
             "whatsapp": whatsapp_ok, "detalhes": resultados}
 
 
+@router.post("/reenviar-garmin/{semana_inicio}")
+async def reenviar_para_garmin(request: Request, semana_inicio: str):
+    """Lê os treinos da semana do DB e re-envia ao Garmin Connect.
+
+    Útil quando o envio original falhou silenciosamente ou o calendário do
+    Garmin foi apagado. Não depende da IA — usa os dados já salvos no banco.
+    """
+    from app.services.garmin_workout_service import upload_e_agendar, deletar_workout_garmin
+
+    db = get_db()
+    user_id = request.state.user_id
+
+    doc = await db.semanas.find_one({"semana_inicio": semana_inicio, "user_id": user_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Semana não encontrada no banco.")
+
+    resultados = []
+    for t in doc.get("treinos", []):
+        if t.get("tipo") in ("DESCANSO",) or not t.get("duracao_min"):
+            resultados.append({"data": t.get("data"), "status": "pulado"})
+            continue
+
+        # Remove o agendamento anterior do Garmin antes de re-enviar
+        gid_antigo = t.get("garmin_workout_id")
+        if gid_antigo:
+            await deletar_workout_garmin(user_id, gid_antigo)
+
+        nome = f"{t.get('tipo','').replace('_', ' ')} — {t.get('data','')}"
+        gid = await upload_e_agendar(
+            user_id,
+            tipo=t["tipo"],
+            duracao_min=t["duracao_min"],
+            nome=nome,
+            data_iso=t["data"],
+            descricao=t.get("descricao"),
+        )
+        if gid:
+            await db.semanas.update_one(
+                {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": t["data"]},
+                {"$set": {"treinos.$.garmin_workout_id": gid}},
+            )
+        resultados.append({
+            "data": t.get("data"),
+            "tipo": t.get("tipo"),
+            "garmin_id": gid,
+            "status": "ok" if gid else "erro",
+        })
+
+    enviados = sum(1 for r in resultados if r.get("status") == "ok")
+    return {"status": "ok", "semana": semana_inicio, "enviados": enviados, "detalhes": resultados}
+
+
 @router.get("/zonas/dados")
 async def ler_zonas(request: Request):
     """Zonas de FC atualmente configuradas."""
@@ -474,66 +526,6 @@ async def garmin_conectar(
     return {"status": "conectado"}
 
 
-@router.get("/strava/conectar")
-async def strava_conectar(request: Request):
-    """Inicia o fluxo OAuth2 do Strava. Redireciona para a página de autorização
-    do Strava com state=user_id para o callback identificar o usuário."""
-    from fastapi.responses import RedirectResponse as _RR
-    from app.services.strava_service import url_autorizacao
-    user_id = request.state.user_id
-    return _RR(url_autorizacao(user_id))
-
-
-@router.get("/strava/callback")
-async def strava_callback(code: str = "", state: str = "", error: str = ""):
-    """Callback do OAuth2 do Strava. Não exige cookie de sessão — o state carrega
-    o user_id. Troca o code por tokens, dispara uma sync inicial e redireciona
-    para a tela de integração."""
-    from fastapi.responses import RedirectResponse as _RR
-    from app.services.strava_service import trocar_codigo
-
-    # O Strava pode chamar com error=access_denied se o usuário recusou
-    if error:
-        logger.warning("strava_callback: usuário recusou autorização (state=%s, error=%s)", state, error)
-        return _RR(url="/workout/integracao?strava=erro")
-
-    if not code or not state:
-        return _RR(url="/workout/integracao?strava=erro")
-
-    # state contém o user_id — valida formato mínimo (string não-vazia)
-    user_id = state.strip()
-    if not user_id:
-        return _RR(url="/workout/integracao?strava=erro")
-
-    ok = await trocar_codigo(user_id, code)
-    if not ok:
-        return _RR(url="/workout/integracao?strava=erro")
-
-    # Sync inicial best-effort — não quebra o redirect se falhar
-    try:
-        from datetime import date, timedelta
-        from app.services.strava_service import sync_atividades_strava
-        hoje = date.today()
-        segunda = hoje - timedelta(days=hoje.weekday())
-        await sync_atividades_strava(user_id, segunda.isoformat())
-    except Exception as e:
-        logger.warning("strava_callback: sync inicial falhou para user_id=%s — %s", user_id, e)
-
-    return _RR(url="/workout/integracao?strava=ok")
-
-
-@router.post("/strava/desconectar")
-async def strava_desconectar(request: Request):
-    """Remove a integração Strava do usuário."""
-    from app.services.user_service import atualizar_usuario
-    user_id = request.state.user_id
-    await atualizar_usuario(user_id, {
-        "integracao.tipo": "none",
-        "integracao.strava": None,
-    })
-    logger.info("strava_desconectar: Strava desconectado para user_id=%s", user_id)
-    return {"status": "desconectado"}
-
 
 @router.post("/garmin/desconectar")
 async def garmin_desconectar(request: Request):
@@ -585,13 +577,10 @@ async def pagina_integracao(request: Request):
 
     integ = u.get("integracao") or {}
     garmin = integ.get("garmin") or {}
-    strava = integ.get("strava") or {}
 
     garmin_email = garmin.get("email")
     garmin_conectado = bool(garmin_email)
-    strava_conectado = bool(strava.get("athlete_id"))
 
-    # Bloco Garmin
     if garmin_conectado:
         email_safe = (str(garmin_email)
                       .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
@@ -612,22 +601,7 @@ async def pagina_integracao(request: Request):
       </form>
       <div id="stGarmin" class="status"></div>"""
 
-    # Bloco Strava
-    if strava_conectado:
-        strava_html = """
-      <div class="status ok" style="display:block">✅ Strava conectado</div>
-      <p class="hint">Importa apenas suas <b>atividades</b> (somente leitura).</p>
-      <button class="sec" onclick="desconectarStrava()" id="btnStravaDesc">Desconectar Strava</button>
-      <div id="stStrava" class="status"></div>"""
-    else:
-        strava_html = """
-      <p class="hint">Conexão em 1 clique. O Strava importa apenas suas <b>atividades</b> (somente leitura, não envia treinos planejados).</p>
-      <button onclick="location.href='/workout/strava/conectar'">🔗 Conectar com Strava</button>
-      <div id="stStrava" class="status"></div>"""
-
-    return (_PAGINA_INTEGRACAO
-            .replace("{{GARMIN_BLOCO}}", garmin_html)
-            .replace("{{STRAVA_BLOCO}}", strava_html))
+    return _PAGINA_INTEGRACAO.replace("{{GARMIN_BLOCO}}", garmin_html)
 
 
 # ─── Provas (calendário de competições) ───────────────────────────────────────
@@ -1082,7 +1056,7 @@ _PAGINA_INTEGRACAO = """<!DOCTYPE html>
 </nav>
 <main>
   <h1>Conectar dispositivo</h1>
-  <p class="sub">Conecte seu Garmin ou Strava para importar treinos e atividades automaticamente. Você só precisa fazer isso uma vez.</p>
+  <p class="sub">Conecte seu Garmin para importar treinos planejados e atividades automaticamente. Você só precisa fazer isso uma vez.</p>
 
   <div id="bannerBox"></div>
 
@@ -1090,14 +1064,8 @@ _PAGINA_INTEGRACAO = """<!DOCTYPE html>
     <h2>⌚ Garmin Connect</h2>
     {{GARMIN_BLOCO}}
   </div>
-
-  <div class="card">
-    <h2>🟧 Strava</h2>
-    {{STRAVA_BLOCO}}
-  </div>
 </main>
 <script>
-  // Segunda-feira ISO da semana atual (igual ao portal)
   function getMonday(d) {
     const day = d.getDay();
     const diff = day === 0 ? -6 : 1 - day;
@@ -1108,15 +1076,6 @@ _PAGINA_INTEGRACAO = """<!DOCTYPE html>
   }
   function iso(d) { return d.toISOString().split('T')[0]; }
   function segundaAtualISO() { return iso(getMonday(new Date())); }
-
-  // Banner ao voltar do OAuth do Strava
-  (function() {
-    const p = new URLSearchParams(location.search).get('strava');
-    if (!p) return;
-    const box = document.getElementById('bannerBox');
-    if (p === 'ok') box.innerHTML = '<div class="banner ok">✅ Strava conectado! Suas atividades estão sendo importadas.</div>';
-    else if (p === 'erro') box.innerHTML = '<div class="banner err">❌ Não foi possível conectar ao Strava. Tente novamente.</div>';
-  })();
 
   async function conectarGarmin(ev) {
     ev.preventDefault();
@@ -1156,19 +1115,6 @@ _PAGINA_INTEGRACAO = """<!DOCTYPE html>
     }
   }
 
-  async function desconectarStrava() {
-    const btn = document.getElementById('btnStravaDesc');
-    const st = document.getElementById('stStrava');
-    if (btn) { btn.disabled = true; btn.textContent = 'Desconectando...'; }
-    try {
-      const r = await fetch('/workout/strava/desconectar', { method:'POST' });
-      if (!r.ok) throw new Error('Erro');
-      location.href = '/workout/integracao';
-    } catch(e) {
-      st.className='status err'; st.textContent='❌ ' + e.message;
-      if (btn) { btn.disabled = false; btn.textContent = 'Desconectar Strava'; }
-    }
-  }
 </script>
 </body>
 </html>"""

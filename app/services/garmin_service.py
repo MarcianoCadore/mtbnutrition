@@ -71,24 +71,17 @@ async def get_garmin_client(user_id: str) -> Garmin:
 
     api = Garmin(email, senha)
 
-    if os.path.isdir(token_dir) and os.listdir(token_dir):
-        try:
-            api.login(tokenstore=token_dir)
-            _clients[user_id] = api
-            logger.info("Garmin: login via token cacheado (user_id=%s)", user_id)
-            return _clients[user_id]
-        except Exception:
-            logger.warning(
-                "Garmin: token expirado para user_id=%s, re-autenticando", user_id
-            )
-
-    api.login()
-    try:
-        api.garth.dump(token_dir)
-    except Exception:
-        pass
+    # login(tokenstore=token_dir) trata os dois casos automaticamente:
+    # - arquivos existem → carrega token (e renova se vencido via DI refresh)
+    # - diretório vazio → login com credenciais + salva token no diretório
+    tem_token = os.path.isdir(token_dir) and bool(os.listdir(token_dir))
+    api.login(tokenstore=token_dir)
     _clients[user_id] = api
-    logger.info("Garmin: login com credenciais (user_id=%s)", user_id)
+    logger.info(
+        "Garmin: login via %s (user_id=%s)",
+        "token cacheado" if tem_token else "credenciais",
+        user_id,
+    )
     return _clients[user_id]
 
 
