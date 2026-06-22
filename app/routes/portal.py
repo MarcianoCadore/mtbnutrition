@@ -70,6 +70,9 @@ HTML = """<!DOCTYPE html>
     .bike-loading .wheel-r { transform-origin: 26px 54px; animation: bike-wheel 0.5s linear infinite; }
     .bike-loading .np-titulo { margin-bottom: 2px; }
     .bike-loading .np-sub { margin-bottom: 0; }
+    .bike-progress-wrap { width: 260px; background: #e0e0e0; border-radius: 99px; height: 8px; overflow: hidden; }
+    .bike-progress-bar { height: 100%; background: #2e7d32; border-radius: 99px; width: 0%; transition: width 0.4s ease; }
+    .bike-progress-pct { font-size: .75rem; color: #555; margin-top: 2px; }
     .days-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; margin-bottom: 24px; }
     @media(max-width:1000px){ .days-grid { grid-template-columns: repeat(4,1fr); } }
     @media(max-width:760px) { .days-grid { grid-template-columns: repeat(2,1fr); } }
@@ -891,14 +894,32 @@ async function gerarPrimeiraSemana() {
     </svg>
     <div class="np-titulo">Montando sua semana...</div>
     <div class="np-sub">A IA está analisando seu histórico e criando um plano personalizado.</div>
+    <div class="bike-progress-wrap"><div class="bike-progress-bar" id="bikeProgressBar"></div></div>
+    <div class="bike-progress-pct" id="bikeProgressPct">0%</div>
   </div>`;
+
+  let pct = 0;
+  const bar = document.getElementById('bikeProgressBar');
+  const lbl = document.getElementById('bikeProgressPct');
+  const timer = setInterval(() => {
+    const step = pct < 40 ? 3 : pct < 70 ? 1.5 : pct < 88 ? 0.5 : 0.1;
+    pct = Math.min(pct + step, 89);
+    if (bar) bar.style.width = pct + '%';
+    if (lbl) lbl.textContent = Math.round(pct) + '%';
+  }, 400);
+
   try {
     const r = await fetch(`/workout/gerar-primeira-semana/${iso(monday)}`, {method: 'POST'});
+    clearInterval(timer);
     if (!r.ok) throw new Error(await r.text());
+    if (bar) bar.style.width = '100%';
+    if (lbl) lbl.textContent = '100%';
+    await new Promise(res => setTimeout(res, 400));
     panel.innerHTML = originalHTML;
     toast('✅ Semana montada! Bons treinos.', 'ok');
     await load();
   } catch(e) {
+    clearInterval(timer);
     panel.innerHTML = originalHTML;
     toast('Erro ao montar a semana: ' + e.message, 'err');
   }
