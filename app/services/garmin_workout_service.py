@@ -283,14 +283,10 @@ async def upload_e_agendar(
     from app.services.garmin_service import get_garmin_client
     from app.services.config_service import zonas_bpm_map, get_zonas_potencia
 
-    zonas_bpm = await zonas_bpm_map(user_id)
-    workout = build_cycling_workout(tipo, duracao_min, nome, descricao, zonas_bpm)
-    if not workout:
-        logger.warning("Tipo %s não tem builder de workout", tipo)
-        return None
-
-    # Substitui alvos de FC por watts quando configurado
+    # Determina se vai usar watts ANTES de montar o workout para evitar que
+    # _aplicar_bpm remova o targetValue (número de zona) que _aplicar_watts precisa.
     zp = await get_zonas_potencia(user_id)
+    usar_watts = False
     if zp:
         if forcar_indoor is True:
             usar_watts = True
@@ -299,10 +295,19 @@ async def upload_e_agendar(
         else:
             modo = zp.get("potencia_modo", "indoor")
             usar_watts = (modo == "sempre") or (modo == "indoor" and tipo in _TIPOS_INDOOR)
-        if usar_watts:
-            zonas_w = {z["zona"]: {"min": z["min"], "max": z["max"]} for z in zp["zonas"]}
-            for seg in workout.workoutSegments:
-                _aplicar_watts(seg.workoutSteps, zonas_w)
+
+    zonas_bpm = await zonas_bpm_map(user_id)
+    # Não aplica BPM explícito se vai usar watts — _aplicar_bpm remove o targetValue
+    # (número de zona) que _aplicar_watts precisa para mapear para watts.
+    workout = build_cycling_workout(tipo, duracao_min, nome, descricao, zonas_bpm if not usar_watts else None)
+    if not workout:
+        logger.warning("Tipo %s não tem builder de workout", tipo)
+        return None
+
+    if usar_watts:
+        zonas_w = {z["zona"]: {"min": z["min"], "max": z["max"]} for z in zp["zonas"]}
+        for seg in workout.workoutSegments:
+            _aplicar_watts(seg.workoutSteps, zonas_w)
 
     # Resolve o cliente antes de entrar na thread (get_garmin_client é async)
     api = await get_garmin_client(user_id)
