@@ -1,4 +1,5 @@
-"""Smoke tests das rotas HTTP (auth, treinos, provas, admin)."""
+"""Smoke tests das rotas HTTP (auth, treinos, provas, admin, potência, perfil)."""
+import io
 import pytest
 from bson import ObjectId
 
@@ -108,3 +109,169 @@ class TestAdmin:
         assert r.status_code == 200
         doc = run(fake_db.users.find_one({"_id": ObjectId(alvo)}))
         assert doc["features"]["chat"] is False
+
+
+class TestPerfil:
+    def test_get_perfil_retorna_html(self, auth_client, fake_db):
+        client, _ = auth_client
+        r = client.get("/workout/perfil")
+        assert r.status_code == 200
+        assert "text/html" in r.headers["content-type"]
+
+    def test_salvar_perfil_aceita_dados_validos(self, auth_client, fake_db):
+        client, _ = auth_client
+        r = client.post(
+            "/workout/perfil",
+            data={"idade": "32", "peso_kg": "78", "altura_cm": "178",
+                  "sexo": "M", "objetivo": "performance_mtb"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        assert r.status_code == 200
+
+    def test_salvar_perfil_campo_nao_numerico_falha(self, auth_client, fake_db):
+        client, _ = auth_client
+        r = client.post(
+            "/workout/perfil",
+            data={"idade": "abc", "peso_kg": "78", "altura_cm": "178",
+                  "sexo": "M", "objetivo": "performance_mtb"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        assert r.status_code == 400
+
+    def test_perfil_sem_login_redireciona(self, client):
+        r = client.get("/workout/perfil", follow_redirects=False)
+        assert r.status_code == 303
+
+
+class TestZonasPotencia:
+    def _seed_user(self, fake_db, uid, run):
+        """Insere doc de usuário para que atualizar_usuario encontre o registro."""
+        run(fake_db.users.insert_one({"_id": ObjectId(uid)}))
+
+    def test_zonas_dados_sem_ftp(self, auth_client, fake_db):
+        client, _ = auth_client
+        r = client.get("/workout/zonas/dados")
+        assert r.status_code == 200
+        d = r.json()
+        assert d["potencia"] is None
+
+    def test_salvar_ftp_valido(self, auth_client, fake_db, run):
+        client, uid = auth_client
+        self._seed_user(fake_db, uid, run)
+        r = client.post("/workout/zonas/ftp", json={"ftp": 254, "modo": "indoor"})
+        assert r.status_code == 200
+        d = r.json()
+        assert d["ftp"] == 254
+        assert len(d["zonas"]) == 7
+
+    def test_salvar_ftp_invalido_retorna_422(self, auth_client, fake_db):
+        client, _ = auth_client
+        r = client.post("/workout/zonas/ftp", json={"ftp": 30, "modo": "indoor"})
+        assert r.status_code in (400, 422)
+
+    def test_salvar_ftp_acima_700_falha(self, auth_client, fake_db):
+        client, _ = auth_client
+        r = client.post("/workout/zonas/ftp", json={"ftp": 900, "modo": "sempre"})
+        assert r.status_code in (400, 422)
+
+    def test_get_zonas_potencia_sem_ftp(self, auth_client, fake_db):
+        client, _ = auth_client
+        r = client.get("/workout/zonas/potencia")
+        assert r.status_code == 200
+        assert r.json() is None
+
+    def test_get_zonas_potencia_com_ftp(self, auth_client, fake_db, run):
+        client, uid = auth_client
+        self._seed_user(fake_db, uid, run)
+        client.post("/workout/zonas/ftp", json={"ftp": 300, "modo": "sempre"})
+        r = client.get("/workout/zonas/potencia")
+        assert r.status_code == 200
+        d = r.json()
+        assert d["ftp"] == 300
+        assert d["potencia_modo"] == "sempre"
+
+    def test_zonas_dados_reflete_ftp_salvo(self, auth_client, fake_db, run):
+        client, uid = auth_client
+        self._seed_user(fake_db, uid, run)
+        client.post("/workout/zonas/ftp", json={"ftp": 270, "modo": "nunca"})
+        r = client.get("/workout/zonas/dados")
+        assert r.status_code == 200
+        pot = r.json()["potencia"]
+        assert pot["ftp"] == 270
+
+    def test_extrair_potencia_sem_imagem_falha(self, auth_client, fake_db):
+        client, _ = auth_client
+        r = client.post("/workout/zonas/extrair-potencia", files={})
+        assert r.status_code == 422
+
+    def test_extrair_potencia_arquivo_nao_imagem_falha(self, auth_client, fake_db):
+        client, _ = auth_client
+        fake_file = io.BytesIO(b"not an image")
+        r = client.post(
+            "/workout/zonas/extrair-potencia",
+            files={"imagem": ("zonas.txt", fake_file, "text/plain")},
+        )
+        assert r.status_code == 400
+
+    def test_extrair_potencia_ia_mockada(self, auth_client, fake_db, monkeypatch):
+        async def _mock(*_):
+            return {
+                "ftp": 254,
+                "zonas": [
+                    {"zona": i, "min": i * 30, "max": i * 30 + 29, "nome": f"Z{i}"}
+                    for i in range(1, 8)
+                ],
+            }
+        monkeypatch.setattr(
+            "app.services.ai_service.extrair_zonas_potencia_de_imagem", _mock
+        )
+        client, _ = auth_client
+        fake_img = io.BytesIO(b"\xff\xd8\xff\xe0" + b"\x00" * 100)
+        r = client.post(
+            "/workout/zonas/extrair-potencia",
+            files={"imagem": ("zonas.jpg", fake_img, "image/jpeg")},
+        )
+        assert r.status_code == 200
+        d = r.json()
+        assert d["ftp"] == 254
+        assert len(d["zonas"]) == 7
+
+
+class TestZonasFC:
+    def test_salvar_zonas_fc_validas(self, auth_client, fake_db):
+        client, _ = auth_client
+        payload = {
+            "fc_max": 185, "limiar": None, "metodo": "fcmax",
+            "zonas": [
+                {"zona": 1, "min": 118, "max": 140},
+                {"zona": 2, "min": 141, "max": 156},
+                {"zona": 3, "min": 157, "max": 166},
+                {"zona": 4, "min": 167, "max": 176},
+                {"zona": 5, "min": 177, "max": 185},
+            ],
+        }
+        r = client.post("/workout/zonas/salvar", json=payload)
+        assert r.status_code == 200
+
+    def test_salvar_zonas_com_4_zonas_falha(self, auth_client, fake_db):
+        client, _ = auth_client
+        payload = {
+            "fc_max": 185, "limiar": None, "metodo": "fcmax",
+            "zonas": [
+                {"zona": 1, "min": 118, "max": 140},
+                {"zona": 2, "min": 141, "max": 156},
+                {"zona": 3, "min": 157, "max": 166},
+                {"zona": 4, "min": 167, "max": 185},
+            ],
+        }
+        r = client.post("/workout/zonas/salvar", json=payload)
+        assert r.status_code in (400, 422)
+
+    def test_extrair_arquivo_nao_imagem_falha(self, auth_client, fake_db):
+        client, _ = auth_client
+        fake_file = io.BytesIO(b"nao e imagem")
+        r = client.post(
+            "/workout/zonas/extrair",
+            files={"imagem": ("zonas.pdf", fake_file, "application/pdf")},
+        )
+        assert r.status_code == 400

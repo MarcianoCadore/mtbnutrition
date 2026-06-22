@@ -467,6 +467,32 @@ async def extrair_zonas(imagem: UploadFile = File(...)):
     return dados
 
 
+@router.post("/zonas/extrair-potencia")
+async def extrair_zonas_potencia(imagem: UploadFile = File(...)):
+    """Recebe captura de tela das zonas de potência do Garmin e extrai FTP + 7 zonas via IA."""
+    if not (imagem.content_type or "").startswith("image/"):
+        raise HTTPException(status_code=400, detail="Envie um arquivo de imagem (PNG/JPG).")
+    conteudo = await imagem.read()
+    if len(conteudo) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Imagem muito grande (máx. 8 MB).")
+    from app.services.ai_service import extrair_zonas_potencia_de_imagem, QuotaExcedida, _e_cota
+    try:
+        dados = await extrair_zonas_potencia_de_imagem(conteudo, imagem.content_type)
+    except QuotaExcedida:
+        raise HTTPException(
+            status_code=429,
+            detail="Cota diária gratuita da IA esgotada. Preencha o FTP manualmente ou tente mais tarde.",
+        )
+    except Exception as e:
+        if _e_cota(e):
+            raise HTTPException(
+                status_code=429,
+                detail="Cota da IA atingida. Aguarde alguns segundos e tente de novo.",
+            )
+        raise HTTPException(status_code=422, detail=f"Não consegui ler as zonas da imagem: {e}")
+    return dados
+
+
 class ZonaItem(BaseModel):
     zona: int
     min: int
@@ -1750,6 +1776,17 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
   <div class="card">
     <h2>⚡ Potência (FTP)</h2>
     <p class="hint">FTP = Functional Threshold Power — watts que você sustenta por ~1h. Base para calcular as 7 zonas de potência.</p>
+
+    <div style="background:#f9fafb;border-radius:9px;padding:12px 14px;margin-bottom:14px">
+      <p style="font-size:.82rem;font-weight:700;color:#374151;margin-bottom:8px">📷 Importar do print do Garmin</p>
+      <p style="font-size:.8rem;color:#6b7280;margin-bottom:10px">Tire um print da tela de Zonas de Potência no app Garmin Connect e envie — a IA extrai o FTP e as 7 zonas automaticamente.</p>
+      <div class="upload-row">
+        <input type="file" id="img-pot" accept="image/*">
+        <button class="sec" id="btnLerPot" style="width:auto;padding:11px 16px;margin-top:0" onclick="lerImagemPotencia()">🤖 Ler zonas</button>
+      </div>
+      <div id="stImgPot" class="status"></div>
+    </div>
+
     <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px">
       <div>
         <label style="font-size:.8rem;font-weight:600;display:block;margin-bottom:4px">FTP (watts)</label>
@@ -1974,6 +2011,24 @@ async function lerImagem() {
     if (!r.ok) { const err = new Error(d.detail || 'Erro'); err.cota = (r.status === 429); throw err; }
     aplicarZonas(d);
     st.className='status ok'; st.textContent='✅ Zonas preenchidas! Confira e clique em Salvar.';
+  } catch(e) {
+    if (e.cota) { st.className='status info'; st.textContent='⏳ ' + e.message; }
+    else { st.className='status err'; st.textContent='❌ ' + e.message; }
+  }
+  finally { btn.disabled=false; btn.textContent='🤖 Ler zonas'; }
+}
+async function lerImagemPotencia() {
+  const inp=document.getElementById('img-pot'), st=document.getElementById('stImgPot'), btn=document.getElementById('btnLerPot');
+  if (!inp.files.length) { st.className='status err'; st.textContent='⚠️ Escolha uma imagem primeiro.'; return; }
+  btn.disabled=true; btn.textContent='Lendo...'; st.className='status info'; st.textContent='🤖 Analisando as zonas de potência...';
+  try {
+    const fd = new FormData(); fd.append('imagem', inp.files[0]);
+    const r = await fetch('/workout/zonas/extrair-potencia', {method:'POST', body: fd});
+    const d = await r.json();
+    if (!r.ok) { const err = new Error(d.detail || 'Erro'); err.cota = (r.status === 429); throw err; }
+    if (d.ftp) document.getElementById('ftp_val').value = d.ftp;
+    if (d.zonas && d.zonas.length) renderZonasPot(d.zonas, d.ftp);
+    st.className='status ok'; st.textContent='✅ FTP e zonas preenchidos! Confira e clique em Salvar FTP.';
   } catch(e) {
     if (e.cota) { st.className='status info'; st.textContent='⏳ ' + e.message; }
     else { st.className='status err'; st.textContent='❌ ' + e.message; }

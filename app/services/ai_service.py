@@ -670,6 +670,50 @@ Responda APENAS em JSON válido, sem markdown, sem texto extra:
     return json.loads(raw)
 
 
+async def extrair_zonas_potencia_de_imagem(image_bytes: bytes, mime_type: str) -> dict:
+    """Lê uma captura de tela das zonas de potência do Garmin e extrai FTP + 7 zonas.
+
+    Retorna {"ftp": number|null, "zonas": [{"zona","min","max","nome"}, ...]}.
+    """
+    prompt = """Analise esta captura de tela das ZONAS DE POTÊNCIA de um app ou relógio Garmin.
+
+Extraia, em watts (W):
+- O FTP (Functional Threshold Power) se aparecer na tela.
+- O valor MÍNIMO e MÁXIMO de cada zona (Z1 a Z7), em watts.
+
+Regras:
+- Sempre devolva exatamente 7 zonas (zona 1 a 7), em ordem crescente.
+- Para a zona mais alta (Z7), use 9999 como max se não houver limite superior explícito.
+- Para a zona mais baixa (Z1), use 0 como min se não houver limite inferior.
+- Os nomes das zonas no Garmin são: Z1=Recuperação ativa, Z2=Resistência, Z3=Tempo/Ritmo, Z4=Limiar, Z5=VO₂Máx, Z6=Anaeróbico, Z7=Neuromuscular.
+- Os números devem ser inteiros.
+- Se os valores forem percentuais e você vir o FTP, converta para watts.
+
+Responda APENAS em JSON válido, sem markdown, sem texto extra:
+{"ftp": number ou null, "zonas": [{"zona": 1, "min": number, "max": number, "nome": "Recuperação ativa"}, {"zona": 2, ...}, {"zona": 3, ...}, {"zona": 4, ...}, {"zona": 5, ...}, {"zona": 6, ...}, {"zona": 7, "min": number, "max": 9999, "nome": "Neuromuscular"}]}"""
+
+    image_b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
+    content = [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": mime_type,
+                "data": image_b64,
+            },
+        },
+        {"type": "text", "text": prompt},
+    ]
+
+    resp = await _client.messages.create(
+        model=_MODEL,
+        max_tokens=400,
+        messages=[{"role": "user", "content": content}]
+    )
+    raw = resp.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+    return json.loads(raw)
+
+
 async def estimar_alimento_extra(texto: str | None = None,
                                  image_bytes: bytes | None = None,
                                  mime_type: str | None = None) -> dict:
