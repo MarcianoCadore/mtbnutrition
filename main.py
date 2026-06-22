@@ -177,7 +177,7 @@ _CHAT_WIDGET = """
       const d = await r.json();
       typing.remove();
       cwAddMsg('assistant', d.resposta || d.erro || 'Erro ao obter resposta.');
-      if(d.recarregar){ setTimeout(()=>location.reload(), 1500); }
+      if(d.recarregar){ window.dispatchEvent(new CustomEvent('mtb:recarregar')); }
     }catch(e){
       typing.remove();
       cwAddMsg('assistant','Erro de conexão. Tente novamente.');
