@@ -35,7 +35,7 @@ _DURACAO_MAXIMA = {
     "ACADEMIA":     90,
     "TIROS":        80,
     "VO2MAX":       80,
-    "RECUPERACAO":  75,
+    "RECUPERACAO":  90,
 }
 
 _DESCRICAO_PADRAO = {
@@ -336,11 +336,20 @@ async def gerar_proxima_semana(user_id: str, semana_atual: str) -> dict:
 
     # ── Próxima prova: periodização orientada ao objetivo ─────────────────────
     from app.services.prova_service import (
-        proxima_prova, semanas_ate, fase_periodizacao, FASE_LABEL,
+        proxima_prova, semanas_ate, fase_periodizacao, FASE_LABEL, listar_provas,
     )
     bloco_prova = ""
     fase_prova: str | None = None
     prova = await proxima_prova(user_id, ref=proxima)
+
+    # Provas nas próximas 2 semanas (para taper/prioritization)
+    proxima_mais2 = _shift_data(proxima, 14)
+    todas_provas = await listar_provas(user_id)
+    provas_2semanas = [
+        p for p in todas_provas
+        if proxima <= p["data"] <= proxima_mais2
+    ]
+
     if prova:
         sem_rest = semanas_ate(prova["data"], ref=proxima)
         fase_prova = fase_periodizacao(sem_rest)
@@ -360,6 +369,17 @@ PRÓXIMA PROVA-ALVO: {prova['nome']} em {prova['data']} ({sem_rest} semana(s) re
 FASE DE PERIODIZAÇÃO: {FASE_LABEL.get(fase_prova, fase_prova)}.
 {_REGRAS_FASE.get(fase_prova, "")}
 Direcione a semana para essa fase e para as exigências da prova (terreno/altimetria).
+"""
+
+    if provas_2semanas:
+        linhas_p2 = []
+        for p2 in provas_2semanas:
+            sw = semanas_ate(p2["data"], ref=proxima)
+            linhas_p2.append(f"  - {p2['nome']} em {p2['data']} ({sw} semana(s)) — prioridade {p2.get('prioridade','?')}")
+        bloco_prova += f"""
+⚠️ PROVAS NAS PRÓXIMAS 2 SEMANAS — planeje taper e recuperação:
+{chr(10).join(linhas_p2)}
+Se houver prova em menos de 7 dias: reduza volume, mantenha intensidade curta, priorize descanso.
 """
 
     if treina_academia:
@@ -453,7 +473,8 @@ TIPOS DE TREINO NA BIKE — PRESCRIÇÃO DETALHADA (use nas descrições com as 
   Ex: "90 min base aeróbica Z2 ({zonas_prompt.split('|')[1].strip() if '|' in zonas_prompt else 'Z2 bpm'}). Cadência 85-95 rpm, ritmo que permite conversar. Mantenha a FC estável — desacelere nas subidas se necessário."
 
 - RECUPERACAO: Pedal muito leve Z1. FC mínima possível. Ativa circulação, não gera fadiga.
-  Ex: "55 min recuperação ativa Z1 (<{zonas_prompt.split('|')[0].replace('Z1','').strip() if '|' in zonas_prompt else '145'} bpm). Sem esforço — só mover as pernas."
+  Duração: proporcional à carga da semana anterior — se o atleta fez longões de 2h+, use 75-90 min; semanas leves use 45-60 min. NÃO use valor fixo.
+  Ex: "75 min recuperação ativa Z1 (<{zonas_prompt.split('|')[0].replace('Z1','').strip() if '|' in zonas_prompt else '145'} bpm). Sem esforço — só mover as pernas."
 
 - TEMPO (limiar): Treino de limiar para elevar FTP. FC em Z3-Z4.
   Descrição deve incluir: aquecimento, blocos (N×X min), FC alvo por bloco, recuperação entre blocos, volta à calma.

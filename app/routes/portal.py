@@ -895,6 +895,7 @@ async function gerarPrimeiraSemana() {
   try {
     const r = await fetch(`/workout/gerar-primeira-semana/${iso(monday)}`, {method: 'POST'});
     if (!r.ok) throw new Error(await r.text());
+    panel.innerHTML = originalHTML;
     toast('✅ Semana montada! Bons treinos.', 'ok');
     await load();
   } catch(e) {
