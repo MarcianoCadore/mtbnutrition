@@ -32,9 +32,11 @@ _TOOLS = [
         "description": (
             "Adiciona ou substitui um treino em um dia específico do calendário. "
             "Tipos disponíveis: Z2_LONGO (pedal longo Z2), TIROS (séries de alta intensidade), "
-            "VO2MAX (esforços VO2max), TEMPO (limiar), FORCA (academia/musculação/força), "
+            "VO2MAX (esforços VO2max), TEMPO (limiar), "
+            "FORCA (força específica NA BIKE — cadência baixa, marcha pesada), "
+            "ACADEMIA (musculação no ginásio — agachamento, supino, remada, etc.), "
             "RECUPERACAO (pedalada leve), DESCANSO (sem treino). "
-            "Use FORCA para qualquer treino de academia, musculação ou força."
+            "Use FORCA para treino de força na bike. Use ACADEMIA para musculação no ginásio."
         ),
         "input_schema": {
             "type": "object",
@@ -45,7 +47,7 @@ _TOOLS = [
                 },
                 "tipo": {
                     "type": "string",
-                    "enum": ["Z2_LONGO", "TIROS", "VO2MAX", "TEMPO", "FORCA", "RECUPERACAO", "DESCANSO"],
+                    "enum": ["Z2_LONGO", "TIROS", "VO2MAX", "TEMPO", "FORCA", "ACADEMIA", "RECUPERACAO", "DESCANSO"],
                     "description": "Tipo do treino.",
                 },
                 "duracao_min": {

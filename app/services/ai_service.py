@@ -16,6 +16,7 @@ KCAL_POR_TIPO = {
     TipoTreino.VO2MAX:      3200,
     TipoTreino.TEMPO:       2800,
     TipoTreino.FORCA:       2700,
+    TipoTreino.ACADEMIA:    2500,
     TipoTreino.RECUPERACAO: 2200,
     TipoTreino.DESCANSO:    2100,
 }
@@ -75,7 +76,7 @@ Responda APENAS em JSON válido, sem markdown, sem texto extra:
   ]
 }}"""
 
-_TIPOS_VALIDOS = {"Z2_LONGO", "TIROS", "VO2MAX", "TEMPO", "FORCA", "RECUPERACAO", "DESCANSO"}
+_TIPOS_VALIDOS = {"Z2_LONGO", "TIROS", "VO2MAX", "TEMPO", "FORCA", "ACADEMIA", "RECUPERACAO", "DESCANSO"}
 
 # Palavras-chave por tipo de treino (regex, case-insensitive).
 # Classificador determinístico — não depende da API de IA.
@@ -96,12 +97,18 @@ _PADROES_TIPO = {
         r"\bsweetspot\b", r"\blactat", r"\bz[34]\b", r"\bsubidas?\b",
         r"\bsst\b",
     ],
+    "ACADEMIA": [
+        r"\bacademia\b", r"\bmuscula[çc][aã]o\b", r"\bgin[áa]sio\b",
+        r"\bgym\b", r"\bpeso\s*livre\b", r"\bleg\s*press\b",
+        r"\bagachamento\b", r"\bsupino\b", r"\bremada\b",
+        r"\bhalter[e]", r"\bhaltere\b", r"\bflex[oã][ao]\b",
+    ],
     "FORCA": [
         r"\bfor[çc]a\b", r"for[çc]a\s*espec[íi]fica", r"\btorque\b",
         r"baixa\s*cad[êe]ncia", r"cad[êe]ncia\s*baixa",
         r"\bsobremarcha\b", r"big\s*gear", r"marcha\s*pesada",
         r"\b(?:4[5-9]|5\d|6\d)\s*[-–a]?\s*\d*\s*rpm\b",  # cadência baixa em rpm (45-69)
-        r"\bmuscula", r"\bresist[êe]ncia\s*muscular",
+        r"\bresist[êe]ncia\s*muscular",
     ],
     "RECUPERACAO": [
         r"recupera", r"recovery", r"regenerativ", r"\bregen\b",
@@ -121,7 +128,7 @@ _PADROES_TIPO = {
 # Em caso de empate, vence o tipo mais específico/intenso (índice maior).
 # FORCA fica acima de TEMPO e Z2_LONGO: "força específica em subida com cadência
 # baixa" deve vencer os sinais genéricos de "subida" (TEMPO) e "cadência" (Z2).
-_PRIORIDADE_TIPO = ["Z2_LONGO", "RECUPERACAO", "DESCANSO", "TEMPO", "FORCA", "TIROS", "VO2MAX"]
+_PRIORIDADE_TIPO = ["Z2_LONGO", "RECUPERACAO", "DESCANSO", "TEMPO", "FORCA", "ACADEMIA", "TIROS", "VO2MAX"]
 
 
 def _limpar_datas(texto: str) -> str:
@@ -230,7 +237,8 @@ Z2_LONGO - aeróbico longo, foco em Z2 (base aeróbica, cadência, baixa intensi
 TIROS - intervalos curtos de alta intensidade, sprints
 VO2MAX - esforço alto sustentado, Z5 predominante
 TEMPO - esforço moderado-alto contínuo, Z3-Z4 (limiar, sweet spot)
-FORCA - força específica/torque: cadência baixa (45-60rpm) em subida ou marcha pesada
+FORCA - força específica NA BIKE: cadência baixa (45-60rpm) em subida ou marcha pesada
+ACADEMIA - musculação/ginásio (agachamento, leg press, supino, remada, etc.)
 RECUPERACAO - sessão leve, Z1, recuperação ativa
 DESCANSO - sem treino efetivo"""
 

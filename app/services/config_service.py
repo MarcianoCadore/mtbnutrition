@@ -108,8 +108,11 @@ def _validar_zonas(data: dict) -> dict:
             raise ValueError(f"Zona {i}: informe min e max em bpm (números inteiros).")
         if not (60 <= mn < mx <= 230):
             raise ValueError(f"Zona {i}: faixa inválida ({mn}-{mx}). Use 60–230 bpm com min < max.")
-        if prev_max is not None and mn < prev_max:
-            raise ValueError(f"Zona {i} ({mn}) deve começar a partir do fim da zona anterior ({prev_max}).")
+        if prev_max is not None:
+            if mn < prev_max:
+                raise ValueError(f"Zona {i} ({mn}) deve começar a partir do fim da zona anterior ({prev_max}).")
+            if mn > prev_max + 1:
+                mn = prev_max + 1  # preenche gap: garante zonas contínuas sem bpm órfão
         prev_max = mx
         zonas.append({"zona": i, "min": mn, "max": mx})
 

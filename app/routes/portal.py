@@ -195,8 +195,13 @@ HTML = """<!DOCTYPE html>
     .tipo-VO2MAX      { background: #6a1b9a; }
     .tipo-TEMPO       { background: #e65100; }
     .tipo-FORCA       { background: #5d4037; }
+    .tipo-ACADEMIA    { background: #2e7d32; }
     .tipo-RECUPERACAO { background: #00695c; }
     .tipo-DESCANSO    { background: #607d8b; }
+    .academia-bloco { background: #e8f5e9; border-radius: 8px; padding: 10px 12px; margin-top: 8px; border-left: 3px solid #2e7d32; }
+    .academia-bloco .ac-titulo { font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: #2e7d32; margin-bottom: 4px; }
+    .academia-bloco .ac-dur { font-size: .72rem; color: #555; margin-bottom: 4px; }
+    .academia-bloco .ac-desc { font-size: .78rem; color: var(--text); line-height: 1.4; white-space: pre-wrap; }
 
     .actions { display: flex; gap: 12px; flex-wrap: wrap; }
     .btn { padding: 13px 22px; border: none; border-radius: 10px; font-size: .95rem; font-weight: 700; cursor: pointer; transition: all .2s; display: flex; align-items: center; gap: 6px; }
@@ -350,7 +355,8 @@ const TIPOS = [
   {v:'TIROS',      l:'⚡ Tiros',        s:'Tiros'},
   {v:'VO2MAX',     l:'🔥 VO2Max',       s:'VO2Max'},
   {v:'TEMPO',      l:'💨 Tempo',        s:'Tempo'},
-  {v:'FORCA',      l:'💪 Força',        s:'Força'},
+  {v:'FORCA',      l:'💪 Força (bike)',  s:'Força Bike'},
+  {v:'ACADEMIA',   l:'🏋️ Academia',     s:'Academia'},
   {v:'RECUPERACAO',l:'🌿 Recuperação',  s:'Recuperação'},
 ];
 
@@ -371,7 +377,7 @@ const ESPEC_TREINO = {
     dica: 'Esforço moderado-alto sustentável. Respiração ritmada, ainda sob controle.',
   },
   FORCA: {
-    obj: 'Força específica. Recruta mais fibras musculares pedalando com cadência baixa e marcha pesada.',
+    obj: 'Força específica na bike. Recruta mais fibras musculares pedalando com cadência baixa e marcha pesada.',
     estrutura: ['Aquecimento 15 min em Z2', '4× [6 min em Z3 com cadência 50–60 rpm + 4 min Z2]', 'Volta à calma 10 min em Z2'],
     dica: 'Marcha pesada, empurre o pedal. Sente o trabalho nas pernas, não no fôlego.',
   },
@@ -449,7 +455,7 @@ function buildCards(treinos) {
     const tipoLbl = (TIPOS.find(tp => tp.v === t.tipo) || {l: t.tipo}).l;
     const lockAttr = isFuturo ? 'disabled' : '';
 
-    _planejado[key] = {tipo: t.tipo, duracao_min: t.duracao_min, cadencia_rpm: t.cadencia_rpm, descricao: t.descricao};
+    _planejado[key] = {tipo: t.tipo, duracao_min: t.duracao_min, cadencia_rpm: t.cadencia_rpm, descricao: t.descricao, academia: t.academia || null};
     const res = t.resultado || null;
     if (res) _resultados[key] = res;
     const resHTML = res
@@ -463,11 +469,12 @@ function buildCards(treinos) {
          </div>`
       : '';
 
+    const isAcademia = t.tipo === 'ACADEMIA';
     const cadReal = (res && res.cadencia_media_rpm) ? res.cadencia_media_rpm : '';
     const metricsHTML = (dur || dist || elev || cadReal)
       ? `<div class="metrics" id="metrics-${key}">
            ${dur  ? `<div class="metric"><div class="mv">${dur} min</div><div class="ml">Duração</div></div>` : ''}
-           ${cadReal ? `<div class="metric"><div class="mv">${cadReal} rpm</div><div class="ml">Cad. real</div></div>` : ''}
+           ${!isAcademia && cadReal ? `<div class="metric"><div class="mv">${cadReal} rpm</div><div class="ml">Cad. real</div></div>` : ''}
            ${dist ? `<div class="metric"><div class="mv">${dist} km</div><div class="ml">Distância</div></div>` : ''}
            ${elev ? `<div class="metric"><div class="mv">${elev} m</div><div class="ml">Elevação</div></div>` : ''}
          </div>`
@@ -477,8 +484,19 @@ function buildCards(treinos) {
     const resumoHTML = !hide ? `
       <ul class="treino-resumo" id="resumo-${key}">
         <li><span class="ri">⏱</span><span class="rk">Tempo</span><span class="rv" id="resumo-dur-${key}">${durStr || '—'}</span></li>
-        <li><span class="ri">🦵</span><span class="rk">Cad. alvo</span><span class="rv rv-cad" id="resumo-cad-${key}">${cad ? cad+' rpm' : '—'}</span></li>
+        ${!isAcademia ? `<li><span class="ri">🦵</span><span class="rk">Cad. alvo</span><span class="rv rv-cad" id="resumo-cad-${key}">${cad ? cad+' rpm' : '—'}</span></li>` : ''}
       </ul>` : '';
+
+    const acSub = t.academia;
+    const academiaSubHTML = acSub && acSub.descricao ? (() => {
+      const ad = acSub.duracao_min || 0;
+      const adStr = ad ? ((Math.floor(ad/60)>0?Math.floor(ad/60)+'h':'')+(ad%60>0?ad%60+'min':'')) : '';
+      return `<div class="academia-bloco">
+        <div class="ac-titulo">🏋️ Academia</div>
+        ${adStr ? `<div class="ac-dur">⏱ ${adStr}</div>` : ''}
+        <div class="ac-desc">${(acSub.descricao||'').replace(/</g,'&lt;').replace(/\n/g,'<br>')}</div>
+      </div>`;
+    })() : '';
 
     c.innerHTML = `
       <div class="day-head tipo-${t.tipo}" id="h-${key}">
@@ -514,11 +532,12 @@ function buildCards(treinos) {
           </div>` : ''}
           <div>
             <div class="notas-head">
-              <label>Notas</label>
+              <label>${isAcademia ? 'Exercícios' : 'Notas'}</label>
               <button class="info-treino" onclick="abrirTreinoInfo('${key}')" title="Ver especificação do treino"><span class="ic">ⓘ</span> saber mais</button>
             </div>
-            <textarea id="desc-${key}" placeholder="Detalhes..." ${lockAttr}>${desc}</textarea>
+            <textarea id="desc-${key}" placeholder="${isAcademia ? 'Lista de exercícios...' : 'Detalhes...'}" ${lockAttr}>${desc}</textarea>
           </div>
+          ${academiaSubHTML}
         </div>
 
         <div id="rest-${key}" style="${hide ? '' : 'display:none'}">
@@ -635,24 +654,46 @@ function abrirTreinoInfo(key) {
 
   const cad   = document.getElementById(`cad-${key}`)?.value || p.cadencia_rpm || '';
   const notas = document.getElementById(`desc-${key}`)?.value || p.descricao || '';
+  const acSub = p.academia;
 
   const dt = new Date(key + 'T00:00');
   const diaLabel = `${DIAS[(dt.getDay()+6)%7]} ${key.slice(8,10)}/${key.slice(5,7)}`;
   const meta = [diaLabel];
   if (p.duracao_min) meta.push(`⏱ ${p.duracao_min} min`);
-  if (cad) meta.push(`🦵 ${cad} rpm`);
+  if (cad && tipo !== 'ACADEMIA') meta.push(`🦵 ${cad} rpm`);
 
   let corpo = '';
-  if (esp) {
-    corpo += `<div class="esp-obj">${esp.obj}</div>`;
-    corpo += `<div class="esp-bloco"><div class="esp-titulo">Como executar</div>`
-           + `<ul class="esp-lista">${esp.estrutura.map(s => `<li>${s}</li>`).join('')}</ul></div>`;
-    corpo += `<div class="esp-dica">💡 ${esp.dica}</div>`;
+
+  if (tipo === 'ACADEMIA') {
+    // Academia puro: mostra apenas os exercícios (sem estrutura de bike)
+    corpo += `<div class="esp-obj">Treino de musculação complementar ao MTB. Exercícios escolhidos pela IA considerando os treinos de bike do dia anterior e posterior.</div>`;
+    if (notas && notas.trim()) {
+      corpo += `<div class="esp-bloco" style="margin-top:10px"><div class="esp-titulo">Exercícios</div>`
+             + `<div class="esp-notas">${notas.replace(/</g,'&lt;').replace(/\n/g,'<br>')}</div></div>`;
+    } else {
+      corpo += `<div class="esp-obj" style="margin-top:8px">Exercícios ainda não definidos — gere a semana com IA.</div>`;
+    }
+  } else {
+    // Treino de bike: mostra estrutura normal
+    if (esp) {
+      corpo += `<div class="esp-obj">${esp.obj}</div>`;
+      corpo += `<div class="esp-bloco"><div class="esp-titulo">Como executar</div>`
+             + `<ul class="esp-lista">${esp.estrutura.map(s => `<li>${s}</li>`).join('')}</ul></div>`;
+      corpo += `<div class="esp-dica">💡 ${esp.dica}</div>`;
+    }
+    if (notas && notas.trim()) {
+      corpo += `<div class="esp-bloco" style="margin-top:14px"><div class="esp-titulo">Notas do treino</div>`
+             + `<div class="esp-notas">${notas.replace(/</g,'&lt;').replace(/\n/g,'<br>')}</div></div>`;
+    }
+    // Sub-objeto academia (bike + gym no mesmo dia): seção separada
+    if (acSub && acSub.descricao) {
+      const adStr = acSub.duracao_min ? ((Math.floor(acSub.duracao_min/60)>0?Math.floor(acSub.duracao_min/60)+'h':'')+(acSub.duracao_min%60>0?acSub.duracao_min%60+'min':'')) : '';
+      corpo += `<div class="esp-bloco" style="margin-top:18px;border-top:1.5px solid #c8e6c9;padding-top:14px">`
+             + `<div class="esp-titulo" style="color:#2e7d32">🏋️ Academia${adStr?' · ⏱ '+adStr:''}</div>`
+             + `<div class="esp-notas" style="background:#e8f5e9">${acSub.descricao.replace(/</g,'&lt;').replace(/\n/g,'<br>')}</div></div>`;
+    }
   }
-  if (notas && notas.trim()) {
-    corpo += `<div class="esp-bloco" style="margin-top:14px"><div class="esp-titulo">Notas do treino</div>`
-           + `<div class="esp-notas">${notas.replace(/</g,'&lt;').replace(/\\n/g,'<br>')}</div></div>`;
-  }
+
   if (!corpo) corpo = `<div class="esp-obj">Sem especificação detalhada para este treino.</div>`;
 
   document.getElementById('treinoModalHead').innerHTML = `<h3>${tipoInfo.l}</h3><div class="modal-sub">${meta.join('  ·  ')}</div>`;
@@ -923,7 +964,7 @@ async function uploadFit(key, input) {
       } else {
       const TIPO_LABELS = {
         Z2_LONGO: 'Z2 Longo', TIROS: 'Tiros', VO2MAX: 'VO2Max',
-        TEMPO: 'Tempo', FORCA: 'Força', RECUPERACAO: 'Recuperação', DESCANSO: 'Descanso',
+        TEMPO: 'Tempo', FORCA: 'Força Bike', ACADEMIA: 'Academia', RECUPERACAO: 'Recuperação', DESCANSO: 'Descanso',
       };
       const linhas = [];
       linhas.push(TIPO_LABELS[tipo] || tipo);
@@ -1014,11 +1055,11 @@ function fecharGenModal(e) {
 
 const TIPO_CORES = {
   Z2_LONGO:'#1565c0', TIROS:'#c62828', VO2MAX:'#6a1b9a',
-  TEMPO:'#e65100', FORCA:'#5d4037', RECUPERACAO:'#00695c', DESCANSO:'#607d8b',
+  TEMPO:'#e65100', FORCA:'#5d4037', ACADEMIA:'#2e7d32', RECUPERACAO:'#00695c', DESCANSO:'#607d8b',
 };
 const TIPO_LABELS2 = {
   Z2_LONGO:'Z2 Longo', TIROS:'Tiros', VO2MAX:'VO2Max',
-  TEMPO:'Tempo', FORCA:'Força', RECUPERACAO:'Recuperação', DESCANSO:'Descanso',
+  TEMPO:'Tempo', FORCA:'Força Bike', ACADEMIA:'Academia', RECUPERACAO:'Recuperação', DESCANSO:'Descanso',
 };
 const DIAS_PT = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 
@@ -1053,6 +1094,15 @@ async function gerarProximaSemana() {
       }
       const dia = new Date(t.data + 'T12:00:00');
       const durStr = t.duracao_min ? (() => { const h=Math.floor(t.duracao_min/60),m=t.duracao_min%60; return (h>0?h+'h':'')+(m>0?m+'min':''); })() : '';
+      const acSub2 = t.academia;
+      const acHTML2 = acSub2 && acSub2.descricao ? (() => {
+        const ad = acSub2.duracao_min||0;
+        const adStr2 = ad ? ((Math.floor(ad/60)>0?Math.floor(ad/60)+'h':'')+(ad%60>0?ad%60+'min':'')) : '';
+        return `<div class="academia-bloco" style="margin-top:6px">
+          <div class="ac-titulo">🏋️ Academia${adStr2?' · ⏱ '+adStr2:''}</div>
+          <div class="ac-desc">${(acSub2.descricao||'').replace(/</g,'&lt;').replace(/\n/g,'<br>')}</div>
+        </div>`;
+      })() : '';
       return `<div class="gen-modal-treino">
         <div class="gmt-head">
           <span class="gmt-data">${DIAS_PT[dia.getDay()]} ${t.data.slice(5)}</span>
@@ -1060,6 +1110,7 @@ async function gerarProximaSemana() {
           ${durStr ? `<span class="gmt-dur">⏱ ${durStr}</span>` : ''}
         </div>
         ${t.descricao ? `<div class="gmt-desc">${t.descricao}</div>` : ''}
+        ${acHTML2}
       </div>`;
     }).join('');
 
@@ -1091,6 +1142,7 @@ async function enviarParaGarmin() {
     duracao_min:  t.duracao_min  || null,
     descricao:    t.descricao    || null,
     cadencia_rpm: t.cadencia_rpm || null,
+    academia:     t.academia     || null,
   }));
 
   try {

@@ -611,7 +611,7 @@ async def whatsapp_webhook(request: Request):
 
         # Tipo: da IA; padrão Z2_LONGO
         tipo = str(interp.get("tipo") or "Z2_LONGO").upper()
-        _TIPOS_VALIDOS = {"Z2_LONGO", "TIROS", "VO2MAX", "TEMPO", "FORCA", "RECUPERACAO"}
+        _TIPOS_VALIDOS = {"Z2_LONGO", "TIROS", "VO2MAX", "TEMPO", "FORCA", "ACADEMIA", "RECUPERACAO"}
         if tipo not in _TIPOS_VALIDOS:
             tipo = "Z2_LONGO"
 
