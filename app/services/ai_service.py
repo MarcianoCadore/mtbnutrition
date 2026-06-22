@@ -281,6 +281,10 @@ async def analisar_atividade_pos_treino(planejado: dict, resultado: dict, user_i
         linhas.append(f"- FC média: {resultado['avg_hr']} bpm")
     if resultado.get("max_hr"):
         linhas.append(f"- FC máxima: {resultado['max_hr']} bpm")
+    if resultado.get("avg_power"):
+        linhas.append(f"- Potência média: {resultado['avg_power']}W")
+    if resultado.get("norm_power"):
+        linhas.append(f"- Potência normalizada (NP): {resultado['norm_power']}W")
     if resultado.get("cadencia_media_rpm"):
         linhas.append(f"- Cadência média: {resultado['cadencia_media_rpm']} rpm")
     if resultado.get("cadencia_max_rpm"):
@@ -313,6 +317,8 @@ async def analisar_atividade_pos_treino(planejado: dict, resultado: dict, user_i
     # Tempo real em cada zona de FC (lido do .fit, segundo-a-segundo). É o que
     # importa para julgar a intensidade de um treino de tiros — a FC média do
     # treino inteiro é diluída por aquecimento, recuperações e volta à calma.
+    ftp_analise: int | None = None
+    zonas_pot_analise: list[dict] | None = None
     if fit_path:
         try:
             from app.services.fit_service import tempo_em_zonas
@@ -328,6 +334,38 @@ async def analisar_atividade_pos_treino(planejado: dict, resultado: dict, user_i
                     linhas.append(f"- Tempo em cada zona de FC: {' | '.join(partes)}")
         except Exception:
             pass
+
+    # Potência: FTP, IF e tempo em zonas de potência (só se houver dados no .fit)
+    if user_id and (resultado.get("avg_power") or resultado.get("norm_power")):
+        try:
+            from app.services.config_service import get_zonas_potencia
+            zp = await get_zonas_potencia(user_id)
+            if zp:
+                ftp_analise = zp["ftp"]
+                zonas_pot_analise = zp["zonas"]
+        except Exception:
+            pass
+
+    if ftp_analise:
+        norm_p = resultado.get("norm_power") or resultado.get("avg_power")
+        if norm_p:
+            if_val = round(norm_p / ftp_analise, 2)
+            linhas.append(f"- FTP do atleta: {ftp_analise}W | IF (NP/FTP): {if_val}")
+        if fit_path and zonas_pot_analise:
+            try:
+                from app.services.fit_service import tempo_em_zonas_potencia
+                tp = tempo_em_zonas_potencia(fit_path, zonas_pot_analise)
+                if tp:
+                    total_p = sum(tp.values()) or 1
+                    partes_p = []
+                    for zd in zonas_pot_analise:
+                        secs = tp.get(zd["zona"], 0)
+                        if secs:
+                            partes_p.append(f"Z{zd['zona']}({zd['nome']}) {secs/60:.0f}min ({round(secs*100/total_p)}%)")
+                    if partes_p:
+                        linhas.append(f"- Tempo em cada zona de potência: {' | '.join(partes_p)}")
+            except Exception:
+                pass
 
     # Dados do atleta: nome/idade/peso do perfil do usuário (com defaults seguros)
     nome_atleta = "Atleta"
@@ -359,15 +397,16 @@ async def analisar_atividade_pos_treino(planejado: dict, resultado: dict, user_i
     idade_txt = f", {idade_atleta} anos" if idade_atleta else ""
     peso_txt = f", {peso_atleta:.0f} kg" if peso_atleta else ""
     lim_txt = f", limiar de lactato {limiar} bpm" if limiar else ""
+    ftp_txt = f", FTP {ftp_analise}W" if ftp_analise else ""
     prompt = f"""Você é um coach de ciclismo MTB especializado em análise de desempenho.
 
-Atleta: {nome_atleta}{idade_txt}{peso_txt}, FC máxima {fc_max} bpm{lim_txt}
+Atleta: {nome_atleta}{idade_txt}{peso_txt}, FC máxima {fc_max} bpm{lim_txt}{ftp_txt}
 Zonas de FC: {zonas_txt}
 Objetivo: {objetivo_atleta}
 
 {chr(10).join(linhas)}
 
-DIRETRIZES DE ANÁLISE (fisiologia da FC — leve a sério):
+DIRETRIZES DE ANÁLISE (fisiologia da FC e potência — leve a sério):
 - A FC tem resposta atrasada (lag): leva ~30-60s para subir até Z4/Z5 no início de
   um esforço forte e ~10-15s para baixar na recuperação. Os primeiros segundos de
   cada tiro saem de uma zona mais baixa — isso é normal, NÃO é falta de intensidade.
@@ -377,6 +416,11 @@ DIRETRIZES DE ANÁLISE (fisiologia da FC — leve a sério):
   pela FC MÁXIMA atingida e pelo TEMPO EM ZONAS ALTAS (Z4/Z5), quando disponível.
 - Nunca conclua que "faltou intensidade" só porque a FC média ficou em Z2 num
   treino de tiros — isso é esperado e correto.
+- Quando houver dados de POTÊNCIA (watts): prefira potência para julgar intensidade —
+  é mais imediata que FC e não sofre o lag cardíaco. IF > 0.90 = treino intenso;
+  IF 0.75-0.90 = zona de limiar/tempo; IF < 0.75 = Z2/recuperação.
+- Potência Normalizada (NP) representa o "custo fisiológico equivalente" de um
+  treino variado — use-a, não a média bruta, para avaliar a demanda real.
 
 Compare o planejado com o realizado. Comente intensidade (zonas de FC atingidas),
 volume (duração realizada vs planejada), cadência e o que ajustar no próximo treino.

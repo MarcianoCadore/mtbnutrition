@@ -174,6 +174,52 @@ def tempo_em_zonas(caminho: str, zonas: list[dict]) -> dict | None:
     return contagem  # ~1 amostra/segundo nos .fit do Garmin
 
 
+def tempo_em_zonas_potencia(caminho: str, zonas: list[dict]) -> dict | None:
+    """Tempo (em segundos) em cada zona de potência, lido segundo-a-segundo do .fit.
+
+    `zonas` = [{"zona":1,"min":0,"max":110}, ...] (7 faixas em watts).
+    Retorna {1: seg, ..., 7: seg} ou None se não houver dados de potência.
+    Ignora amostras de 0W (coasting/pausa) para não inflar Z1.
+    """
+    if not zonas:
+        return None
+    try:
+        ff = FitFile(caminho)
+    except Exception:
+        return None
+    zs = sorted(zonas, key=lambda z: z["min"])
+    contagem = {z["zona"]: 0 for z in zs}
+    n = 0
+    for msg in ff.get_messages("record"):
+        pw = msg.get_value("power")
+        if pw is None or int(pw) <= 0:
+            continue
+        pw = int(pw)
+        n += 1
+        if pw <= zs[0]["max"]:
+            contagem[zs[0]["zona"]] += 1
+        elif pw >= zs[-1]["min"]:
+            contagem[zs[-1]["zona"]] += 1
+        else:
+            for z in zs:
+                if z["min"] <= pw <= z["max"]:
+                    contagem[z["zona"]] += 1
+                    break
+    if not n:
+        return None
+    return contagem
+
+
+def ptss(norm_power: float | None, ftp: int, duracao_min: int | None) -> int | None:
+    """Power TSS = (duracao_h × NP × IF) / (FTP × 3600) × 10000, onde IF = NP/FTP.
+    Equivalente a: (duracao_s × IF²) / 3600 × 100.
+    """
+    if not (norm_power and ftp and duracao_min):
+        return None
+    if_fator = norm_power / ftp
+    return round((duracao_min / 60) * (if_fator ** 2) * 100)
+
+
 def analisar_fit(caminho: str) -> dict:
     ff = FitFile(caminho)
 
@@ -282,6 +328,8 @@ def analisar_fit(caminho: str) -> dict:
         "calorias":               calories or None,
         "avg_hr":                 avg_hr,
         "max_hr":                 max_hr,
+        "avg_power":              round(avg_power) if avg_power else None,
+        "norm_power":             round(norm_power) if norm_power else None,
         "cadencia_rpm":           cadencia_rpm,
         "workout_name":           workout_name,
         "workout_notes":          workout_notes,

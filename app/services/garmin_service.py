@@ -448,7 +448,7 @@ def _tss_esperado(tipo, duracao_min) -> int | None:
     return round((duracao_min / 60) * fator ** 2 * 100)
 
 
-def _metricas_extra(planejado: dict, resultado: dict, limiar, avg_speed_ms=None, fit_path=None) -> dict:
+def _metricas_extra(planejado: dict, resultado: dict, limiar, avg_speed_ms=None, fit_path=None, ftp=None) -> dict:
     """Velocidade média e TSS (esperado/obtido) para o modal de avaliação.
     Não são enviadas ao WhatsApp — só ficam salvas no resultado para o portal."""
     extra = {}
@@ -460,10 +460,13 @@ def _metricas_extra(planejado: dict, resultado: dict, limiar, avg_speed_ms=None,
     if vel:
         extra["velocidade_media_kmh"] = round(vel, 1)
 
-    # TSS obtido: preferir o ponderado por zona (lê amostras de FC do .fit);
-    # cair no hrTSS pela FC média quando o .fit não está disponível.
+    # TSS obtido: preferir pTSS (potência) se houver NP e FTP; depois hrTSS ponderado; depois hrTSS simples.
     obtido = None
-    if fit_path and limiar:
+    norm_power = resultado.get("norm_power")
+    if norm_power and ftp:
+        from app.services.fit_service import ptss
+        obtido = ptss(norm_power, ftp, resultado.get("duracao_min"))
+    if obtido is None and fit_path and limiar:
         from app.services.fit_service import hrtss_ponderado
         obtido = hrtss_ponderado(fit_path, limiar)
     if obtido is None:
@@ -587,6 +590,8 @@ async def sync_atividades(user_id: str, semana_inicio: str) -> int:
             "elevacao_m": analise.get("elevacao_m"),
             "avg_hr": analise.get("avg_hr"),
             "max_hr": analise.get("max_hr"),
+            "avg_power": analise.get("avg_power"),
+            "norm_power": analise.get("norm_power"),
             "cadencia_media_rpm": round(cad_media) if cad_media else None,
             "cadencia_max_rpm": round(cad_max) if cad_max else None,
             "calorias": analise.get("calorias"),
@@ -603,11 +608,13 @@ async def sync_atividades(user_id: str, semana_inicio: str) -> int:
 
         # métricas extras do modal de avaliação (velocidade, TSS) — NÃO vão ao WhatsApp
         try:
-            from app.services.config_service import get_zonas
+            from app.services.config_service import get_zonas, get_ftp
             limiar = (await get_zonas(user_id)).get("limiar")
+            ftp_val, _ = await get_ftp(user_id)
         except Exception:
             limiar = None
-        resultado.update(_metricas_extra(treino_planejado, resultado, limiar, act.get("averageSpeed"), fit_path))
+            ftp_val = None
+        resultado.update(_metricas_extra(treino_planejado, resultado, limiar, act.get("averageSpeed"), fit_path, ftp_val))
 
         # análise IA — reutiliza se já existe para não consumir API desnecessariamente
         analise_ia_existente = (treino_planejado.get("resultado") or {}).get("analise_ia")

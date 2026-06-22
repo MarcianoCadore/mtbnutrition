@@ -220,6 +220,11 @@ def _resumo_treino(t: dict) -> str:
     ia = res.get("analise_ia") or {}
     if res.get("avg_hr"):
         linhas.append(f"    FC média: {res['avg_hr']} bpm")
+    if res.get("avg_power"):
+        pot_txt = f"    Potência média: {res['avg_power']}W"
+        if res.get("norm_power"):
+            pot_txt += f" | NP: {res['norm_power']}W"
+        linhas.append(pot_txt)
     if res.get("distancia_km"):
         linhas.append(f"    Distância: {res['distancia_km']} km")
     if ia.get("resumo"):
@@ -272,6 +277,13 @@ async def gerar_proxima_semana(user_id: str, semana_atual: str) -> dict:
         zonas_prompt = "Z1 <145 | Z2 146-158 | Z3 159-165 | Z4 166-177 | Z5 >177"
 
     limiar_txt = f" | Limiar de lactato: {limiar} bpm" if limiar else ""
+
+    # FTP e zonas de potência (para prescrições com watts)
+    from app.services.config_service import get_zonas_potencia as _get_zp
+    zp_doc = await _get_zp(user_id)
+    ftp_user: int | None = zp_doc["ftp"] if zp_doc else None
+    potencia_modo: str = (zp_doc or {}).get("potencia_modo", "indoor")
+    zonas_pot_user: list[dict] = (zp_doc or {}).get("zonas", [])
 
     # Academia
     academia_cfg: dict = u.get("academia") or {}
@@ -436,11 +448,27 @@ Formato OBRIGATÓRIO da "descricao" para ACADEMIA:
             'NÃO inclua sessões do tipo ACADEMIA. O campo "academia" deve ser null em todos os treinos.'
         )
 
+    # Bloco de potência para o prompt
+    if ftp_user and zonas_pot_user:
+        zonas_pot_txt = " | ".join(
+            f"Z{z['zona']}({z['nome']}) {z['min']}-{z['max'] if z['max']<9000 else '∞'}W"
+            for z in zonas_pot_user
+        )
+        _uso_pot = {
+            "indoor": "Usa potência apenas no rolo (VO2MAX, TIROS, TEMPO, FORCA). Z2_LONGO e RECUPERACAO são feitos na rua sem medidor.",
+            "sempre": "Tem medidor de potência em todas as bikes — SEMPRE prescreva watts.",
+            "nunca":  "Sem medidor de potência — prescreva APENAS por FC.",
+        }.get(potencia_modo, "")
+        bloco_potencia = f"FTP: {ftp_user}W\nZONAS DE POTÊNCIA: {zonas_pot_txt}\n{_uso_pot}"
+    else:
+        bloco_potencia = "FTP não configurado — prescreva intensidade apenas por FC."
+
     prompt = f"""Você é um coach de ciclismo MTB de alto nível, especializado em periodização progressiva e desenvolvimento de performance na bike.
 
 ATLETA: {nome_atleta}, {idade} anos, {peso:.0f} kg, objetivo: {objetivo}.
 FCMÁX: {fc_max} bpm{limiar_txt}
 ZONAS GARMIN: {zonas_prompt}
+{bloco_potencia}
 DIAS DE TREINO: {dias_treino_nomes}
 {bloco_academia}
 {bloco_prova}
@@ -498,6 +526,8 @@ TIPOS DE TREINO NA BIKE — PRESCRIÇÃO DETALHADA (use nas descrições com as 
   Ex: "15 min aquecimento. 6×8 min cadência 50-58 rpm marcha pesada Z3, subida ou resistência alta. Recuperação 3 min Z1 cadência livre. 10 min volta à calma."
 
 {_bloco_academia_prompt}
+
+{"POTÊNCIA (WATTS) NAS PRESCRIÇÕES:" + chr(10) + ("Inclua o alvo em watts NA DESCRIÇÃO de TODOS os treinos: ex. 'Z2 FC 146-158 bpm | 171-231W'." if potencia_modo == "sempre" else "Inclua o alvo em watts NA DESCRIÇÃO dos treinos de qualidade (VO2MAX, TIROS, TEMPO, FORCA): ex. '4×4 min Z5 >177 bpm | >327W'. Z2_LONGO e RECUPERACAO não têm potência (feitos na rua sem medidor).") if ftp_user else ""}
 
 REGRAS DE PROGRESSÃO:
 - Aumentar volume (+5-10% em duracao_min) quando a semana foi bem executada, respeitando o teto de 120 min em dias úteis.

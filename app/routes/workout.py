@@ -419,9 +419,11 @@ async def reenviar_para_garmin(request: Request, semana_inicio: str):
 
 @router.get("/zonas/dados")
 async def ler_zonas(request: Request):
-    """Zonas de FC atualmente configuradas."""
-    from app.services.config_service import get_zonas
-    return await get_zonas(request.state.user_id)
+    """Zonas de FC + FTP/modo de potência atualmente configurados."""
+    from app.services.config_service import get_zonas, get_zonas_potencia
+    zonas_fc = await get_zonas(request.state.user_id)
+    zonas_pot = await get_zonas_potencia(request.state.user_id)
+    return {**zonas_fc, "potencia": zonas_pot}
 
 
 @router.post("/zonas/importar-garmin")
@@ -501,6 +503,28 @@ async def salvar_zonas_endpoint(request: Request, body: ZonasBody):
 
     salvo["garmin_sync"] = garmin
     return salvo
+
+
+class FTPBody(BaseModel):
+    ftp: int
+    modo: str = "indoor"  # "indoor" | "sempre" | "nunca"
+
+
+@router.post("/zonas/ftp")
+async def salvar_ftp_endpoint(request: Request, body: FTPBody):
+    """Salva o FTP e o modo de uso de potência. Recalcula as 7 zonas automaticamente."""
+    from app.services.config_service import salvar_ftp
+    try:
+        return await salvar_ftp(request.state.user_id, body.ftp, body.modo)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/zonas/potencia")
+async def ler_zonas_potencia(request: Request):
+    """FTP e 7 zonas de potência do usuário. Retorna null se FTP não configurado."""
+    from app.services.config_service import get_zonas_potencia
+    return await get_zonas_potencia(request.state.user_id)
 
 
 @router.post("/garmin/conectar")
@@ -1722,6 +1746,31 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
     <button id="btnSalvarZonas" onclick="salvarZonas()">💾 Salvar zonas</button>
     <div id="st-zonas" class="status"></div>
   </div>
+
+  <div class="card">
+    <h2>⚡ Potência (FTP)</h2>
+    <p class="hint">FTP = Functional Threshold Power — watts que você sustenta por ~1h. Base para calcular as 7 zonas de potência.</p>
+    <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px">
+      <div>
+        <label style="font-size:.8rem;font-weight:600;display:block;margin-bottom:4px">FTP (watts)</label>
+        <input type="number" id="ftp_val" min="50" max="700" step="1" placeholder="ex: 290" style="width:110px;padding:9px 10px;border:1.5px solid #ddd;border-radius:7px;font-size:1rem">
+      </div>
+      <div>
+        <label style="font-size:.8rem;font-weight:600;display:block;margin-bottom:4px">Usar potência em</label>
+        <select id="ftp_modo" style="padding:9px 10px;border:1.5px solid #ddd;border-radius:7px;font-size:.92rem">
+          <option value="indoor">🏠 Só indoor (rolo) — treinos de qualidade</option>
+          <option value="sempre">🚵 Sempre — tenho medidor na bike</option>
+          <option value="nunca">❌ Nunca — só para análise</option>
+        </select>
+      </div>
+      <button id="btnSalvarFTP" onclick="salvarFTP()" style="white-space:nowrap">💾 Salvar FTP</button>
+    </div>
+    <div id="st-ftp" class="status"></div>
+    <div id="zonas-pot-preview" style="display:none;margin-top:12px">
+      <p style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:6px">ZONAS DE POTÊNCIA CALCULADAS</p>
+      <div id="zonas-pot-lista"></div>
+    </div>
+  </div>
 </main>
 <script>
 // ── Perfil ──
@@ -1855,8 +1904,51 @@ function aplicarZonas(d) {
 async function carregarZonas() {
   try {
     const r = await fetch('/workout/zonas/dados');
-    aplicarZonas(await r.json());
+    const d = await r.json();
+    aplicarZonas(d);
+    if (d.potencia) aplicarFTP(d.potencia);
   } catch(e) { renderZonas([]); }
+}
+
+const _CORES_POT = ['#90a4ae','#42a5f5','#66bb6a','#ffa726','#ef5350','#ab47bc','#37474f'];
+function aplicarFTP(zp) {
+  if (!zp) return;
+  document.getElementById('ftp_val').value = zp.ftp || '';
+  document.getElementById('ftp_modo').value = zp.potencia_modo || 'indoor';
+  renderZonasPot(zp.zonas || [], zp.ftp);
+}
+function renderZonasPot(zonas, ftp) {
+  const preview = document.getElementById('zonas-pot-preview');
+  const lista = document.getElementById('zonas-pot-lista');
+  if (!zonas.length) { preview.style.display='none'; return; }
+  preview.style.display = '';
+  lista.innerHTML = zonas.map((z,i) => {
+    const maxStr = z.max >= 9000 ? '∞' : z.max+'W';
+    const pctMin = ftp ? Math.round(z.min/ftp*100) : '';
+    const pctMax = ftp && z.max < 9000 ? Math.round(z.max/ftp*100) : '';
+    const pct = pctMin && pctMax ? ` (${pctMin}–${pctMax}% FTP)` : pctMin ? ` (>${pctMin}% FTP)` : '';
+    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:.82rem">
+      <span style="width:24px;height:14px;border-radius:3px;background:${_CORES_POT[i]};display:inline-block"></span>
+      <b>Z${z.zona}</b>
+      <span style="color:#555">${z.nome}</span>
+      <span style="margin-left:auto;font-weight:600">${z.min}–${maxStr}${pct}</span>
+    </div>`;
+  }).join('');
+}
+async function salvarFTP() {
+  const btn=document.getElementById('btnSalvarFTP'), st=document.getElementById('st-ftp');
+  const ftp = Number(document.getElementById('ftp_val').value);
+  const modo = document.getElementById('ftp_modo').value;
+  if (!ftp) { st.className='status err'; st.textContent='⚠️ Informe o FTP em watts.'; return; }
+  btn.disabled=true; btn.textContent='Salvando...'; st.className='status';
+  try {
+    const r = await fetch('/workout/zonas/ftp', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ftp, modo})});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Erro');
+    renderZonasPot(d.zonas || [], d.ftp);
+    st.className='status ok'; st.textContent=`✅ FTP ${d.ftp}W salvo! Zonas calculadas.`;
+  } catch(e) { st.className='status err'; st.textContent='❌ '+e.message; }
+  finally { btn.disabled=false; btn.textContent='💾 Salvar FTP'; }
 }
 async function importarGarmin() {
   const btn=document.getElementById('btnGarmin'), st=document.getElementById('stGarmin');

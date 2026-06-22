@@ -655,6 +655,8 @@ function abrirAvaliacao(key) {
   if (res.elevacao_m) mItems.push(`<div class="metric"><div class="mv">${res.elevacao_m} m</div><div class="ml">Altimetria</div></div>`);
   if (res.avg_hr) mItems.push(`<div class="metric"><div class="mv">${res.avg_hr} bpm</div><div class="ml">FC média</div></div>`);
   if (res.max_hr) mItems.push(`<div class="metric"><div class="mv">${res.max_hr} bpm</div><div class="ml">FC máx</div></div>`);
+  if (res.avg_power) mItems.push(`<div class="metric"><div class="mv">${res.avg_power}W</div><div class="ml">Potência média</div></div>`);
+  if (res.norm_power) mItems.push(`<div class="metric"><div class="mv">${res.norm_power}W</div><div class="ml">NP (normalizada)</div></div>`);
   if (res.cadencia_media_rpm) mItems.push(`<div class="metric"><div class="mv">${res.cadencia_media_rpm} rpm</div><div class="ml">Cad. real</div></div>`);
   if (res.cadencia_max_rpm) mItems.push(`<div class="metric"><div class="mv">${res.cadencia_max_rpm} rpm</div><div class="ml">Cad. máx</div></div>`);
   if (res.calorias) mItems.push(`<div class="metric"><div class="mv">${res.calorias}</div><div class="ml">kcal</div></div>`);
@@ -1043,6 +1045,8 @@ async function uploadFit(key, input) {
       if (d.elevacao_m)   items.push(`<div class="metric"><div class="mv">${d.elevacao_m} m</div><div class="ml">Elevação</div></div>`);
       if (d.avg_hr)       items.push(`<div class="metric"><div class="mv">${d.avg_hr} bpm</div><div class="ml">FC média</div></div>`);
       if (d.max_hr)       items.push(`<div class="metric"><div class="mv">${d.max_hr} bpm</div><div class="ml">FC máx</div></div>`);
+      if (d.avg_power)    items.push(`<div class="metric"><div class="mv">${d.avg_power}W</div><div class="ml">Potência média</div></div>`);
+      if (d.norm_power)   items.push(`<div class="metric"><div class="mv">${d.norm_power}W</div><div class="ml">NP</div></div>`);
       if (d.calorias)     items.push(`<div class="metric"><div class="mv">${d.calorias}</div><div class="ml">Calorias</div></div>`);
       metrics.className = items.length ? 'metrics' : '';
       metrics.innerHTML = items.join('');
@@ -1311,6 +1315,7 @@ async function carregarProva() {
 
 load();
 carregarProva();
+window.addEventListener('mtb:recarregar', load);
 </script>
 </body>
 </html>"""

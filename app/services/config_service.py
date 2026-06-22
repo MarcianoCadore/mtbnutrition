@@ -11,6 +11,30 @@ from app.services.nutricao_service import DEFAULT_HORARIOS
 
 _RE_HORA = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
+DEFAULT_FTP = 200  # watts — substituído pelo valor real do usuário
+
+# 7 zonas de potência baseadas no modelo Coggan (% do FTP)
+_ZONAS_POT_PCT = [
+    (1, 0.00, 0.55, "Recuperação ativa"),
+    (2, 0.56, 0.75, "Resistência"),
+    (3, 0.76, 0.90, "Tempo/Ritmo"),
+    (4, 0.91, 1.05, "Limiar"),
+    (5, 1.06, 1.20, "VO₂Máx"),
+    (6, 1.21, 1.50, "Anaeróbico"),
+    (7, 1.51, 9.99, "Neuromuscular"),
+]
+
+
+def calc_zonas_potencia(ftp: int) -> list[dict]:
+    """Calcula as 7 zonas de potência (watts) a partir do FTP."""
+    zonas = []
+    for zona, pct_min, pct_max, nome in _ZONAS_POT_PCT:
+        min_w = round(ftp * pct_min) if pct_min > 0 else 0
+        max_w = round(ftp * pct_max) if pct_max < 9 else 9999
+        zonas.append({"zona": zona, "min": min_w, "max": max_w, "nome": nome})
+    return zonas
+
+
 # Zonas de FC padrão calibradas com FC máx 185 e LTHR 165 (89% de 185).
 DEFAULT_ZONAS = {
     "fc_max": 185,
@@ -142,6 +166,50 @@ async def zonas_bpm_map(user_id: str) -> dict:
     """Mapa {numero_da_zona: {'min': bpm, 'max': bpm}} para montar os workouts."""
     cfg = await get_zonas(user_id)
     return {int(z["zona"]): {"min": int(z["min"]), "max": int(z["max"])} for z in cfg["zonas"]}
+
+
+# ── FTP e zonas de potência (por usuário) ────────────────────────────────────
+
+async def get_ftp(user_id: str) -> tuple[int | None, str]:
+    """FTP (watts) e modo de uso de potência. Retorna (None, 'indoor') se não configurado."""
+    from app.services.user_service import get_por_id
+    user = await get_por_id(user_id) or {}
+    ftp = int(user.get("ftp") or 0) or None
+    modo = user.get("potencia_modo") or "indoor"
+    return ftp, modo
+
+
+async def salvar_ftp(user_id: str, ftp: int, modo: str = "indoor") -> dict:
+    """Salva o FTP e o modo de uso de potência. Retorna as zonas calculadas.
+
+    modo:
+      "indoor"  — alvos de watts só em VO2MAX/TIROS/TEMPO/FORCA (feitos no rolo)
+      "sempre"  — todos os workouts com watts (medidor na bike de rua/MTB também)
+      "nunca"   — FTP salvo só para análise; workouts usam apenas FC
+    """
+    from app.services.user_service import atualizar_usuario
+    if not (50 <= ftp <= 700):
+        raise ValueError(f"FTP inválido: {ftp}W. Use um valor entre 50 e 700W.")
+    if modo not in ("indoor", "sempre", "nunca"):
+        modo = "indoor"
+    await atualizar_usuario(user_id, {"ftp": ftp, "potencia_modo": modo})
+    return {"ftp": ftp, "potencia_modo": modo, "zonas": calc_zonas_potencia(ftp)}
+
+
+async def get_zonas_potencia(user_id: str) -> dict | None:
+    """FTP + modo + 7 zonas de potência. Retorna None se FTP não configurado."""
+    ftp, modo = await get_ftp(user_id)
+    if not ftp:
+        return None
+    return {"ftp": ftp, "potencia_modo": modo, "zonas": calc_zonas_potencia(ftp)}
+
+
+async def zonas_watts_map(user_id: str) -> dict | None:
+    """Mapa {zona: {'min': w, 'max': w, 'nome': str}} para workouts Garmin. None se FTP não configurado."""
+    zp = await get_zonas_potencia(user_id)
+    if not zp:
+        return None
+    return {z["zona"]: {"min": z["min"], "max": z["max"], "nome": z["nome"]} for z in zp["zonas"]}
 
 
 # ── Ajustes de "fuga" do plano (o que comi fora, por dia) ─────────────────────

@@ -27,6 +27,9 @@ from garminconnect.workout import (
 
 logger = logging.getLogger(__name__)
 
+# Tipos de treino feitos no rolo (indoor) — recebem alvo de watts quando modo="indoor"
+_TIPOS_INDOOR = {"VO2MAX", "TIROS", "TEMPO", "FORCA"}
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 _CYCLING_SPORT = {
@@ -44,6 +47,40 @@ def _hz(zone: int) -> dict:
         "displayOrder": 1,
         "targetValue": zone,
     }
+
+
+def _pw(zona_fc: int) -> int:
+    """Mapeia zona de FC (1-5) para zona de potência Coggan equivalente (1-7)."""
+    return {1: 1, 2: 2, 3: 3, 4: 4, 5: 5}.get(zona_fc, zona_fc)
+
+
+def _aplicar_watts(steps: list, zonas_watts: dict) -> None:
+    """Substitui o target de FC por target de potência (watts explícitos) em todos os steps.
+
+    `zonas_watts` = {1: {min, max}, ..., 7: {min, max}} mapeado por zona de potência.
+    A zona de potência é derivada da zona de FC original do step (via _pw).
+    Recursivo para entrar nos repeat groups.
+    """
+    for step in steps:
+        filhos = getattr(step, "workoutSteps", None)
+        if filhos:
+            _aplicar_watts(filhos, zonas_watts)
+            continue
+        tt = getattr(step, "targetType", None)
+        if not tt or tt.get("workoutTargetTypeId") != TargetType.HEART_RATE:
+            continue
+        zona_fc = tt.get("targetValue")
+        zona_p = _pw(zona_fc) if zona_fc else None
+        rng = zonas_watts.get(zona_p) if zona_p else None
+        if not rng:
+            continue
+        step.targetType = {
+            "workoutTargetTypeId": TargetType.POWER,
+            "workoutTargetTypeKey": "power",
+            "displayOrder": 1,
+        }
+        step.targetValueOne = float(rng["min"])
+        step.targetValueTwo = float(rng["max"]) if rng["max"] < 9000 else float(rng["min"] * 2)
 
 
 def _seg(steps: list) -> WorkoutSegment:
@@ -235,15 +272,31 @@ async def upload_e_agendar(
     data_iso: str,
     descricao: str | None = None,
 ) -> str | None:
-    """Faz upload do workout e agenda para a data. Retorna o garmin_workout_id."""
+    """Faz upload do workout e agenda para a data. Retorna o garmin_workout_id.
+
+    Usa alvos de watts quando FTP está configurado e o modo de potência permite:
+      - "indoor": apenas tipos de qualidade (VO2MAX, TIROS, TEMPO, FORCA)
+      - "sempre": todos os treinos
+      - "nunca": apenas FC
+    """
     from app.services.garmin_service import get_garmin_client
-    from app.services.config_service import zonas_bpm_map
+    from app.services.config_service import zonas_bpm_map, get_zonas_potencia
 
     zonas_bpm = await zonas_bpm_map(user_id)
     workout = build_cycling_workout(tipo, duracao_min, nome, descricao, zonas_bpm)
     if not workout:
         logger.warning("Tipo %s não tem builder de workout", tipo)
         return None
+
+    # Substitui alvos de FC por watts quando configurado
+    zp = await get_zonas_potencia(user_id)
+    if zp:
+        modo = zp.get("potencia_modo", "indoor")
+        usar_watts = (modo == "sempre") or (modo == "indoor" and tipo in _TIPOS_INDOOR)
+        if usar_watts:
+            zonas_w = {z["zona"]: {"min": z["min"], "max": z["max"]} for z in zp["zonas"]}
+            for seg in workout.workoutSegments:
+                _aplicar_watts(seg.workoutSteps, zonas_w)
 
     # Resolve o cliente antes de entrar na thread (get_garmin_client é async)
     api = await get_garmin_client(user_id)
