@@ -429,39 +429,39 @@ function renderAcademiaBloco(ac) {
   const ad = ac.duracao_min || 0;
   const adStr = ad ? ((Math.floor(ad/60)>0?Math.floor(ad/60)+'h':'')+(ad%60>0?ad%60+'min':'')) : '';
   const raw = (ac.descricao || '').replace(/</g, '&lt;');
-  const lines = raw.split(/\\n|\n/);
+  const lines = raw.split('\\n');
 
-  // primeira linha: "ACADEMIA — Força MTB (foco: X)" → extrai foco
-  const focoMatch = lines[0] && lines[0].match(/\(foco:\s*([^)]+)\)/i);
-  const foco = focoMatch ? focoMatch[1] : '';
+  const focoM = lines[0] ? lines[0].match(/\(foco:\s*([^)]+)\)/i) : null;
+  const foco = focoM ? focoM[1] : '';
 
-  let porqueHTML = '', exercHTML = '', obsHTML = '';
-  let section = '';
+  let porqueText = '', obsText = '', section = '';
   const exItems = [];
 
   for (let i = 1; i < lines.length; i++) {
     const l = lines[i].trim();
     if (!l) continue;
-    if (l.startsWith('POR QUE HOJE:')) { section = 'porque'; porqueHTML = l.replace('POR QUE HOJE:', '').trim(); continue; }
-    if (l.startsWith('EXERCÍCIOS:') || l.startsWith('EXERCICIOS:')) { section = 'ex'; continue; }
-    if (l.startsWith('OBSERVAÇÕES:') || l.startsWith('OBSERVACOES:')) { section = 'obs'; continue; }
-    if (section === 'porque') porqueHTML += ' ' + l;
+    if (l.indexOf('POR QUE HOJE:') === 0) { section = 'porque'; porqueText = l.slice(13).trim(); continue; }
+    if (l.indexOf('EXERC') === 0 && l.indexOf(':') > 0) { section = 'ex'; continue; }
+    if (l.indexOf('OBSERVA') === 0 && l.indexOf(':') > 0) { section = 'obs'; continue; }
+    if (section === 'porque') porqueText += ' ' + l;
     else if (section === 'ex') exItems.push(l);
-    else if (section === 'obs') obsHTML += (obsHTML ? ' · ' : '') + l.replace(/^-\s*/, '');
+    else if (section === 'obs') obsText += (obsText ? ' · ' : '') + l.replace(/^-\s*/, '');
   }
 
-  if (exItems.length) exercHTML = '<ul class="ac-exercicios">' + exItems.map(e => `<li>${e}</li>`).join('') + '</ul>';
-
-  return `<div class="academia-bloco">
-    <div class="ac-header">
-      <span class="ac-titulo">🏋️ Academia</span>
-      ${adStr ? `<span class="ac-dur">⏱ ${adStr}</span>` : ''}
-    </div>
-    ${foco ? `<div class="ac-foco">Foco: ${foco}</div>` : ''}
-    ${porqueHTML ? `<div class="ac-porque">${porqueHTML}</div>` : ''}
-    ${exercHTML}
-    ${obsHTML ? `<div class="ac-obs">📌 ${obsHTML}</div>` : ''}
-  </div>`;
+  let html = '<div class="academia-bloco">';
+  html += '<div class="ac-header"><span class="ac-titulo">🏋️ Academia</span>';
+  if (adStr) html += '<span class="ac-dur">&#8987; ' + adStr + '</span>';
+  html += '</div>';
+  if (foco)       html += '<div class="ac-foco">Foco: ' + foco + '</div>';
+  if (porqueText) html += '<div class="ac-porque">' + porqueText + '</div>';
+  if (exItems.length) {
+    html += '<ul class="ac-exercicios">';
+    for (let i = 0; i < exItems.length; i++) html += '<li>' + exItems[i] + '</li>';
+    html += '</ul>';
+  }
+  if (obsText) html += '<div class="ac-obs">&#128204; ' + obsText + '</div>';
+  html += '</div>';
+  return html;
 }
 
 function iso(d) { return d.toISOString().split('T')[0]; }
