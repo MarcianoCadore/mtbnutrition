@@ -150,6 +150,12 @@ HTML = """<!DOCTYPE html>
     .nutri-area { margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 8px; }
     .nutri-toggle { background: #f1f8f6; border: 1px solid #cfe9e3; color: var(--green); font-size: .8rem; font-weight: 700; cursor: pointer; padding: 8px 10px; border-radius: 8px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px; }
     .nutri-toggle:hover { background: #e6f3ef; }
+    .indoor-area { margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 8px; }
+    .indoor-toggle { display: flex; gap: 4px; border-radius: 8px; overflow: hidden; border: 1.5px solid var(--border); }
+    .indoor-toggle button { flex: 1; padding: 7px 4px; border: none; font-size: .78rem; font-weight: 700; cursor: pointer; background: #f3f4f6; color: var(--muted); transition: .15s; }
+    .indoor-toggle button.ativo { background: var(--green); color: #fff; }
+    .indoor-toggle button:disabled { opacity: .5; cursor: not-allowed; }
+    .indoor-sync-msg { font-size: .72rem; margin-top: 4px; text-align: center; min-height: 14px; color: var(--muted); }
     .nutri-estrat { font-size: .76rem; color: var(--muted); font-style: italic; background: #f7f9fc; border-radius: 8px; padding: 7px 9px; margin-bottom: 8px; line-height: 1.4; }
     .nutri-prova { background: #e8f8ec; border: 1px solid #b6e6c4; border-radius: 10px; padding: 11px 13px; margin-bottom: 10px; }
     .nutri-prova .np-tit { font-size: .85rem; font-weight: 800; color: #1e7a44; margin-bottom: 6px; }
@@ -365,6 +371,8 @@ HTML = """<!DOCTYPE html>
 
 <script>
 window.NUTRICAO_ON = {{NUTRICAO_ON}};
+window.FTP_ON      = {{FTP_ON}};
+window.GARMIN_ON   = {{GARMIN_ON}};
 const DIAS  = ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo'];
 const TIPOS = [
   {v:'DESCANSO',    l:'🛌 Descanso',    s:'Descanso'},
@@ -595,6 +603,19 @@ function buildCards(treinos) {
           ${hide ? '🏃 Adicionar treino' : '🛌 Marcar descanso'}
         </button>` : ''}
 
+        ${window.FTP_ON && !hide ? `<div class="indoor-area">
+          <div class="indoor-toggle" id="indoor-toggle-${key}">
+            <button id="indoor-out-${key}" class="${!t.indoor ? 'ativo' : ''}"
+              onclick="setIndoor('${key}', false)" title="Outdoor — Garmin usará frequência cardíaca">
+              🚵 Outdoor (FC)
+            </button>
+            <button id="indoor-in-${key}" class="${t.indoor ? 'ativo' : ''}"
+              onclick="setIndoor('${key}', true)" title="Indoor — Garmin usará watts do rolo">
+              🏠 Indoor (Watts)
+            </button>
+          </div>
+          <div class="indoor-sync-msg" id="indoor-msg-${key}"></div>
+        </div>` : ''}
         ${window.NUTRICAO_ON ? `<div class="nutri-area">
           <button class="nutri-toggle" onclick="abrirNutriModal('${key}')">
             🥗 Plano alimentar do dia
@@ -639,6 +660,46 @@ function toggleRest(key) {
   const sel = document.getElementById(`tp-${key}`);
   sel.value = sel.value === 'DESCANSO' ? 'Z2_LONGO' : 'DESCANSO';
   onTipo(key);
+}
+
+async function setIndoor(key, indoor) {
+  const btnIn  = document.getElementById(`indoor-in-${key}`);
+  const btnOut = document.getElementById(`indoor-out-${key}`);
+  const msg    = document.getElementById(`indoor-msg-${key}`);
+  if (!btnIn) return;
+
+  btnIn.disabled = true; btnOut.disabled = true;
+  msg.textContent = '⏳ Salvando...';
+
+  // extrai semana_inicio da segunda-feira visível
+  const semanaInicio = iso(monday);
+
+  try {
+    const r = await fetch(`/workout/treino/${semanaInicio}/${key}/indoor`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({indoor}),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Erro');
+
+    btnIn.classList.toggle('ativo', indoor);
+    btnOut.classList.toggle('ativo', !indoor);
+
+    const label = indoor ? '🏠 Indoor (Watts)' : '🚵 Outdoor (FC)';
+    if (d.garmin_sync && d.garmin_sync.ok) {
+      msg.textContent = `✅ ${label} — workout re-enviado ao Garmin`;
+    } else if (d.garmin_sync) {
+      msg.textContent = `✅ ${label} salvo — sem Garmin conectado`;
+    } else {
+      msg.textContent = `✅ ${label} salvo`;
+    }
+    setTimeout(() => { if (msg) msg.textContent = ''; }, 4000);
+  } catch(e) {
+    msg.textContent = '❌ ' + e.message;
+  } finally {
+    btnIn.disabled = false; btnOut.disabled = false;
+  }
 }
 
 function abrirAvaliacao(key) {
@@ -1365,6 +1426,11 @@ async def portal(request: Request):
         '<a class="btn btn-sec" href="/workout/integracao">⌚ Conectar Garmin</a>'
     )
 
+    from app.services.config_service import get_ftp
+    ftp_val, _ = await get_ftp(request.state.user_id)
+    ftp_on_js = "true" if ftp_val else "false"
+    garmin_on_js = "true" if garmin_conectado else "false"
+
     return (
         HTML
         .replace("{{NAV_NUTRI}}", nav_nutri)
@@ -1372,4 +1438,6 @@ async def portal(request: Request):
         .replace("{{NUTRICAO_ON}}", nutricao_on_js)
         .replace("{{GARMIN_NAV}}", garmin_nav)
         .replace("{{GARMIN_BTN}}", garmin_btn)
+        .replace("{{FTP_ON}}", ftp_on_js)
+        .replace("{{GARMIN_ON}}", garmin_on_js)
     )

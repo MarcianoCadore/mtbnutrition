@@ -104,11 +104,13 @@ async def salvar_semana(request: Request, plano: PlanoSemanal):
         }
         for i, t in enumerate(data["treinos"]):
             saved = existing_map.get(t["data"], {})
-            # preserva resultado e garmin_workout_id do sync
+            # preserva resultado, garmin_workout_id e indoor do sync / toggle
             if saved.get("resultado") and not t.get("resultado"):
                 t["resultado"] = saved["resultado"]
             if saved.get("garmin_workout_id") and not t.get("garmin_workout_id"):
                 t["garmin_workout_id"] = saved["garmin_workout_id"]
+            if saved.get("indoor") is not None and t.get("indoor") is None:
+                t["indoor"] = saved["indoor"]
             # bloqueia alteração se data >= hoje E treino ainda não foi realizado
             if t["data"] >= today_iso and not saved.get("resultado") and saved:
                 data["treinos"][i] = saved
@@ -551,6 +553,75 @@ async def ler_zonas_potencia(request: Request):
     """FTP e 7 zonas de potência do usuário. Retorna null se FTP não configurado."""
     from app.services.config_service import get_zonas_potencia
     return await get_zonas_potencia(request.state.user_id)
+
+
+class IndoorBody(BaseModel):
+    indoor: bool  # True = indoor (watts), False = outdoor (FC)
+
+
+@router.post("/treino/{semana_inicio}/{data}/indoor")
+async def marcar_indoor(
+    request: Request,
+    semana_inicio: str,
+    data: str,
+    body: IndoorBody,
+):
+    """Marca um treino como indoor (watts) ou outdoor (FC) e re-sincroniza com Garmin."""
+    from app.services.config_service import get_zonas_potencia
+    from app.services.garmin_workout_service import upload_e_agendar, deletar_workout_garmin
+
+    db = get_db()
+    user_id = request.state.user_id
+
+    doc = await db.semanas.find_one({"semana_inicio": semana_inicio, "user_id": user_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Semana não encontrada.")
+
+    treino = next((t for t in doc.get("treinos", []) if t["data"] == data), None)
+    if not treino or treino.get("tipo") == "DESCANSO":
+        raise HTTPException(status_code=404, detail="Treino não encontrado para esta data.")
+
+    # Atualiza campo indoor no banco
+    await db.semanas.update_one(
+        {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": data},
+        {"$set": {"treinos.$.indoor": body.indoor}},
+    )
+
+    garmin_sync = None
+    zp = await get_zonas_potencia(user_id)
+    if zp:
+        # Deleta o workout antigo do Garmin (se existir)
+        gid_antigo = treino.get("garmin_workout_id")
+        if gid_antigo:
+            await deletar_workout_garmin(user_id, gid_antigo)
+
+        # Re-envia com o alvo correto (forcar_indoor=True/False)
+        try:
+            novo_gid = await upload_e_agendar(
+                user_id=user_id,
+                tipo=treino["tipo"],
+                duracao_min=treino.get("duracao_min") or 60,
+                nome=treino.get("nome") or treino["tipo"],
+                data_iso=data,
+                descricao=treino.get("descricao"),
+                forcar_indoor=body.indoor,
+            )
+            if novo_gid:
+                await db.semanas.update_one(
+                    {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": data},
+                    {"$set": {"treinos.$.garmin_workout_id": novo_gid}},
+                )
+                garmin_sync = {"ok": True, "gid": novo_gid}
+            else:
+                garmin_sync = {"ok": False, "motivo": "upload retornou vazio"}
+        except Exception as e:
+            garmin_sync = {"ok": False, "motivo": str(e)}
+
+    return {
+        "indoor": body.indoor,
+        "data": data,
+        "garmin_sync": garmin_sync,
+    }
 
 
 @router.post("/garmin/conectar")

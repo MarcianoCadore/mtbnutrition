@@ -271,13 +271,14 @@ async def upload_e_agendar(
     nome: str,
     data_iso: str,
     descricao: str | None = None,
+    forcar_indoor: bool | None = None,
 ) -> str | None:
     """Faz upload do workout e agenda para a data. Retorna o garmin_workout_id.
 
-    Usa alvos de watts quando FTP está configurado e o modo de potência permite:
-      - "indoor": apenas tipos de qualidade (VO2MAX, TIROS, TEMPO, FORCA)
-      - "sempre": todos os treinos
-      - "nunca": apenas FC
+    forcar_indoor:
+      True  → força alvos em watts (usuário marcou "indoor" no dia)
+      False → força alvos em FC (usuário marcou "outdoor" no dia)
+      None  → usa a lógica do potencia_modo + tipo (comportamento padrão)
     """
     from app.services.garmin_service import get_garmin_client
     from app.services.config_service import zonas_bpm_map, get_zonas_potencia
@@ -291,8 +292,13 @@ async def upload_e_agendar(
     # Substitui alvos de FC por watts quando configurado
     zp = await get_zonas_potencia(user_id)
     if zp:
-        modo = zp.get("potencia_modo", "indoor")
-        usar_watts = (modo == "sempre") or (modo == "indoor" and tipo in _TIPOS_INDOOR)
+        if forcar_indoor is True:
+            usar_watts = True
+        elif forcar_indoor is False:
+            usar_watts = False
+        else:
+            modo = zp.get("potencia_modo", "indoor")
+            usar_watts = (modo == "sempre") or (modo == "indoor" and tipo in _TIPOS_INDOOR)
         if usar_watts:
             zonas_w = {z["zona"]: {"min": z["min"], "max": z["max"]} for z in zp["zonas"]}
             for seg in workout.workoutSegments:
