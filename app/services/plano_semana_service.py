@@ -1,10 +1,10 @@
-"""Geração da próxima semana de treinos usando IA (Gemini)."""
+"""Geração da próxima semana de treinos usando IA (Claude Opus)."""
 
 import json
 import logging
 from datetime import datetime, timedelta
 
-from google import genai as _genai_sdk
+import anthropic
 
 from config.settings import settings
 from app.services.mongo_service import get_db
@@ -12,26 +12,16 @@ from app.services.user_service import get_por_id
 
 logger = logging.getLogger(__name__)
 
+_client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+_MODEL_PLANO = "claude-opus-4-8"  # melhor qualidade para geração de planos semanais
 
-class _GeminiClient:
-    """Thin wrapper preserving the .generate_content(prompt) interface."""
-
-    def __init__(self, model: str):
-        self._sdk = _genai_sdk.Client(api_key=settings.GEMINI_API_KEY)
-        self._model = model
-
-    def generate_content(self, prompt: str):
-        return self._sdk.models.generate_content(model=self._model, contents=prompt)
-
-
-_client = _GeminiClient("gemini-2.5-flash-lite")
-
-_TIPOS_VALIDOS = {"Z2_LONGO", "TIROS", "VO2MAX", "TEMPO", "FORCA", "RECUPERACAO", "DESCANSO"}
+_TIPOS_VALIDOS = {"Z2_LONGO", "TIROS", "VO2MAX", "TEMPO", "FORCA", "ACADEMIA", "RECUPERACAO", "DESCANSO"}
 
 _DURACAO_PADRAO = {
     "Z2_LONGO":    120,
     "TEMPO":        70,
     "FORCA":        65,
+    "ACADEMIA":     65,
     "TIROS":        62,
     "VO2MAX":       62,
     "RECUPERACAO":  55,
@@ -42,6 +32,7 @@ _DURACAO_MAXIMA = {
     "Z2_LONGO":    150,
     "TEMPO":        90,
     "FORCA":        90,
+    "ACADEMIA":     90,
     "TIROS":        80,
     "VO2MAX":       80,
     "RECUPERACAO":  75,
@@ -51,6 +42,7 @@ _DESCRICAO_PADRAO = {
     "Z2_LONGO":    "Base aeróbica Z2. FC 146-158 bpm, cadência 85-95 rpm.",
     "TEMPO":       "3x10 min Z3 (159-165 bpm), recuperação Z2.",
     "FORCA":       "4x6 min Z3 cadência baixa (50-60 rpm), recuperação Z2.",
+    "ACADEMIA":    "ACADEMIA — Força para MTB\n\nEXERCÍCIOS:\n1. Agachamento búlgaro — 4x8 cada perna (potência de subida)\n2. Stiff romeno com halteres — 3x10 (isquiotibiais e glúteos)\n3. Prancha abdominal — 4x45s\n4. Dead bug — 3x12 cada lado (estabilidade core no bike)\n5. Remada curvada — 3x10 (controle do guidão)\n6. Panturrilha em pé — 4x15\n\nOBSERVAÇÕES:\n- Descanso 90s entre séries\n- Foco em glúteos, core e estabilidade para MTB",
     "TIROS":       "8x30s Z5 (>177 bpm) com 3.5 min recuperação Z1.",
     "VO2MAX":      "4x4 min Z5 (>177 bpm) com 4 min recuperação Z2.",
     "RECUPERACAO": "Pedal leve Z1 (<145 bpm). Recuperação ativa.",
@@ -59,36 +51,57 @@ _DESCRICAO_PADRAO = {
 
 
 _INSTRUCOES_OBJETIVO = {
-    "performance_mtb": """OBJETIVO — PERFORMANCE MTB (modelo polarizado):
-- No máximo 2 dias DUROS na semana (ex.: VO2MAX e TIROS, ou VO2MAX e TEMPO), bem ESPAÇADOS (não em dias seguidos).
-- Dias fáceis (Z2/RECUPERACAO) devem ser REALMENTE fáceis (FC baixa, Z2 puro) — evite a "zona cinza".
-- Garanta recuperação: pelo menos 1 dia de descanso/recuperação entre blocos duros.
-- Os dias DUROS rendem mais descansados — nunca dois dias pesados grudados nem antes do longão.""",
+    "performance_mtb": """OBJETIVO — PERFORMANCE MTB (modelo polarizado + progressão contínua):
+
+ESTRUTURA SEMANAL:
+- Exatamente 2 dias DUROS, bem espaçados (nunca em dias consecutivos nem antes do longão).
+- Combinações ideais de sessões duras: VO2MAX + TIROS, VO2MAX + TEMPO, ou TIROS + TEMPO.
+- Dias fáceis (Z2/RECUPERACAO) devem ser REALMENTE fáceis — FC abaixo de Z3. Sem "zona cinza".
+- Longão de sábado é INEGOCIÁVEL: base aeróbica, ritmo conversacional.
+
+PROGRESSÃO CONTÍNUA (use os dados da semana atual para decidir):
+- Semana BEM executada (FC nos alvos, pontos fortes > pontos fracos): AUMENTAR carga (+5-10 min ou +1 repetição).
+- Semana MEDIANA (alguns pontos fracos, FC um pouco alta): MANTER volume, ajustar intensidade.
+- Semana DIFÍCIL (FC muito alta, muitos pontos fracos, incompleta): REDUZIR volume 10% e reforçar recuperação.
+- A cada 4 semanas: semana de recuperação com volume -20-30%, sem VO2MAX.
+
+DETALHAMENTO DAS SESSÕES DURAS (use dados reais das zonas do atleta na descrição):
+- TIROS: progressão de 6→8→10→12 repetições de 30s Z5, com 3-4 min recuperação Z1. Cadência alta (95-110 rpm).
+- VO2MAX: progressão de 4→5→6 blocos de 4-5 min Z5, recuperação igual ao bloco. Cadência 90-100 rpm.
+- TEMPO: progressão de 2→3 blocos de 10-15 min Z3-Z4, recuperação 5 min Z2. Cadência 85-95 rpm.
+- FORCA (bike): 4-6 blocos de 5-8 min cadência 50-60 rpm, marcha pesada, Z3. Fortalece musculatura de subida.
+
+ESPECIFICIDADE MTB (MTB é diferente de estrada):
+- Cadência variada e trabalho neuromuscular são essenciais para trilha.
+- Inclua variações de cadência na descrição dos treinos (ex: sprints de cadência alta, subidas simuladas em cadência baixa).
+- O longão Z2 deve incluir mudanças de ritmo ocasionais que simulem o terreno variado do MTB.""",
 
     "aumentar_potencia": """OBJETIVO — AUMENTAR POTÊNCIA / FTP:
 - Priorize 2 sessões de qualidade por semana: TEMPO (limiar) + TIROS ou VO2MAX, bem espaçadas.
-- Sessões de TEMPO sustentado (Z3-Z4) são prioritárias para elevar FTP.
-- Inclua VO2MAX a cada 2 semanas para elevar o teto aeróbico.
+- Sessões de TEMPO sustentado (Z3-Z4) são prioritárias para elevar FTP — progressão: 2x10 → 2x15 → 3x10 → 3x15 min.
+- Inclua VO2MAX a cada 2 semanas para elevar o teto aeróbico acima do limiar.
 - Dias de recuperação em Z1/Z2 puro — o atleta deve chegar DESCANSADO nas sessões duras.
-- Reduza Z2_LONGO se necessário para não comprometer qualidade das sessões duras.""",
+- Reduza Z2_LONGO se necessário para não comprometer qualidade das sessões de qualidade.""",
 
     "base_aerobica": """OBJETIVO — CONSTRUIR BASE AERÓBICA:
-- Maximizar volume em Z2 (FC abaixo do limiar de lactato). Sem sessões VO2MAX ou TIROS.
-- Apenas Z2_LONGO, RECUPERACAO e TEMPO ocasional (1x semana no máximo).
-- O longão de fim de semana é o treino central da semana — preservar sempre.
-- Progressão de volume gradual (+5-10% por semana). Priorize consistência sobre intensidade.""",
+- Maximizar volume em Z2 (FC abaixo do limiar de lactato). Sem sessões VO2MAX ou TIROS ainda.
+- Apenas Z2_LONGO, RECUPERACAO e TEMPO ocasional (1x semana no máximo, moderado).
+- O longão de fim de semana é o treino central — preservar sempre, aumentar progressivamente.
+- Progressão de volume gradual (+5-10% por semana). Priorize consistência sobre intensidade.
+- A base sólida agora = mais potência quando intensidade for introduzida nas próximas fases.""",
 
     "manter_performance": """OBJETIVO — MANTER PERFORMANCE:
 - Equilíbrio: 1 sessão dura (VO2MAX ou TIROS) + 2-3 Z2 + longão.
 - Não reduza volume bruscamente nem aumente carga: mantenha o padrão das semanas anteriores.
-- Foque em consistência — complete os treinos planejados sem sobrecarga.""",
+- Foque em consistência — complete os treinos planejados sem sobrecarga.
+- A cada 4-6 semanas: semana de recuperação para consolidar as adaptações.""",
 
-    "emagrecimento": """OBJETIVO — EMAGRECIMENTO:
-- Priorize volume de Z2 (alto gasto calórico, baixo cortisol, preserva músculo).
-- Máximo 1 sessão dura por semana (VO2MAX ou TIROS) para manter estímulo metabólico.
-- Longões de fim de semana são ESSENCIAIS: maior queima de gordura em Z2 prolongado.
-- Evite 2 dias duros consecutivos — má recuperação sabota a perda de peso.
-- Prefira Z2_LONGO e RECUPERACAO nos dias úteis.""",
+    "emagrecimento": """OBJETIVO — EMAGRECIMENTO COM PRESERVAÇÃO DE PERFORMANCE:
+- Priorize volume de Z2 (alto gasto calórico, baixo cortisol, preserva músculo e mitocôndrias).
+- Máximo 1 sessão dura por semana (VO2MAX ou TIROS) para manter estímulo metabólico e massa magra.
+- Longões de fim de semana são ESSENCIAIS: maior oxidação de gordura em Z2 prolongado (>90 min).
+- Evite 2 dias duros consecutivos — má recuperação sabota a perda de peso e a performance.
+- Prefira Z2_LONGO e RECUPERACAO nos dias úteis para manter déficit calórico sem sobrecarregar.""",
 }
 
 
@@ -259,6 +272,11 @@ async def gerar_proxima_semana(user_id: str, semana_atual: str) -> dict:
 
     limiar_txt = f" | Limiar de lactato: {limiar} bpm" if limiar else ""
 
+    # Academia
+    academia_cfg: dict = u.get("academia") or {}
+    treina_academia: bool = bool(academia_cfg.get("treina"))
+    academia_disp: dict = academia_cfg.get("disponibilidade") or {}
+
     # Dias de treino para o prompt
     dias_treino: list[int] = preferencias.get("dias_treino") or _DIAS_TREINO_PADRAO
     _NOMES_DIA = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
@@ -293,6 +311,27 @@ async def gerar_proxima_semana(user_id: str, semana_atual: str) -> dict:
     if not resumos:
         resumos = "  (nenhum treino com dados registrados)"
 
+    # ── Bloco de academia para o prompt ──────────────────────────────────────
+    _NOMES_PERIODO = {"manha": "manhã", "tarde": "tarde", "noite": "noite"}
+    if treina_academia:
+        if academia_disp:
+            disp_txt = ", ".join(
+                f"{_NOMES_DIA[int(d)]} ({_NOMES_PERIODO.get(p, p)})"
+                for d, p in sorted(academia_disp.items(), key=lambda x: int(x[0]))
+                if int(d) < 7
+            )
+            bloco_academia = f"ACADEMIA DO ATLETA: treina musculação. Dias/períodos disponíveis: {disp_txt}."
+        else:
+            bloco_academia = (
+                "ACADEMIA DO ATLETA: treina musculação, mas não informou dias/períodos preferidos. "
+                "A IA deve escolher automaticamente os melhores dias (adjacentes a treinos leves ou descanso)."
+            )
+    else:
+        bloco_academia = (
+            "ACADEMIA DO ATLETA: NÃO treina musculação. "
+            "NÃO inclua sessões do tipo ACADEMIA. O campo academia deve ser null em todos os treinos."
+        )
+
     # ── Próxima prova: periodização orientada ao objetivo ─────────────────────
     from app.services.prova_service import (
         proxima_prova, semanas_ate, fase_periodizacao, FASE_LABEL,
@@ -321,18 +360,80 @@ FASE DE PERIODIZAÇÃO: {FASE_LABEL.get(fase_prova, fase_prova)}.
 Direcione a semana para essa fase e para as exigências da prova (terreno/altimetria).
 """
 
-    prompt = f"""Você é um coach de ciclismo MTB especializado em periodização progressiva.
+    if treina_academia:
+        if academia_disp:
+            disp_agenda = ", ".join(
+                f"{_NOMES_DIA[int(d)]} ({_NOMES_PERIODO.get(p, p)})"
+                for d, p in sorted(academia_disp.items(), key=lambda x: int(x[0]))
+                if int(d) < 7
+            )
+            _intro_academia = (
+                f"O atleta TREINA NA ACADEMIA. Dias/períodos disponíveis: {disp_agenda}.\n"
+                "PRIORIDADE: agende sessões de ACADEMIA nesses dias/períodos.\n"
+                "Se um dia de academia coincidir com bike, use o campo \"academia\" no mesmo treino."
+            )
+        else:
+            _intro_academia = (
+                "O atleta TREINA NA ACADEMIA mas não informou dias preferidos.\n"
+                "Escolha automaticamente os melhores dias: coloque academia em dias com treinos LEVES "
+                "(RECUPERACAO, Z2 curto) ou DESCANSO — nunca adjacente a VO2MAX ou TIROS."
+            )
+        _bloco_academia_prompt = f"""ACADEMIA (musculação no ginásio — tipo "ACADEMIA"):
+{_intro_academia}
+
+OBJETIVO DOS EXERCÍCIOS: aumentar DIRETAMENTE a performance na bike MTB.
+  → Glúteos e isquiotibiais: potência nas pedaladas e subidas (agachamento búlgaro, stiff, hip thrust)
+  → Core: estabilidade no bike, absorção de impacto em trilha (prancha, dead bug, pallof press, bird dog)
+  → Quadríceps: força de saída e sprint (leg press, afundo, agachamento goblet)
+  → Membros superiores/escapular: controle do guidão em técnico (remada, supino neutro, desenvolvimento)
+  → Mobilidade de quadril e mobilidade torácica: manutenção da postura no bike
+
+QUANTIDADE DE ACADEMIA POR SEMANA (decisão inteligente — analise a semana anterior):
+A academia é um COMPLEMENTO ao bike. Decida quantas sessões incluir (0, 1 ou no máximo 2):
+QUANDO INCLUIR 2 sessões: atleta completou bem os treinos; fase BASE/CONSTRUÇÃO com dias ociosos; análise apontou fraqueza de core/postura.
+QUANDO INCLUIR 1 sessão: volume moderado de bike e há um dia com espaço; fase PICO: só 1 sessão leve de core.
+QUANDO NÃO INCLUIR (0): semana sobrecarregada (VO2MAX+TIROS+longão+FORCA); fase TAPER; atleta com fadiga generalizada.
+
+REGRA INVIOLÁVEL: Nunca coloque ACADEMIA em dia adjacente (anterior ou posterior) a VO2MAX ou TIROS.
+
+REGRA CRÍTICA — analise dias ANTERIOR e POSTERIOR:
+  * Adjacente DURO (VO2MAX, TIROS, FORCA, Z2_LONGO ≥180 min): PARTE SUPERIOR + CORE puro. PROIBIDO perna pesada.
+  * Adjacentes LEVES (RECUPERACAO, DESCANSO): MEMBROS INFERIORES + CORE (agachamento búlgaro, hip thrust, stiff).
+
+Formato OBRIGATÓRIO da "descricao" para ACADEMIA:
+  "ACADEMIA — Força MTB (foco: [glúteos+core / pernas+core / superior+core])\\n\\nPOR QUE HOJE: [1-2 frases explicando a escolha]\\n\\nEXERCÍCIOS:\\n1. [exercício] — [séries]x[reps/tempo] ([benefício para MTB])\\n2. ...\\n\\nOBSERVAÇÕES:\\n- Descanso 90s entre séries\\n- [dica prática de MTB]"
+
+DIAS COM BIKE + ACADEMIA NO MESMO DIA (opcional):
+- Se fizer sentido acumular, inclua o campo "academia" no treino: {{"duracao_min": 60, "descricao": "ACADEMIA — ..."}}.
+- Use o mesmo critério (dias adjacentes) para definir o foco."""
+    else:
+        _bloco_academia_prompt = (
+            'ACADEMIA: O atleta NÃO treina musculação. '
+            'NÃO inclua sessões do tipo ACADEMIA. O campo "academia" deve ser null em todos os treinos.'
+        )
+
+    prompt = f"""Você é um coach de ciclismo MTB de alto nível, especializado em periodização progressiva e desenvolvimento de performance na bike.
 
 ATLETA: {nome_atleta}, {idade} anos, {peso:.0f} kg, objetivo: {objetivo}.
 FCMÁX: {fc_max} bpm{limiar_txt}
 ZONAS GARMIN: {zonas_prompt}
 DIAS DE TREINO: {dias_treino_nomes}
+{bloco_academia}
 {bloco_prova}
-SEMANA ATUAL ({semana_atual}):
+═══════════════════════════════════════════
+ANÁLISE DA SEMANA ATUAL ({semana_atual}):
 {resumos}
 
 DISTRIBUIÇÃO ATUAL DOS TREINOS:
-{chr(10).join(f"  {t['data']} → {t.get('tipo','DESCANSO')}" for t in treinos)}
+{chr(10).join(f"  {t['data']} → {t.get('tipo','DESCANSO')}{(' | ' + str(t.get('duracao_min')) + 'min') if t.get('duracao_min') else ''}" for t in treinos)}
+
+COMO USAR ESSES DADOS PARA DECIDIR A PRÓXIMA SEMANA:
+- FC média ABAIXO do alvo da zona → treino ficou fácil → AUMENTAR carga (mais tempo, mais repetições ou zona mais alta).
+- FC média DENTRO do alvo → execução ideal → MANTER estrutura e progredir levemente (+5-10 min ou +1 rep).
+- FC média ACIMA do alvo → treino foi duro → MANTER ou REDUZIR volume antes de progredir.
+- Pontos fracos recorrentes → escolher tipos de treino que ataquem diretamente essa fraqueza.
+- Treino incompleto ou não realizado → NÃO progredir esse tipo de sessão; manter ou reduzir.
+═══════════════════════════════════════════
 
 RESTRIÇÕES DE AGENDA (OBRIGATÓRIAS):
 {restricao_util}
@@ -340,6 +441,33 @@ RESTRIÇÕES DE AGENDA (OBRIGATÓRIAS):
 - Dias SEM treino: DESCANSO obrigatório — não gere treino nesses dias.
 
 {_instrucoes_objetivo(objetivo)}
+
+TIPOS DE TREINO NA BIKE — PRESCRIÇÃO DETALHADA (use nas descrições com as zonas reais do atleta):
+
+- Z2_LONGO: Base aeróbica. FC em {zonas_prompt.split('|')[1].strip() if '|' in zonas_prompt else 'Z2'}.
+  Descrição deve incluir: duração total, FC alvo, cadência (85-95 rpm), observação de ritmo conversacional.
+  Ex: "90 min base aeróbica Z2 ({zonas_prompt.split('|')[1].strip() if '|' in zonas_prompt else 'Z2 bpm'}). Cadência 85-95 rpm, ritmo que permite conversar. Mantenha a FC estável — desacelere nas subidas se necessário."
+
+- RECUPERACAO: Pedal muito leve Z1. FC mínima possível. Ativa circulação, não gera fadiga.
+  Ex: "55 min recuperação ativa Z1 (<{zonas_prompt.split('|')[0].replace('Z1','').strip() if '|' in zonas_prompt else '145'} bpm). Sem esforço — só mover as pernas."
+
+- TEMPO (limiar): Treino de limiar para elevar FTP. FC em Z3-Z4.
+  Descrição deve incluir: aquecimento, blocos (N×X min), FC alvo por bloco, recuperação entre blocos, volta à calma.
+  Ex: "10 min aquecimento Z1-Z2. 3×12 min Z3-Z4 ({zonas_prompt.split('|')[2].strip() if len(zonas_prompt.split('|'))>2 else '159-177 bpm'}), recuperação 5 min Z2 entre blocos. Cadência 88-95 rpm. 8 min volta à calma Z1."
+
+- TIROS (neuromuscular/sprint): Alta intensidade Z5. Desenvolve potência e capacidade anaeróbica.
+  Descrição deve incluir: aquecimento, número de repetições, duração do esforço, FC alvo, recuperação, cadência alta.
+  Ex: "15 min aquecimento progressivo. 8×30s sprint máximo Z5 (>{fc_max - 13} bpm), cadência 100-115 rpm. Recuperação 3 min Z1 entre cada. 10 min volta à calma."
+
+- VO2MAX: Blocos longos em Z5 para elevar VO2max e potência aeróbica máxima.
+  Descrição deve incluir: aquecimento, número de blocos, duração do bloco, FC alvo, recuperação igual ao esforço, cadência.
+  Ex: "12 min aquecimento progressivo até Z3. 4×4 min Z5 (>{fc_max - 13} bpm), cadência 90-100 rpm. Recuperação 4 min Z2 entre blocos. 10 min volta à calma Z1."
+
+- FORCA (treino de força na BIKE — NÃO é academia):
+  Cadência baixa (50-60 rpm), marcha pesada, FC em Z3. Simula subidas longas e fortalece musculatura de pedalada.
+  Ex: "10 min aquecimento. 5×6 min cadência 50-58 rpm marcha pesada Z3, subida ou resistência alta. Recuperação 3 min Z1 cadência livre. Mantenha potência constante, não trave os joelhos."
+
+{_bloco_academia_prompt}
 
 REGRAS DE PROGRESSÃO:
 - Aumentar volume (+5-10% em duracao_min) quando a semana foi bem executada, respeitando o teto de 120 min em dias úteis.
@@ -350,28 +478,37 @@ REGRAS DE PROGRESSÃO:
 
 Responda APENAS em JSON válido, sem markdown, sem texto extra:
 {{
-  "analise_semana": "string com avaliação da semana atual em 2-3 frases",
-  "progressao": "string descrevendo o que vai mudar na próxima semana",
+  "analise_semana": "Avaliação objetiva da semana atual: o que foi bem, o que foi fraco, como a FC se comportou vs. o alvo. 2-3 frases diretas.",
+  "progressao": "Decisão de progressão para a próxima semana: o que muda (volume, intensidade, exercícios de academia) e POR QUÊ, baseado nos dados da semana.",
   "treinos": [
     {{
       "data": "YYYY-MM-DD",
       "tipo": "TIPO",
       "duracao_min": 90,
-      "descricao": "texto descritivo para aparecer no Edge 830",
-      "cadencia_rpm": "85-95"
+      "descricao": "Prescrição COMPLETA do treino: aquecimento + estrutura principal (séries×tempo, FC alvo em bpm, cadência) + volta à calma. Para ACADEMIA: lista completa de exercícios com séries×reps.",
+      "cadencia_rpm": "85-95",
+      "academia": null
     }}
   ]
 }}
 
-Os dados de "treinos" devem ter exatamente 7 entradas (uma por dia da semana {proxima} a {_shift_data(proxima, 6)}).
+REGRAS DO JSON:
+- "cadencia_rpm" deve ser null para dias ACADEMIA puro (é ginásio, não bike).
+- Para bike + academia no mesmo dia: "academia": {{"duracao_min": 60, "descricao": "ACADEMIA — Força MTB..."}}
+- Exatamente 7 entradas em "treinos" (uma por dia: {proxima} a {_shift_data(proxima, 6)}).
+- Descrições de treinos de bike devem sempre incluir FC alvo em bpm (usando as zonas reais do atleta).
 """
 
     try:
-        response = _client.generate_content(prompt)
-        raw = response.text.strip().replace("```json", "").replace("```", "").strip()
+        response = await _client.messages.create(
+            model=_MODEL_PLANO,
+            max_tokens=8192,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = response.content[0].text.strip().replace("```json", "").replace("```", "").strip()
         data = json.loads(raw)
     except Exception as e:
-        logger.warning("Gemini falhou para gerar próxima semana: %s — usando fallback", e)
+        logger.warning("Claude falhou para gerar próxima semana: %s — usando fallback", e)
         data = _fallback(treinos, proxima, preferencias)
 
     # normaliza e valida cada treino retornado pela IA
@@ -383,17 +520,26 @@ Os dados de "treinos" devem ter exatamente 7 entradas (uma por dia da semana {pr
         duracao = int(t.get("duracao_min") or _DURACAO_PADRAO.get(tipo, 60))
         duracao = min(duracao, _DURACAO_MAXIMA.get(tipo, 150))
         descricao = t.get("descricao") or _DESCRICAO_PADRAO.get(tipo, "")
-        cadencia = t.get("cadencia_rpm")
+        # ACADEMIA puro não tem cadência (é gym, não bike)
+        cadencia = None if tipo == "ACADEMIA" else t.get("cadencia_rpm")
         # regras de agenda (dias de treino, teto de 2h em dia útil, longão no fim de semana)
         tipo, duracao, descricao, cadencia = _aplicar_regras_agenda(
             t.get("data", ""), tipo, duracao, descricao, cadencia, preferencias, fase_prova)
-        treinos_out.append({
+        treino_out: dict = {
             "data":        t.get("data", ""),
             "tipo":        tipo,
             "duracao_min": duracao if tipo != "DESCANSO" else None,
             "descricao":   descricao,
             "cadencia_rpm": cadencia,
-        })
+        }
+        # sub-objeto academia (bike + gym no mesmo dia)
+        academia_sub = t.get("academia")
+        if academia_sub and isinstance(academia_sub, dict) and academia_sub.get("descricao"):
+            treino_out["academia"] = {
+                "duracao_min": int(academia_sub.get("duracao_min") or 60),
+                "descricao": academia_sub["descricao"],
+            }
+        treinos_out.append(treino_out)
 
     return {
         "semana_proxima": proxima,
@@ -564,8 +710,12 @@ Responda APENAS JSON válido, sem markdown:
 }}"""
 
     try:
-        response = _client.generate_content(prompt)
-        raw = response.text.strip().replace("```json", "").replace("```", "").strip()
+        response = await _client.messages.create(
+            model=_MODEL_PLANO,
+            max_tokens=2048,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = response.content[0].text.strip().replace("```json", "").replace("```", "").strip()
         data = json.loads(raw)
         desc_por_data = {
             t.get("data"): (t.get("descricao") or "").strip()

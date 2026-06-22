@@ -288,11 +288,25 @@ class EnviarGarminBody(BaseModel):
 
 @router.post("/enviar-garmin")
 async def enviar_para_garmin(request: Request, body: EnviarGarminBody):
-    """Salva semana no DB e envia cada treino para o Garmin Connect."""
-    from app.services.garmin_workout_service import upload_e_agendar
+    """Salva semana no DB e envia cada treino para o Garmin Connect.
+
+    Deleta workouts antigos do Garmin antes de enviar os novos,
+    evitando duplicatas no calendário.
+    """
+    from app.services.garmin_workout_service import upload_e_agendar, deletar_workout_garmin
 
     db = get_db()
     user_id = request.state.user_id
+
+    # Coleta garmin_workout_ids existentes para deletar antes do re-envio
+    existing = await db.semanas.find_one(
+        {"semana_inicio": body.semana_inicio, "user_id": user_id})
+    existing_gids: dict[str, str] = {}
+    if existing:
+        for t in existing.get("treinos", []):
+            if t.get("garmin_workout_id"):
+                existing_gids[t["data"]] = t["garmin_workout_id"]
+
     data = {
         "semana_inicio": body.semana_inicio,
         "user_id": user_id,
@@ -307,9 +321,14 @@ async def enviar_para_garmin(request: Request, body: EnviarGarminBody):
 
     resultados = []
     for t in body.treinos:
-        if t.tipo in ("DESCANSO",) or not t.duracao_min:
+        if t.tipo in ("DESCANSO", "ACADEMIA") or not t.duracao_min:
             resultados.append({"data": t.data, "status": "pulado"})
             continue
+
+        # Remove agendamento antigo do Garmin (se houver) — evita duplicatas
+        gid_antigo = existing_gids.get(t.data)
+        if gid_antigo:
+            await deletar_workout_garmin(user_id, gid_antigo)
 
         nome = f"{t.tipo.replace('_', ' ')} — {t.data}"
         gid = await upload_e_agendar(
@@ -364,7 +383,7 @@ async def reenviar_para_garmin(request: Request, semana_inicio: str):
 
     resultados = []
     for t in doc.get("treinos", []):
-        if t.get("tipo") in ("DESCANSO",) or not t.get("duracao_min"):
+        if t.get("tipo") in ("DESCANSO", "ACADEMIA") or not t.get("duracao_min"):
             resultados.append({"data": t.get("data"), "status": "pulado"})
             continue
 
@@ -703,6 +722,7 @@ _OBJETIVOS_VALIDOS = {"performance_mtb", "aumentar_potencia", "base_aerobica", "
 
 @router.get("/perfil", response_class=HTMLResponse)
 async def pagina_perfil(request: Request):
+    import json as _json
     from app.services.user_service import get_por_id
     u = await get_por_id(request.state.user_id) or {}
     p = u.get("perfil") or {}
@@ -712,6 +732,9 @@ async def pagina_perfil(request: Request):
     obj = pref.get("objetivo") or "performance_mtb"
     metodo_zonas = (u.get("zonas") or {}).get("metodo") or "fcmax"
     garmin_email = str(((u.get("integracao") or {}).get("garmin") or {}).get("email") or "")
+    academia = u.get("academia") or {}
+    academia_treina = "1" if academia.get("treina") else "0"
+    academia_disp_json = _json.dumps(academia.get("disponibilidade") or {})
     html = (_PAGINA_PERFIL
             .replace("{{IDADE}}", val(p.get("idade")))
             .replace("{{PESO}}", val(p.get("peso_kg")))
@@ -719,25 +742,45 @@ async def pagina_perfil(request: Request):
             .replace("{{SEXO_M}}", "selected" if sexo.startswith("M") else "")
             .replace("{{SEXO_F}}", "selected" if sexo.startswith("F") else "")
             .replace("{{METODO_ZONAS}}", metodo_zonas)
-            .replace("{{GARMIN_EMAIL}}", garmin_email))
+            .replace("{{GARMIN_EMAIL}}", garmin_email)
+            .replace("{{ACADEMIA_TREINA}}", academia_treina)
+            .replace("{{ACADEMIA_DISP_JSON}}", academia_disp_json))
     for o in _OBJETIVOS_VALIDOS:
         html = html.replace(f"{{{{OBJ_{o}}}}}", "selected" if obj == o else "")
     return html
 
 
 @router.post("/perfil")
-async def salvar_perfil(request: Request, idade: int = Form(...), peso_kg: float = Form(...),
-                        altura_cm: int = Form(...), sexo: str = Form("M"),
-                        objetivo: str = Form("performance_mtb")):
-    """Atualiza peso/idade/altura/sexo/objetivo do perfil."""
+async def salvar_perfil(request: Request):
+    """Atualiza perfil do usuário incluindo configuração de academia."""
     from app.services.user_service import atualizar_usuario
+    form = await request.form()
+    try:
+        idade = int(form.get("idade", 0))
+        peso_kg = float(form.get("peso_kg", 0))
+        altura_cm = int(form.get("altura_cm", 0))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Dados inválidos")
+    sexo = str(form.get("sexo", "M")).upper()[:1]
+    objetivo = str(form.get("objetivo", "performance_mtb"))
     obj = objetivo if objetivo in _OBJETIVOS_VALIDOS else "performance_mtb"
+
+    treina_academia = str(form.get("treina_academia", "0")) == "1"
+    disponibilidade: dict = {}
+    _periodos_validos = {"manha", "tarde", "noite"}
+    for d in range(7):
+        periodo = str(form.get(f"academia_dia_{d}", "none"))
+        if periodo in _periodos_validos:
+            disponibilidade[str(d)] = periodo
+
     await atualizar_usuario(request.state.user_id, {
-        "perfil.idade": int(idade),
-        "perfil.peso_kg": float(peso_kg),
-        "perfil.altura_cm": int(altura_cm),
-        "perfil.sexo": str(sexo).upper()[:1],
+        "perfil.idade": idade,
+        "perfil.peso_kg": peso_kg,
+        "perfil.altura_cm": altura_cm,
+        "perfil.sexo": sexo,
         "preferencias.objetivo": obj,
+        "academia.treina": treina_academia,
+        "academia.disponibilidade": disponibilidade,
     })
     return {"status": "ok"}
 
@@ -1509,6 +1552,18 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
   .garmin-warn { background:#fef3c7; border:1.5px solid #fbbf24; border-radius:9px; padding:10px 13px; font-size:.84rem; color:#92400e; margin-bottom:12px; }
   .garmin-warn a { color:#b45309; font-weight:700; text-decoration:none; }
   .garmin-warn a:hover { text-decoration:underline; }
+  .aca-toggle { display:flex; gap:8px; margin:12px 0 4px; }
+  .aca-btn { flex:1; padding:10px; border-radius:9px; border:1.5px solid var(--border); background:#fff; font-size:.9rem; font-weight:700; cursor:pointer; color:var(--muted); transition:.15s; }
+  .aca-btn.aca-active { background:var(--green); color:#fff; border-color:var(--green); }
+  .aca-btn:hover:not(.aca-active) { border-color:var(--green); color:var(--green); }
+  .aca-hint { font-size:.83rem; color:var(--muted); line-height:1.5; margin-bottom:14px; padding:9px 12px; background:#f9fafb; border-radius:8px; border-left:3px solid var(--green); }
+  .aca-row { display:flex; align-items:center; gap:12px; padding:9px 0; border-bottom:1px solid var(--border); }
+  .aca-row:last-child { border-bottom:none; }
+  .aca-check { display:flex; align-items:center; gap:9px; flex:1; font-size:.92rem; cursor:pointer; }
+  .aca-check input[type=checkbox] { width:18px; height:18px; accent-color:var(--green); flex-shrink:0; cursor:pointer; }
+  .aca-sel { width:110px; flex-shrink:0; padding:7px 10px; font-size:.85rem; border-radius:8px; border:1.5px solid var(--border); }
+  .aca-sel:disabled { opacity:.35; }
+  .aca-auto-tip { margin-top:12px; padding:9px 12px; background:#eef6ff; border-radius:8px; font-size:.83rem; color:#1d4ed8; }
 </style>
 </head>
 <body>
@@ -1560,6 +1615,26 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
       <button type="submit" id="btn-perfil">Salvar perfil</button>
       <div id="st-perfil" class="status"></div>
     </form>
+  </div>
+
+  <!-- ── Academia ── -->
+  <div class="section-title">🏋️ Academia / Musculação</div>
+  <div class="card">
+    <h2>🏋️ Você treina na academia?</h2>
+    <p class="hint">Configure seus dias e períodos disponíveis. A IA vai integrar musculação e bike para maximizar sua evolução — priorizando os horários que você informar.</p>
+    <div class="aca-toggle">
+      <button type="button" id="aca-sim" class="aca-btn" onclick="setAcademia(true)">Sim, treino</button>
+      <button type="button" id="aca-nao" class="aca-btn" onclick="setAcademia(false)">Não treino</button>
+    </div>
+    <div id="aca-dias">
+      <p class="aca-hint">Marque os dias e períodos disponíveis. Se não marcar nenhum dia, a IA escolhe automaticamente os melhores momentos da semana.</p>
+      <div id="aca-grid"></div>
+      <div class="aca-auto-tip" id="aca-auto-msg" style="display:none">
+        💡 Nenhum dia selecionado — a IA vai definir automaticamente os melhores dias para academia com base na sua programação de bike.
+      </div>
+    </div>
+    <button type="button" id="btn-academia" onclick="salvarAcademia()" style="margin-top:18px">Salvar configuração de academia</button>
+    <div id="st-academia" class="status"></div>
   </div>
 
   <!-- ── Zonas de FC ── -->
@@ -1807,6 +1882,93 @@ async function salvarZonas() {
   finally { btn.disabled=false; btn.textContent='💾 Salvar zonas'; }
 }
 carregarZonas();
+
+// ── Academia ──
+const _ACA_DIAS_NOMES = ['Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado','Domingo'];
+let _academiaTreina = '{{ACADEMIA_TREINA}}' === '1';
+let _academiaDisp = {{ACADEMIA_DISP_JSON}};
+
+function setAcademia(v) {
+  _academiaTreina = v;
+  document.getElementById('aca-sim').classList.toggle('aca-active', v);
+  document.getElementById('aca-nao').classList.toggle('aca-active', !v);
+  document.getElementById('aca-dias').style.display = v ? '' : 'none';
+}
+
+function atualizarAcaAutoMsg() {
+  const algumMarcado = Object.keys(_academiaDisp).length > 0;
+  document.getElementById('aca-auto-msg').style.display = (!algumMarcado && _academiaTreina) ? '' : 'none';
+}
+
+function renderAcaGrid() {
+  const grid = document.getElementById('aca-grid');
+  grid.innerHTML = '';
+  for (let d = 0; d < 7; d++) {
+    const periodo = _academiaDisp[String(d)];
+    const checked = periodo != null;
+    const row = document.createElement('div');
+    row.className = 'aca-row';
+    row.innerHTML = `
+      <label class="aca-check">
+        <input type="checkbox" id="aca_ck_${d}" ${checked ? 'checked' : ''} onchange="toggleAcaDia(${d})">
+        <span>${_ACA_DIAS_NOMES[d]}</span>
+      </label>
+      <select id="aca_per_${d}" class="aca-sel" ${checked ? '' : 'disabled'} onchange="updateAcaPer(${d})">
+        <option value="manha" ${(periodo||'manha')==='manha'?'selected':''}>Manhã</option>
+        <option value="tarde" ${periodo==='tarde'?'selected':''}>Tarde</option>
+        <option value="noite" ${periodo==='noite'?'selected':''}>Noite</option>
+      </select>`;
+    grid.appendChild(row);
+  }
+  atualizarAcaAutoMsg();
+}
+
+function toggleAcaDia(d) {
+  const ck = document.getElementById(`aca_ck_${d}`);
+  const sel = document.getElementById(`aca_per_${d}`);
+  sel.disabled = !ck.checked;
+  if (ck.checked) {
+    _academiaDisp[String(d)] = sel.value;
+  } else {
+    delete _academiaDisp[String(d)];
+  }
+  atualizarAcaAutoMsg();
+}
+
+function updateAcaPer(d) {
+  const sel = document.getElementById(`aca_per_${d}`);
+  _academiaDisp[String(d)] = sel.value;
+}
+
+async function salvarAcademia() {
+  const btn = document.getElementById('btn-academia');
+  const st = document.getElementById('st-academia');
+  btn.disabled = true; btn.textContent = 'Salvando…';
+  const body = new URLSearchParams();
+  // inclui campos de perfil mínimos (requeridos pelo endpoint)
+  body.set('idade', document.getElementById('idade').value || '0');
+  body.set('peso_kg', document.getElementById('peso_kg').value || '0');
+  body.set('altura_cm', document.getElementById('altura_cm').value || '0');
+  body.set('sexo', document.getElementById('sexo').value);
+  body.set('objetivo', document.getElementById('objetivo').value);
+  body.set('treina_academia', _academiaTreina ? '1' : '0');
+  for (let d = 0; d < 7; d++) {
+    const val = _academiaDisp[String(d)];
+    body.set(`academia_dia_${d}`, val || 'none');
+  }
+  try {
+    const r = await fetch('/workout/perfil', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body});
+    if (!r.ok) throw new Error('Erro ao salvar');
+    st.className = 'status ok'; st.textContent = '✅ Configuração de academia salva!';
+  } catch(e) {
+    st.className = 'status err'; st.textContent = '❌ ' + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Salvar configuração de academia';
+  }
+}
+
+setAcademia(_academiaTreina);
+renderAcaGrid();
 </script>
 </body>
 </html>"""
