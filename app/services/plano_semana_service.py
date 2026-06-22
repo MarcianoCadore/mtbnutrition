@@ -506,10 +506,9 @@ REGRAS DE PROGRESSÃO:
 - Para TIROS: aumentar número de repetições (8→10→12) antes de aumentar duração.
 - Para VO2MAX: aumentar reps (4→5) antes de aumentar a duração dos blocos.
 
-Responda APENAS em JSON válido, sem markdown, sem texto extra:
+Responda APENAS em JSON válido, sem markdown, sem texto extra.
+IMPORTANTE: gere os "treinos" PRIMEIRO — depois escreva "analise_semana" e "progressao" refletindo o que foi realmente gerado:
 {{
-  "analise_semana": "Avaliação objetiva da semana atual: o que foi bem, o que foi fraco, como a FC se comportou vs. o alvo. 2-3 frases diretas.",
-  "progressao": "Decisão de progressão para a próxima semana: o que muda (volume, intensidade, exercícios de academia) e POR QUÊ, baseado nos dados da semana.",
   "treinos": [
     {{
       "data": "YYYY-MM-DD",
@@ -519,14 +518,17 @@ Responda APENAS em JSON válido, sem markdown, sem texto extra:
       "cadencia_rpm": "85-95",
       "academia": null
     }}
-  ]
+  ],
+  "analise_semana": "Avaliação objetiva da semana atual: o que foi bem, o que foi fraco, como a FC se comportou vs. o alvo. 2-3 frases diretas.",
+  "progressao": "Resumo do que foi gerado: tipos de treino incluídos, decisão de volume/intensidade e POR QUÊ — baseado nos dados da semana. NÃO mencione treinos que não foram incluídos nos treinos acima."
 }}
 
 REGRAS DO JSON:
 - "cadencia_rpm" deve ser null para dias ACADEMIA puro (é ginásio, não bike).
-- Para bike + academia no mesmo dia: "academia": {{"duracao_min": 60, "descricao": "ACADEMIA — Força MTB..."}}
+- ACADEMIA é sempre tipo exclusivo — nunca use o campo "academia" como sub-objeto dentro de outro tipo. Um dia = uma atividade.
 - Exatamente 7 entradas em "treinos" (uma por dia: {proxima} a {_shift_data(proxima, 6)}).
 - Descrições de treinos de bike devem sempre incluir FC alvo em bpm (usando as zonas reais do atleta).
+- O campo "progressao" deve descrever APENAS o que está nos treinos gerados acima — não mencione academia se nenhum dia tiver tipo ACADEMIA.
 """
 
     try:
