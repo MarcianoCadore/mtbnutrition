@@ -238,8 +238,15 @@ async def sync_treinos_planejados(user_id: str, semana_inicio: str) -> int:
     garmin_id_para_data = {wid: info["data"] for wid, info in garmin_info.items()}
 
     sincronizados = 0
+    datas_processadas: set[str] = set()  # evita que 2 workouts no mesmo dia se sobrescrevam
     for item in all_workouts:
         date_str = item["date"][:10]
+        if date_str in datas_processadas:
+            logger.warning(
+                "Garmin: mais de um workout em %s — ignorando duplicata workout_id=%s",
+                date_str, item.get("workoutId"),
+            )
+            continue
         workout_id = str(item.get("workoutId") or "")
         nome = item.get("title") or ""
 
@@ -258,7 +265,11 @@ async def sync_treinos_planejados(user_id: str, semana_inicio: str) -> int:
                     cadencia_rpm = cads[0]
                 desc = (wk.get("description") or "").strip()
                 if desc:
-                    notas = f"{nome}\n{desc}".strip() if nome and nome != desc else desc
+                    # evita prefixar o título se a descrição já começa com ele
+                    if nome and not desc.startswith(nome):
+                        notas = f"{nome}\n{desc}"
+                    else:
+                        notas = desc
             except Exception as e:
                 logger.warning("Garmin get_workout_by_id %s: %s", workout_id, e)
 
@@ -320,6 +331,7 @@ async def sync_treinos_planejados(user_id: str, semana_inicio: str) -> int:
                     {"semana_inicio": semana, "user_id": user_id, "treinos.data": date_str},
                     {"$set": set_fields},
                 )
+        datas_processadas.add(date_str)
         sincronizados += 1
 
     # Remove entradas de treinos que foram movidos para outra data no Garmin

@@ -98,6 +98,9 @@ async def salvar_semana(request: Request, plano: PlanoSemanal):
     data = plano.model_dump()
     data["user_id"] = user_id
     if existing:
+        # preserva objetivo do banco quando o request traz string vazia
+        if not data.get("objetivo") and existing.get("objetivo"):
+            data["objetivo"] = existing["objetivo"]
         existing_map = {
             t["data"]: t
             for t in existing.get("treinos", [])
@@ -309,10 +312,11 @@ async def enviar_para_garmin(request: Request, body: EnviarGarminBody):
             if t.get("garmin_workout_id"):
                 existing_gids[t["data"]] = t["garmin_workout_id"]
 
+    objetivo = body.objetivo or (existing.get("objetivo") if existing else "") or ""
     data = {
         "semana_inicio": body.semana_inicio,
         "user_id": user_id,
-        "objetivo": body.objetivo,
+        "objetivo": objetivo,
         "treinos": [t.model_dump() for t in body.treinos],
     }
     await db.semanas.replace_one(
