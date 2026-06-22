@@ -735,6 +735,7 @@ async def pagina_perfil(request: Request):
     academia = u.get("academia") or {}
     academia_treina = "1" if academia.get("treina") else "0"
     academia_disp_json = _json.dumps(academia.get("disponibilidade") or {})
+    academia_freq = str(int(academia.get("frequencia_semanal") or 0))
     html = (_PAGINA_PERFIL
             .replace("{{IDADE}}", val(p.get("idade")))
             .replace("{{PESO}}", val(p.get("peso_kg")))
@@ -744,7 +745,8 @@ async def pagina_perfil(request: Request):
             .replace("{{METODO_ZONAS}}", metodo_zonas)
             .replace("{{GARMIN_EMAIL}}", garmin_email)
             .replace("{{ACADEMIA_TREINA}}", academia_treina)
-            .replace("{{ACADEMIA_DISP_JSON}}", academia_disp_json))
+            .replace("{{ACADEMIA_DISP_JSON}}", academia_disp_json)
+            .replace("{{ACADEMIA_FREQ}}", academia_freq))
     for o in _OBJETIVOS_VALIDOS:
         html = html.replace(f"{{{{OBJ_{o}}}}}", "selected" if obj == o else "")
     return html
@@ -772,6 +774,12 @@ async def salvar_perfil(request: Request):
         periodo = str(form.get(f"academia_dia_{d}", "none"))
         if periodo in _periodos_validos:
             disponibilidade[str(d)] = periodo
+    try:
+        frequencia_semanal = int(form.get("academia_freq", "0"))
+        if frequencia_semanal not in (0, 1, 2):
+            frequencia_semanal = 0
+    except (ValueError, TypeError):
+        frequencia_semanal = 0
 
     await atualizar_usuario(request.state.user_id, {
         "perfil.idade": idade,
@@ -781,6 +789,7 @@ async def salvar_perfil(request: Request):
         "preferencias.objetivo": obj,
         "academia.treina": treina_academia,
         "academia.disponibilidade": disponibilidade,
+        "academia.frequencia_semanal": frequencia_semanal,
     })
     return {"status": "ok"}
 
@@ -1556,6 +1565,9 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
   .aca-btn { flex:1; padding:10px; border-radius:9px; border:1.5px solid var(--border); background:#fff; font-size:.9rem; font-weight:700; cursor:pointer; color:var(--muted); transition:.15s; }
   .aca-btn.aca-active { background:var(--green); color:#fff; border-color:var(--green); }
   .aca-btn:hover:not(.aca-active) { border-color:var(--green); color:var(--green); }
+  .freq-btn { padding:8px 18px; border-radius:9px; border:1.5px solid var(--border); background:#fff; font-size:.88rem; font-weight:700; cursor:pointer; color:var(--muted); transition:.15s; }
+  .freq-btn.freq-active { background:var(--green); color:#fff; border-color:var(--green); }
+  .freq-btn:hover:not(.freq-active) { border-color:var(--green); color:var(--green); }
   .aca-hint { font-size:.83rem; color:var(--muted); line-height:1.5; margin-bottom:14px; padding:9px 12px; background:#f9fafb; border-radius:8px; border-left:3px solid var(--green); }
   .aca-row { display:flex; align-items:center; gap:12px; padding:9px 0; border-bottom:1px solid var(--border); }
   .aca-row:last-child { border-bottom:none; }
@@ -1631,6 +1643,14 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
       <div id="aca-grid"></div>
       <div class="aca-auto-tip" id="aca-auto-msg" style="display:none">
         💡 Nenhum dia selecionado — a IA vai definir automaticamente os melhores dias para academia com base na sua programação de bike.
+      </div>
+    </div>
+    <div style="margin-top:16px">
+      <label class="fld" style="margin-bottom:8px;display:block">Quantas vezes por semana?</label>
+      <div style="display:flex;gap:8px">
+        <button type="button" class="freq-btn" id="freq-0" onclick="setFreq(0)">IA decide</button>
+        <button type="button" class="freq-btn" id="freq-1" onclick="setFreq(1)">1x</button>
+        <button type="button" class="freq-btn" id="freq-2" onclick="setFreq(2)">2x</button>
       </div>
     </div>
     <button type="button" id="btn-academia" onclick="salvarAcademia()" style="margin-top:18px">Salvar configuração de academia</button>
@@ -1887,12 +1907,20 @@ carregarZonas();
 const _ACA_DIAS_NOMES = ['Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado','Domingo'];
 let _academiaTreina = '{{ACADEMIA_TREINA}}' === '1';
 let _academiaDisp = {{ACADEMIA_DISP_JSON}};
+let _academiaFreq = parseInt('{{ACADEMIA_FREQ}}') || 0;
 
 function setAcademia(v) {
   _academiaTreina = v;
   document.getElementById('aca-sim').classList.toggle('aca-active', v);
   document.getElementById('aca-nao').classList.toggle('aca-active', !v);
   document.getElementById('aca-dias').style.display = v ? '' : 'none';
+}
+
+function setFreq(v) {
+  _academiaFreq = v;
+  [0, 1, 2].forEach(n => {
+    document.getElementById(`freq-${n}`).classList.toggle('freq-active', n === v);
+  });
 }
 
 function atualizarAcaAutoMsg() {
@@ -1952,6 +1980,7 @@ async function salvarAcademia() {
   body.set('sexo', document.getElementById('sexo').value);
   body.set('objetivo', document.getElementById('objetivo').value);
   body.set('treina_academia', _academiaTreina ? '1' : '0');
+  body.set('academia_freq', String(_academiaFreq));
   for (let d = 0; d < 7; d++) {
     const val = _academiaDisp[String(d)];
     body.set(`academia_dia_${d}`, val || 'none');
@@ -1969,6 +1998,7 @@ async function salvarAcademia() {
 
 setAcademia(_academiaTreina);
 renderAcaGrid();
+setFreq(_academiaFreq);
 </script>
 </body>
 </html>"""

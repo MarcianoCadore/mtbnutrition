@@ -54,8 +54,9 @@ _INSTRUCOES_OBJETIVO = {
     "performance_mtb": """OBJETIVO — PERFORMANCE MTB (modelo polarizado + progressão contínua):
 
 ESTRUTURA SEMANAL:
-- Exatamente 2 dias DUROS, bem espaçados (nunca em dias consecutivos nem antes do longão).
+- Exatamente 2 dias DUROS de bike, bem espaçados (nunca em dias consecutivos nem antes do longão).
 - Combinações ideais de sessões duras: VO2MAX + TIROS, VO2MAX + TEMPO, ou TIROS + TEMPO.
+- ACADEMIA conta como dia duro — nunca coloque ACADEMIA adjacente a VO2MAX, TIROS ou FORCA.
 - Dias fáceis (Z2/RECUPERACAO) devem ser REALMENTE fáceis — FC abaixo de Z3. Sem "zona cinza".
 - Longão de sábado é INEGOCIÁVEL: base aeróbica, ritmo conversacional.
 
@@ -276,6 +277,7 @@ async def gerar_proxima_semana(user_id: str, semana_atual: str) -> dict:
     academia_cfg: dict = u.get("academia") or {}
     treina_academia: bool = bool(academia_cfg.get("treina"))
     academia_disp: dict = academia_cfg.get("disponibilidade") or {}
+    academia_freq: int = int(academia_cfg.get("frequencia_semanal") or 0)
 
     # Dias de treino para o prompt
     dias_treino: list[int] = preferencias.get("dias_treino") or _DIAS_TREINO_PADRAO
@@ -370,13 +372,15 @@ Direcione a semana para essa fase e para as exigências da prova (terreno/altime
             _intro_academia = (
                 f"O atleta TREINA NA ACADEMIA. Dias/períodos disponíveis: {disp_agenda}.\n"
                 "PRIORIDADE: agende sessões de ACADEMIA nesses dias/períodos.\n"
-                "Se um dia de academia coincidir com bike, use o campo \"academia\" no mesmo treino."
+                "REGRA: dia de academia = tipo ACADEMIA EXCLUSIVAMENTE. Não coloque bike + academia no mesmo dia. "
+                "O atleta vai à academia, não pedala naquele dia."
             )
         else:
             _intro_academia = (
                 "O atleta TREINA NA ACADEMIA mas não informou dias preferidos.\n"
-                "Escolha automaticamente os melhores dias: coloque academia em dias com treinos LEVES "
-                "(RECUPERACAO, Z2 curto) ou DESCANSO — nunca adjacente a VO2MAX ou TIROS."
+                "Escolha automaticamente os melhores dias: substitua DESCANSO por ACADEMIA nesses dias. "
+                "NUNCA coloque academia em um dia que já tem bike — são atividades exclusivas. "
+                "Nunca adjacente a VO2MAX ou TIROS."
             )
         _bloco_academia_prompt = f"""ACADEMIA (musculação no ginásio — tipo "ACADEMIA"):
 {_intro_academia}
@@ -388,24 +392,24 @@ OBJETIVO DOS EXERCÍCIOS: aumentar DIRETAMENTE a performance na bike MTB.
   → Membros superiores/escapular: controle do guidão em técnico (remada, supino neutro, desenvolvimento)
   → Mobilidade de quadril e mobilidade torácica: manutenção da postura no bike
 
-QUANTIDADE DE ACADEMIA POR SEMANA (decisão inteligente — analise a semana anterior):
-A academia é um COMPLEMENTO ao bike. Decida quantas sessões incluir (0, 1 ou no máximo 2):
-QUANDO INCLUIR 2 sessões: atleta completou bem os treinos; fase BASE/CONSTRUÇÃO com dias ociosos; análise apontou fraqueza de core/postura.
-QUANDO INCLUIR 1 sessão: volume moderado de bike e há um dia com espaço; fase PICO: só 1 sessão leve de core.
-QUANDO NÃO INCLUIR (0): semana sobrecarregada (VO2MAX+TIROS+longão+FORCA); fase TAPER; atleta com fadiga generalizada.
+QUANTIDADE DE ACADEMIA POR SEMANA:{f" O ATLETA QUER EXATAMENTE {academia_freq} SESSÃO(ÕES) — respeite esse número." if academia_freq > 0 else " decisão sua (0, 1 ou 2). Analise a semana e decida:"}
+A academia é um COMPLEMENTO ao bike. {"" if academia_freq > 0 else "Decida quantas sessões incluir (0, 1 ou no máximo 2):"}
+{"" if academia_freq > 0 else "QUANDO INCLUIR 2 sessões: atleta completou bem os treinos; fase BASE/CONSTRUÇÃO com dias ociosos; análise apontou fraqueza de core/postura."}
+{"" if academia_freq > 0 else "QUANDO INCLUIR 1 sessão: volume moderado de bike e há um dia com espaço; fase PICO: só 1 sessão leve de core."}
+{"" if academia_freq > 0 else "QUANDO NÃO INCLUIR (0): semana sobrecarregada (VO2MAX+TIROS+longão+FORCA); fase TAPER; atleta com fadiga generalizada."}
 
-REGRA INVIOLÁVEL: Nunca coloque ACADEMIA em dia adjacente (anterior ou posterior) a VO2MAX ou TIROS.
+⛔ REGRAS INVIOLÁVEIS — leia antes de posicionar qualquer sessão de academia:
+1. NUNCA coloque ACADEMIA no dia ANTERIOR ou POSTERIOR a VO2MAX ou TIROS. Verifique os dois lados.
+2. NUNCA crie 3 dias consecutivos duros (VO2MAX, TIROS, FORCA, ACADEMIA, Z2_LONGO ≥180min). Sempre intercale com RECUPERACAO ou DESCANSO.
+3. ACADEMIA é dia exclusivo de musculação — tipo = "ACADEMIA", sem bike nesse dia. NÃO use o campo "academia" dentro de outro tipo de treino.
 
-REGRA CRÍTICA — analise dias ANTERIOR e POSTERIOR:
-  * Adjacente DURO (VO2MAX, TIROS, FORCA, Z2_LONGO ≥180 min): PARTE SUPERIOR + CORE puro. PROIBIDO perna pesada.
-  * Adjacentes LEVES (RECUPERACAO, DESCANSO): MEMBROS INFERIORES + CORE (agachamento búlgaro, hip thrust, stiff).
+COMO ESCOLHER O FOCO DO TREINO DE ACADEMIA:
+  * Dia anterior ou posterior DURO (VO2MAX, TIROS, FORCA, Z2_LONGO ≥180 min): PARTE SUPERIOR + CORE puro. PROIBIDO perna pesada.
+  * Dia anterior e posterior LEVES (RECUPERACAO, DESCANSO): MEMBROS INFERIORES + CORE (agachamento búlgaro, hip thrust, stiff).
 
 Formato OBRIGATÓRIO da "descricao" para ACADEMIA:
   "ACADEMIA — Força MTB (foco: [glúteos+core / pernas+core / superior+core])\\n\\nPOR QUE HOJE: [1-2 frases explicando a escolha]\\n\\nEXERCÍCIOS:\\n1. [exercício] — [séries]x[reps/tempo] ([benefício para MTB])\\n2. ...\\n\\nOBSERVAÇÕES:\\n- Descanso 90s entre séries\\n- [dica prática de MTB]"
-
-DIAS COM BIKE + ACADEMIA NO MESMO DIA (opcional):
-- Se fizer sentido acumular, inclua o campo "academia" no treino: {{"duracao_min": 60, "descricao": "ACADEMIA — ..."}}.
-- Use o mesmo critério (dias adjacentes) para definir o foco."""
+"""
     else:
         _bloco_academia_prompt = (
             'ACADEMIA: O atleta NÃO treina musculação. '
@@ -656,13 +660,21 @@ def _montar_primeira_semana_template(semana_inicio: str, objetivo: str,
 
 
 async def gerar_primeira_semana(user_id: str, semana_inicio: str) -> dict:
-    """Gera a 1ª semana de treinos de um atleta SEM histórico nem Garmin.
+    """Gera a semana de treinos para um atleta.
 
-    Backbone determinístico montado a partir do perfil (objetivo, dias de treino).
-    Se a IA estiver disponível, refina as DESCRIÇÕES dos treinos (mantendo os
-    tipos/durações conservadores do template). Nunca falha: se a IA der erro,
-    devolve o template puro.
+    Se houver histórico (semana anterior com dados), delega para gerar_proxima_semana
+    usando a semana mais recente — assim o plano reflete a progressão real do atleta.
+
+    Sem histórico, usa um template conservador adequado para iniciantes.
     """
+    db = get_db()
+    semana_anterior = await db.semanas.find_one(
+        {"user_id": user_id, "semana_inicio": {"$lt": semana_inicio}},
+        sort=[("semana_inicio", -1)],
+    )
+    if semana_anterior:
+        return await gerar_proxima_semana(user_id, semana_anterior["semana_inicio"])
+
     u = await get_por_id(user_id)
     u = u or {}
     nome_atleta = u.get("nome") or "Atleta"

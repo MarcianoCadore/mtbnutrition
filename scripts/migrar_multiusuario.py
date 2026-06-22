@@ -140,14 +140,21 @@ async def main() -> None:
     else:
         print("    → GARMIN_EMAIL/PASSWORD não configurados, pulando.")
 
-    # ── 2. Marcar coleções simples com user_id (idempotente via $exists) ──────
+    # ── 2. Marcar coleções simples com user_id (idempotente) ─────────────────
+    # Cobre tanto {user_id: {$exists: false}} quanto {user_id: null} porque
+    # a migração anterior usava só $exists e deixou docs com user_id: null.
 
     print("\n[2] Estampando user_id nas coleções existentes …")
 
-    colecoes_simples = ["semanas", "planos", "atividades_processadas"]
+    _SEM_USER_ID = {"$or": [{"user_id": {"$exists": False}}, {"user_id": None}]}
+
+    colecoes_simples = [
+        "semanas", "planos", "atividades_processadas",
+        "chat_nutricao", "overrides_cardapio",
+    ]
     for nome_colecao in colecoes_simples:
         resultado = await db[nome_colecao].update_many(
-            {"user_id": {"$exists": False}},
+            _SEM_USER_ID,
             {"$set": {"user_id": user_id}},
         )
         print(
@@ -165,7 +172,7 @@ async def main() -> None:
 
     print("\n[3] Migrando db.ajustes_dia …")
 
-    cursor = db.ajustes_dia.find({"user_id": {"$exists": False}})
+    cursor = db.ajustes_dia.find(_SEM_USER_ID)
     docs_ajuste = await cursor.to_list(length=None)
 
     total_ajustes = 0

@@ -63,7 +63,9 @@ _PLURAIS = {
 
 def _qtd_label(qtd: float, base: str) -> str:
     """Multiplica a porção-base de forma legível, escalando todos os números e
-    pluralizando as unidades: 2 × '1 unidade (50 g)' → '2 unidades (100 g)'."""
+    pluralizando as unidades: 2 × '1 unidade (50 g)' → '2 unidades (100 g)'.
+    Remove a referência a colheres quando o número escalado for >= 6 (ex.:
+    '800 g (32 col. sopa)' → '800 g') para evitar descrições absurdas."""
     if qtd == 1:
         return base
 
@@ -75,7 +77,10 @@ def _qtd_label(qtd: float, base: str) -> str:
     if qtd > 1:
         for sing, plur in _PLURAIS.items():
             out = re.sub(rf"\b{sing}\b", plur, out)
-    return out
+
+    # Remove parentético "(\d+ col. sopa)" quando a quantidade for >= 6
+    out = re.sub(r"\s*\(\d+ col\. sopa\)", lambda m: m.group() if int(re.search(r"\d+", m.group()).group()) < 6 else "", out)
+    return out.strip()
 
 
 # ── Grupos de substituição ─ alternativas com calorias parecidas. ───────────
@@ -92,7 +97,8 @@ G_CARB_2    = [[("arroz_branco", 2)],   [("arroz_integral", 2)],   [("batata_doc
 G_CARB_25   = [[("arroz_branco", 2.5)], [("arroz_integral", 2.5)], [("batata_doce", 3.5)]]   # ~310-325
 
 # Almoço especial de domingo (churrasco). Substitui o almoço normal só no domingo.
-CHURRASCO_ALMOCO = [("carne_bovina", 1.5), ("frango", 1), ("linguica", 1),
+# Quantidades realistas: num churrasco normal come-se porções menores de cada carne.
+CHURRASCO_ALMOCO = [("carne_bovina", 1.5), ("frango", 0.5), ("linguica", 0.5),
                     ("arroz_branco", 1), ("feijao", 1)]
 FIX = lambda *itens: [list(itens)]   # slot de alternativa única (item fixo)
 
@@ -107,6 +113,18 @@ _CATEGORIA = {
 # Quantidade máxima de um mesmo alimento por refeição. Pão nunca passa de 2 por
 # refeição (3+ é carboidrato demais e sem lógica).
 _MAX_QTD_REFEICAO = {"pao_frances": 2, "pao_integral": 2}
+
+# Teto absoluto de porções para _aumentar_carbo: evita que o rollover empilhe
+# quantidades absurdas (ex.: 8 porções = 800g de arroz em uma refeição só).
+_MAX_CARBO_AUMENTO = {
+    "arroz_branco":   3.0,   # max 300 g por refeição (~3 escumadeiras cheias)
+    "arroz_integral": 3.0,   # max 300 g por refeição
+    "batata_doce":    3.5,   # max 350 g por refeição (já é o teto do G_CARB_25)
+    "banana":         2.0,   # max 2 unidades por refeição
+    "aveia":          2.0,   # max 80 g por refeição
+    "pao_frances":    2.0,   # já coberto por _MAX_QTD_REFEICAO
+    "pao_integral":   2.0,
+}
 
 # Refeição: (nome, horario, [slot, slot, ...]); slot = lista de alternativas.
 # Horários neutros (não assumem treino de manhã) — o treino pode ser manhã,
@@ -240,7 +258,11 @@ def _aplicar_periodo(refeicoes_raw: list[dict], periodo: str) -> None:
                 break
 
     if pre is not None:
-        pre["itens"].append(("banana", 1))
+        # Adiciona banana pré-treino apenas se o total ainda não chegou a 2
+        # (Z2/intenso já têm FIX(banana, 2) no café — não empilhar 3 bananas)
+        bananas_pre = sum(q for c, q in pre["itens"] if c == "banana")
+        if bananas_pre < 2:
+            pre["itens"].append(("banana", 1))
         pre["observacao"] = "⚡ Pré-treino: carbo reforçado pra energia (treino logo após)."
     if pos is not None:
         pos["observacao"] = "🔋 Pós-treino: capriche na proteína (whey/iogurte) + uma fruta pra repor."
@@ -353,7 +375,7 @@ def _aumentar_carbo(refeicoes_raw: list[dict], kcal_alvo: float) -> float:
         for chave, qtd in ref["itens"]:
             if restante > 0 and chave in _CARBO_MOVEL and chave in ALIMENTOS:
                 kcal_un = ALIMENTOS[chave]["kcal"]
-                teto = _MAX_QTD_REFEICAO.get(chave, qtd + 6)  # limite por refeição
+                teto = _MAX_CARBO_AUMENTO.get(chave, qtd + 2)  # teto por refeição
                 while qtd < teto and restante > 0:
                     qtd = round(qtd + 0.5, 2)
                     restante -= kcal_un * 0.5
