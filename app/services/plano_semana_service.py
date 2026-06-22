@@ -19,22 +19,22 @@ _TIPOS_VALIDOS = {"Z2_LONGO", "TIROS", "VO2MAX", "TEMPO", "FORCA", "ACADEMIA", "
 
 _DURACAO_PADRAO = {
     "Z2_LONGO":    120,
-    "TEMPO":        70,
-    "FORCA":        65,
+    "TEMPO":        90,
+    "FORCA":        90,
     "ACADEMIA":     65,
-    "TIROS":        62,
-    "VO2MAX":       62,
-    "RECUPERACAO":  55,
+    "TIROS":        75,
+    "VO2MAX":       75,
+    "RECUPERACAO":  75,
     "DESCANSO":      0,
 }
 
 _DURACAO_MAXIMA = {
-    "Z2_LONGO":    150,
-    "TEMPO":        90,
-    "FORCA":        90,
+    "Z2_LONGO":    120,
+    "TEMPO":       120,
+    "FORCA":       120,
     "ACADEMIA":     90,
-    "TIROS":        80,
-    "VO2MAX":       80,
+    "TIROS":        90,
+    "VO2MAX":       90,
     "RECUPERACAO":  90,
 }
 
@@ -470,7 +470,8 @@ TIPOS DE TREINO NA BIKE — PRESCRIÇÃO DETALHADA (use nas descrições com as 
 
 - Z2_LONGO: Base aeróbica. FC em {zonas_prompt.split('|')[1].strip() if '|' in zonas_prompt else 'Z2'}.
   Descrição deve incluir: duração total, FC alvo, cadência (85-95 rpm), observação de ritmo conversacional.
-  Ex: "90 min base aeróbica Z2 ({zonas_prompt.split('|')[1].strip() if '|' in zonas_prompt else 'Z2 bpm'}). Cadência 85-95 rpm, ritmo que permite conversar. Mantenha a FC estável — desacelere nas subidas se necessário."
+  Duração típica em dia útil: 90-120 min. Use os dados da semana anterior para decidir.
+  Ex: "105 min base aeróbica Z2 ({zonas_prompt.split('|')[1].strip() if '|' in zonas_prompt else 'Z2 bpm'}). Cadência 85-95 rpm, ritmo conversacional. Mantenha FC estável — desacelere nas subidas."
 
 - RECUPERACAO: Pedal muito leve Z1. FC mínima possível. Ativa circulação, não gera fadiga.
   Duração: proporcional à carga da semana anterior — se o atleta fez longões de 2h+, use 75-90 min; semanas leves use 45-60 min. NÃO use valor fixo.
@@ -478,19 +479,23 @@ TIPOS DE TREINO NA BIKE — PRESCRIÇÃO DETALHADA (use nas descrições com as 
 
 - TEMPO (limiar): Treino de limiar para elevar FTP. FC em Z3-Z4.
   Descrição deve incluir: aquecimento, blocos (N×X min), FC alvo por bloco, recuperação entre blocos, volta à calma.
-  Ex: "10 min aquecimento Z1-Z2. 3×12 min Z3-Z4 ({zonas_prompt.split('|')[2].strip() if len(zonas_prompt.split('|'))>2 else '159-177 bpm'}), recuperação 5 min Z2 entre blocos. Cadência 88-95 rpm. 8 min volta à calma Z1."
+  Duração típica: 90-105 min (aquecimento 15min + blocos + recuperações + volta à calma 10min).
+  Ex: "15 min aquecimento Z1-Z2. 3×15 min Z3-Z4 ({zonas_prompt.split('|')[2].strip() if len(zonas_prompt.split('|'))>2 else '159-177 bpm'}), recuperação 5 min Z2 entre blocos. Cadência 88-95 rpm. 10 min volta à calma Z1."
 
 - TIROS (neuromuscular/sprint): Alta intensidade Z5. Desenvolve potência e capacidade anaeróbica.
   Descrição deve incluir: aquecimento, número de repetições, duração do esforço, FC alvo, recuperação, cadência alta.
-  Ex: "15 min aquecimento progressivo. 8×30s sprint máximo Z5 (>{fc_max - 13} bpm), cadência 100-115 rpm. Recuperação 3 min Z1 entre cada. 10 min volta à calma."
+  Duração típica: 75-90 min (aquecimento longo + tiros + recuperações + volta à calma).
+  Ex: "20 min aquecimento progressivo. 10×30s sprint máximo Z5 (>{fc_max - 13} bpm), cadência 100-115 rpm. Recuperação 3.5 min Z1 entre cada. 15 min volta à calma."
 
 - VO2MAX: Blocos longos em Z5 para elevar VO2max e potência aeróbica máxima.
   Descrição deve incluir: aquecimento, número de blocos, duração do bloco, FC alvo, recuperação igual ao esforço, cadência.
-  Ex: "12 min aquecimento progressivo até Z3. 4×4 min Z5 (>{fc_max - 13} bpm), cadência 90-100 rpm. Recuperação 4 min Z2 entre blocos. 10 min volta à calma Z1."
+  Duração típica: 75-90 min (aquecimento + blocos com recuperação igual + volta à calma).
+  Ex: "15 min aquecimento progressivo até Z3. 5×4 min Z5 (>{fc_max - 13} bpm), cadência 90-100 rpm. Recuperação 4 min Z2 entre blocos. 15 min volta à calma Z1."
 
 - FORCA (treino de força na BIKE — NÃO é academia):
   Cadência baixa (50-60 rpm), marcha pesada, FC em Z3. Simula subidas longas e fortalece musculatura de pedalada.
-  Ex: "10 min aquecimento. 5×6 min cadência 50-58 rpm marcha pesada Z3, subida ou resistência alta. Recuperação 3 min Z1 cadência livre. Mantenha potência constante, não trave os joelhos."
+  Duração típica: 90-105 min.
+  Ex: "15 min aquecimento. 6×8 min cadência 50-58 rpm marcha pesada Z3, subida ou resistência alta. Recuperação 3 min Z1 cadência livre. 10 min volta à calma."
 
 {_bloco_academia_prompt}
 
