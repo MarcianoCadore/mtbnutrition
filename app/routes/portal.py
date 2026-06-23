@@ -1483,7 +1483,7 @@ function renderFTPBtn() {
   } else if (window.FTP_ON && dias !== null && dias < 90) {
     const falta = 90 - Math.max(dias, 0);
     area.innerHTML = `<div id="ftpCountdown" style="font-size:.8rem;color:#7c3aed;font-weight:600;padding:8px 12px;background:#f3e8ff;border-radius:8px;text-align:center">⚡ Próximo Teste FTP em <strong>${falta} dia${falta !== 1 ? 's' : ''}</strong></div>`;
-    setTimeout(() => { const el = document.getElementById('ftpCountdown'); if (el) el.remove(); }, 3 * 60 * 1000);
+    setTimeout(() => { const el = document.getElementById('ftpCountdown'); if (el) el.remove(); }, 30 * 1000);
   }
 }
 
