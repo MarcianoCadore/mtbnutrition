@@ -98,14 +98,32 @@ async def _treino_kcal_do_dia(user_id: str, data: str, tipo: str) -> int:
 
 async def _alvo_calorico(user_id: str, data: str, tipo: str, modo: str) -> int | None:
     """Meta de kcal do dia pelo TDEE. None se o perfil não tiver peso/altura/idade
-    (cai no comportamento de menu fixo)."""
+    (cai no comportamento de menu fixo).
+
+    Prioridade:
+    1. nutricao.meta_calorica_diaria (definida pela nutricionista) + kcal do treino.
+    2. nutricao.basal_metabolico (basal medido) + kcal do treino ± déficit.
+    3. Cálculo automático Mifflin-St Jeor × 1.2 + kcal do treino ± déficit.
+    """
     from app.services.user_service import get_por_id
     from app.services.nutricao_service import manutencao_basal, _DEFICIT_KCAL
     u = await get_por_id(user_id)
-    basal = manutencao_basal((u or {}).get("perfil"))
-    if basal is None:
-        return None
-    manut = basal + await _treino_kcal_do_dia(user_id, data, tipo)
+    nutricao = (u or {}).get("nutricao") or {}
+    treino_kcal = await _treino_kcal_do_dia(user_id, data, tipo)
+
+    meta = nutricao.get("meta_calorica_diaria")
+    if meta:
+        return int(round(meta + treino_kcal))
+
+    basal_manual = nutricao.get("basal_metabolico")
+    if basal_manual:
+        manut = basal_manual + treino_kcal
+    else:
+        basal = manutencao_basal((u or {}).get("perfil"))
+        if basal is None:
+            return None
+        manut = basal + treino_kcal
+
     if modo == "deficit":
         return int(round(manut - _DEFICIT_KCAL))
     return int(round(manut))

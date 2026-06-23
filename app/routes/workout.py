@@ -935,6 +935,7 @@ async def pagina_perfil(request: Request):
     u = await get_por_id(request.state.user_id) or {}
     p = u.get("perfil") or {}
     pref = u.get("preferencias") or {}
+    nutricao = u.get("nutricao") or {}
     val = lambda x: "" if x in (None, 0) else str(x)
     sexo = str(p.get("sexo") or "M").upper()
     obj = pref.get("objetivo") or "performance_mtb"
@@ -954,7 +955,9 @@ async def pagina_perfil(request: Request):
             .replace("{{GARMIN_EMAIL}}", garmin_email)
             .replace("{{ACADEMIA_TREINA}}", academia_treina)
             .replace("{{ACADEMIA_DISP_JSON}}", academia_disp_json)
-            .replace("{{ACADEMIA_FREQ}}", academia_freq))
+            .replace("{{ACADEMIA_FREQ}}", academia_freq)
+            .replace("{{BASAL_METABOLICO}}", val(nutricao.get("basal_metabolico")))
+            .replace("{{META_CALORICA}}", val(nutricao.get("meta_calorica_diaria"))))
     for o in _OBJETIVOS_VALIDOS:
         html = html.replace(f"{{{{OBJ_{o}}}}}", "selected" if obj == o else "")
     return html
@@ -989,7 +992,16 @@ async def salvar_perfil(request: Request):
     except (ValueError, TypeError):
         frequencia_semanal = 0
 
-    await atualizar_usuario(request.state.user_id, {
+    try:
+        basal_metabolico = int(form.get("basal_metabolico") or 0) or None
+    except (ValueError, TypeError):
+        basal_metabolico = None
+    try:
+        meta_calorica_diaria = int(form.get("meta_calorica_diaria") or 0) or None
+    except (ValueError, TypeError):
+        meta_calorica_diaria = None
+
+    campos: dict = {
         "perfil.idade": idade,
         "perfil.peso_kg": peso_kg,
         "perfil.altura_cm": altura_cm,
@@ -998,7 +1010,10 @@ async def salvar_perfil(request: Request):
         "academia.treina": treina_academia,
         "academia.disponibilidade": disponibilidade,
         "academia.frequencia_semanal": frequencia_semanal,
-    })
+        "nutricao.basal_metabolico": basal_metabolico,
+        "nutricao.meta_calorica_diaria": meta_calorica_diaria,
+    }
+    await atualizar_usuario(request.state.user_id, campos)
     return {"status": "ok"}
 
 
@@ -1837,6 +1852,30 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
     </form>
   </div>
 
+  <!-- ── Metas calóricas (nutricionista) ── -->
+  <div class="section-title">🍽️ Metas calóricas</div>
+  <div class="card">
+    <h2>📋 Dados da nutricionista</h2>
+    <p class="hint">Preencha os valores definidos pela sua nutricionista. Quando preenchidos, substituem o cálculo automático de Mifflin-St Jeor.</p>
+    <form id="form-nutri" onsubmit="salvarNutri(event)">
+      <div class="duo">
+        <div>
+          <label class="fld">Basal metabólico (kcal/dia)</label>
+          <input id="basal_metabolico" type="number" min="1000" max="4000" step="1" placeholder="ex: 1922" value="{{BASAL_METABOLICO}}">
+        </div>
+        <div>
+          <label class="fld">Meta calórica diária (kcal/dia)</label>
+          <input id="meta_calorica_diaria" type="number" min="1000" max="4000" step="1" placeholder="ex: 1800" value="{{META_CALORICA}}">
+        </div>
+      </div>
+      <p style="font-size:.82rem;color:#6b7280;margin-top:10px;line-height:1.5">
+        A <b>meta calórica diária</b> é usada como base nos cardápios. O gasto do treino é somado por cima automaticamente em dias de treino.
+      </p>
+      <button type="submit" id="btn-nutri">Salvar metas</button>
+      <div id="st-nutri" class="status"></div>
+    </form>
+  </div>
+
   <!-- ── Academia ── -->
   <div class="section-title">🏋️ Academia / Musculação</div>
   <div class="card">
@@ -2011,6 +2050,28 @@ async function salvarPerfil(ev){
     st.className='status ok'; st.textContent='✅ Perfil salvo!';
   }catch(e){ st.className='status err'; st.textContent='❌ '+e.message; }
   finally{ btn.disabled=false; btn.textContent='Salvar perfil'; }
+}
+
+async function salvarNutri(ev){
+  ev.preventDefault();
+  const st=document.getElementById('st-nutri'), btn=document.getElementById('btn-nutri');
+  btn.disabled=true; btn.textContent='Salvando…';
+  // envia também os campos mínimos obrigatórios do endpoint /workout/perfil
+  const body=new URLSearchParams({
+    idade:document.getElementById('idade').value||'0',
+    peso_kg:document.getElementById('peso_kg').value||'0',
+    altura_cm:document.getElementById('altura_cm').value||'0',
+    sexo:document.getElementById('sexo').value,
+    objetivo:document.getElementById('objetivo').value,
+    basal_metabolico:document.getElementById('basal_metabolico').value,
+    meta_calorica_diaria:document.getElementById('meta_calorica_diaria').value,
+  });
+  try{
+    const r=await fetch('/workout/perfil',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});
+    if(!r.ok) throw new Error('Erro ao salvar');
+    st.className='status ok'; st.textContent='✅ Metas calóricas salvas!';
+  }catch(e){ st.className='status err'; st.textContent='❌ '+e.message; }
+  finally{ btn.disabled=false; btn.textContent='Salvar metas'; }
 }
 
 // ── Zonas de FC ──
