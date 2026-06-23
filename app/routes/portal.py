@@ -1482,7 +1482,8 @@ function renderFTPBtn() {
     area.innerHTML = '<button class="btn btn-ftp" id="btnCriarFTP" onclick="abrirModalFTP()">⚡ Criar Teste FTP</button>';
   } else if (window.FTP_ON && dias !== null && dias < 90) {
     const falta = 90 - dias;
-    area.innerHTML = `<div style="font-size:.8rem;color:#7c3aed;font-weight:600;padding:8px 12px;background:#f3e8ff;border-radius:8px;text-align:center">⚡ Próximo Teste FTP em <strong>${falta} dia${falta !== 1 ? 's' : ''}</strong></div>`;
+    area.innerHTML = `<div id="ftpCountdown" style="font-size:.8rem;color:#7c3aed;font-weight:600;padding:8px 12px;background:#f3e8ff;border-radius:8px;text-align:center">⚡ Próximo Teste FTP em <strong>${falta} dia${falta !== 1 ? 's' : ''}</strong></div>`;
+    setTimeout(() => { const el = document.getElementById('ftpCountdown'); if (el) el.remove(); }, 3 * 60 * 1000);
   }
 }
 
@@ -1541,7 +1542,8 @@ async def portal(request: Request):
 
     from app.services.config_service import get_ftp
     from app.services.user_service import get_por_id
-    from datetime import date as _date
+    from datetime import date as _date, datetime as _datetime
+    import pytz as _pytz
     ftp_val, _ = await get_ftp(request.state.user_id)
     ftp_on_js = "true" if ftp_val else "false"
     garmin_on_js = "true" if garmin_conectado else "false"
@@ -1550,7 +1552,8 @@ async def portal(request: Request):
     _ftp_agendado = _user.get("ultimo_ftp_agendado")
     if _ftp_agendado:
         try:
-            _dias_ftp = (_date.today() - _date.fromisoformat(_ftp_agendado)).days
+            _hoje_br = _datetime.now(_pytz.timezone("America/Sao_Paulo")).date()
+            _dias_ftp = (_hoje_br - _date.fromisoformat(_ftp_agendado)).days
         except ValueError:
             _dias_ftp = None
     else:
