@@ -348,9 +348,12 @@ HTML = """<!DOCTYPE html>
         </p>
         <label style="font-size:.85rem;font-weight:600;display:block;margin-bottom:6px">Data do teste</label>
         <input type="date" id="ftpData" style="padding:9px 10px;border:1.5px solid #ddd;border-radius:7px;font-size:1rem;width:100%;box-sizing:border-box;margin-bottom:16px">
-        <div style="display:flex;gap:8px">
-          <label style="display:flex;align-items:center;gap:6px;font-size:.88rem;cursor:pointer">
-            <input type="checkbox" id="ftpIndoor" checked> Indoor (watts)
+        <div style="display:flex;gap:16px;margin-bottom:4px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:.9rem;cursor:pointer">
+            <input type="radio" name="ftpModo" id="ftpIndoor" value="indoor" checked> 🏠 Indoor (watts)
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:.9rem;cursor:pointer">
+            <input type="radio" name="ftpModo" id="ftpOutdoor" value="outdoor"> 🌳 Outdoor (FC)
           </label>
         </div>
         <div id="ftpStatus" style="margin-top:12px;font-size:.85rem;color:#1565c0;min-height:20px"></div>
@@ -920,7 +923,7 @@ function fecharFTPModal(e) {
 
 async function confirmarCriarFTP() {
   const data = document.getElementById('ftpData').value;
-  const indoor = document.getElementById('ftpIndoor').checked;
+  const indoor = document.getElementById('ftpIndoor').checked;  // radio: indoor selecionado
   const st = document.getElementById('ftpStatus');
   if (!data) { st.textContent = 'Informe a data.'; st.style.color = '#c62828'; return; }
   st.style.color = '#1565c0';
@@ -933,7 +936,7 @@ async function confirmarCriarFTP() {
     });
     if (!r.ok) throw new Error(await r.text());
     const d = await r.json();
-    fecharFTPModal({});
+    document.getElementById('ftpModal').classList.remove('show');
     toast(`⚡ Teste FTP criado no Garmin para ${data}!`, 'ok');
     await load();
   } catch(e) {

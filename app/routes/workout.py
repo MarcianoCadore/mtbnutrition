@@ -713,6 +713,7 @@ async def criar_treino_ftp(request: Request, body: CriarFTPBody):
         "nome": nome,
         "descricao": descricao,
         "garmin_workout_id": gid,
+        "indoor": body.forcar_indoor if body.forcar_indoor is not None else True,
     }
 
     existing = await db.semanas.find_one(
