@@ -642,43 +642,17 @@ async def criar_treino_ftp(request: Request, body: CriarFTPBody):
     correto de FTP (10min Z1 → 5min Z3 → 3x aceleração → 2min Z1 → 20min FTP → 15min Z1).
     Salva referência na semana do banco (upsert).
     """
-    from app.services.garmin_workout_service import upload_e_agendar, deletar_workout_garmin
-    from app.services.garmin_service import get_garmin_client
-    import asyncio
+    from app.services.garmin_workout_service import upload_e_agendar
 
     user_id = request.state.user_id
     data_iso = body.data
 
     try:
-        year, month, _ = (int(x) for x in data_iso.split("-"))
+        datetime.strptime(data_iso, "%Y-%m-%d")
     except ValueError:
         raise HTTPException(status_code=400, detail="data deve ser YYYY-MM-DD")
 
-    # Busca workouts agendados no Garmin para o mês e deleta os da data alvo
-    try:
-        api = await get_garmin_client(user_id)
-
-        def _buscar_e_deletar():
-            scheduled = api.get_scheduled_workouts(year, month) or []
-            for entry in scheduled:
-                cal_date = entry.get("calendarDate") or entry.get("date", "")
-                if cal_date != data_iso:
-                    continue
-                wo = entry.get("workout") or {}
-                wid = wo.get("workoutId") or entry.get("workoutId")
-                if wid:
-                    try:
-                        api.unschedule_workout(str(wid))
-                    except Exception:
-                        pass
-                    try:
-                        api.delete_workout(str(wid))
-                    except Exception:
-                        pass
-
-        await asyncio.to_thread(_buscar_e_deletar)
-    except Exception as e:
-        logger.warning("criar_treino_ftp: falha ao limpar Garmin para %s — %s", data_iso, e)
+    # O cleanup de workouts existentes na data é feito dentro de upload_e_agendar.
 
     descricao = (
         "TESTE FTP (20min): esforço máximo sustentável. "
@@ -730,6 +704,9 @@ async def criar_treino_ftp(request: Request, body: CriarFTPBody):
             {"$push": {"treinos": treino_doc}},
             upsert=True,
         )
+
+    from app.services.user_service import atualizar_usuario
+    await atualizar_usuario(user_id, {"ultimo_ftp_agendado": data_iso})
 
     return {"status": "ok", "data": data_iso, "garmin_workout_id": gid, "nome": nome}
 

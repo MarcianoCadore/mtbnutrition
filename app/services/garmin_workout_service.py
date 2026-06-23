@@ -338,7 +338,39 @@ async def upload_e_agendar(
     # Resolve o cliente antes de entrar na thread (get_garmin_client é async)
     api = await get_garmin_client(user_id)
 
+    year = int(data_iso[:4])
+    month = int(data_iso[5:7])
+
+    def _limpar_data_sync():
+        """Remove todos os workouts agendados no Garmin para data_iso (evita duplicatas)."""
+        try:
+            raw = api.get_scheduled_workouts(year, month) or []
+            items = raw.get("calendarItems") or [] if isinstance(raw, dict) else (raw if isinstance(raw, list) else [])
+            for entry in items:
+                if not isinstance(entry, dict):
+                    continue
+                cal_date = (entry.get("calendarDate") or entry.get("date") or "")[:10]
+                if cal_date != data_iso:
+                    continue
+                if entry.get("itemType") != "workout":
+                    continue
+                wo = entry.get("workout") or {}
+                wid = str(wo.get("workoutId") or entry.get("workoutId") or "")
+                if not wid:
+                    continue
+                try:
+                    api.unschedule_workout(wid)
+                except Exception:
+                    pass
+                try:
+                    api.delete_workout(wid)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning("_limpar_data_sync %s: %s (ignorado)", data_iso, e)
+
     def _upload() -> str | None:
+        _limpar_data_sync()
         result = api.upload_cycling_workout(workout)
         workout_id = None
         if isinstance(result, dict):

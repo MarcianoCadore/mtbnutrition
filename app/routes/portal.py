@@ -334,7 +334,7 @@ HTML = """<!DOCTYPE html>
     <button class="btn btn-sec"  id="btnGarmin" onclick="sincronizarGarmin()">📡 Enviar + Sincronizar Garmin</button>
     <button class="btn btn-test" id="btnGenSemana" onclick="gerarProximaSemana()">🤖 Gerar próxima semana</button>
     <button class="btn btn-sec"  id="btnApagarGerados" style="display:none" onclick="apagarTreinosGerados()">🗑 Apagar treinos gerados</button>
-    <button class="btn btn-ftp"  id="btnCriarFTP" onclick="abrirModalFTP()">⚡ Criar Teste FTP</button>
+    <div id="ftpBtnArea"></div>
   </div>
 
   <div class="modal-overlay" id="ftpModal" onclick="fecharFTPModal(event)">
@@ -403,6 +403,7 @@ HTML = """<!DOCTYPE html>
 window.NUTRICAO_ON = {{NUTRICAO_ON}};
 window.FTP_ON      = {{FTP_ON}};
 window.GARMIN_ON   = {{GARMIN_ON}};
+window.DIAS_FTP    = {{DIAS_FTP}};
 const DIAS  = ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo'];
 const TIPOS = [
   {v:'DESCANSO',    l:'🛌 Descanso',    s:'Descanso'},
@@ -941,6 +942,8 @@ async function confirmarCriarFTP() {
     const d = await r.json();
     document.getElementById('ftpModal').classList.remove('show');
     toast(`⚡ Teste FTP criado no Garmin para ${data}!`, 'ok');
+    window.DIAS_FTP = 0;
+    renderFTPBtn();
     await load();
   } catch(e) {
     st.style.color = '#c62828';
@@ -1470,8 +1473,21 @@ async function carregarProva() {
   </div>`;
 }
 
+function renderFTPBtn() {
+  const area = document.getElementById('ftpBtnArea');
+  if (!area) return;
+  const dias = window.DIAS_FTP;
+  if (window.FTP_ON && (dias === null || dias >= 90)) {
+    area.innerHTML = '<button class="btn btn-ftp" id="btnCriarFTP" onclick="abrirModalFTP()">⚡ Criar Teste FTP</button>';
+  } else if (window.FTP_ON && dias !== null && dias < 90) {
+    const falta = 90 - dias;
+    area.innerHTML = `<div style="font-size:.8rem;color:#7c3aed;font-weight:600;padding:8px 12px;background:#f3e8ff;border-radius:8px;text-align:center">⚡ Próximo Teste FTP em <strong>${falta} dia${falta !== 1 ? 's' : ''}</strong></div>`;
+  }
+}
+
 load();
 carregarProva();
+renderFTPBtn();
 window.addEventListener('mtb:recarregar', load);
 </script>
 </body>
@@ -1523,9 +1539,22 @@ async def portal(request: Request):
     )
 
     from app.services.config_service import get_ftp
+    from app.services.user_service import get_por_id
+    from datetime import date as _date
     ftp_val, _ = await get_ftp(request.state.user_id)
     ftp_on_js = "true" if ftp_val else "false"
     garmin_on_js = "true" if garmin_conectado else "false"
+
+    _user = await get_por_id(request.state.user_id) or {}
+    _ftp_agendado = _user.get("ultimo_ftp_agendado")
+    if _ftp_agendado:
+        try:
+            _dias_ftp = (_date.today() - _date.fromisoformat(_ftp_agendado)).days
+        except ValueError:
+            _dias_ftp = None
+    else:
+        _dias_ftp = None
+    dias_ftp_js = str(_dias_ftp) if _dias_ftp is not None else "null"
 
     return (
         HTML
@@ -1536,4 +1565,5 @@ async def portal(request: Request):
         .replace("{{GARMIN_BTN}}", garmin_btn)
         .replace("{{FTP_ON}}", ftp_on_js)
         .replace("{{GARMIN_ON}}", garmin_on_js)
+        .replace("{{DIAS_FTP}}", dias_ftp_js)
     )
