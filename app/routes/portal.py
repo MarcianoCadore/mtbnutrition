@@ -909,9 +909,12 @@ function fecharNutriModal(e) {
 
 function abrirModalFTP() {
   const inp = document.getElementById('ftpData');
-  // Pré-preenche com amanhã
-  const amanha = new Date(); amanha.setDate(amanha.getDate() + 1);
-  inp.value = amanha.toISOString().slice(0,10);
+  // Pré-preenche com amanhã usando hora local (evita desvio de fuso UTC)
+  const h = new Date();
+  const amanha = new Date(h.getFullYear(), h.getMonth(), h.getDate() + 1);
+  const mm = String(amanha.getMonth() + 1).padStart(2, '0');
+  const dd = String(amanha.getDate()).padStart(2, '0');
+  inp.value = `${amanha.getFullYear()}-${mm}-${dd}`;
   document.getElementById('ftpStatus').textContent = '';
   document.getElementById('ftpModal').classList.add('show');
 }
