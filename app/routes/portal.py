@@ -215,6 +215,7 @@ HTML = """<!DOCTYPE html>
     .tipo-ACADEMIA    { background: #2e7d32; }
     .tipo-RECUPERACAO { background: #00695c; }
     .tipo-DESCANSO    { background: #607d8b; }
+    .tipo-TESTE_FTP   { background: #7c3aed; }
     .academia-bloco { background: #e8f5e9; border-radius: 8px; padding: 10px 12px; margin-top: 8px; border-left: 3px solid #2e7d32; }
     .academia-bloco .ac-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
     .academia-bloco .ac-titulo { font-size: .72rem; font-weight: 700; color: #2e7d32; }
