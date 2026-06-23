@@ -188,12 +188,54 @@ async def salvar_ftp(user_id: str, ftp: int, modo: str = "indoor") -> dict:
       "nunca"   — FTP salvo só para análise; workouts usam apenas FC
     """
     from app.services.user_service import atualizar_usuario
+    from datetime import date
     if not (50 <= ftp <= 700):
         raise ValueError(f"FTP inválido: {ftp}W. Use um valor entre 50 e 700W.")
     if modo not in ("indoor", "sempre", "nunca"):
         modo = "indoor"
-    await atualizar_usuario(user_id, {"ftp": ftp, "potencia_modo": modo})
+    await atualizar_usuario(user_id, {
+        "ftp": ftp,
+        "potencia_modo": modo,
+        "ultimo_teste_ftp": date.today().isoformat(),
+    })
     return {"ftp": ftp, "potencia_modo": modo, "zonas": calc_zonas_potencia(ftp)}
+
+
+async def dias_desde_ultimo_ftp(user_id: str) -> int | None:
+    """Retorna quantos dias se passaram desde o último teste de FTP.
+
+    Lê `ultimo_teste_ftp` do documento do usuário. Se nunca testou, retorna None.
+    Também inspeciona as semanas registradas buscando TESTE_FTP concluído.
+    """
+    from app.services.user_service import get_por_id
+    from app.services.mongo_service import get_db
+    from datetime import date
+
+    user = await get_por_id(user_id) or {}
+    data_str = user.get("ultimo_teste_ftp")
+
+    # Fallback: procura TESTE_FTP mais recente nas semanas registradas
+    if not data_str:
+        db = get_db()
+        doc = await db.semanas.find_one(
+            {"user_id": user_id, "treinos.tipo": "TESTE_FTP"},
+            sort=[("semana_inicio", -1)],
+        )
+        if doc:
+            datas_ftp = [
+                t["data"] for t in doc.get("treinos", [])
+                if t.get("tipo") == "TESTE_FTP" and t.get("data")
+            ]
+            if datas_ftp:
+                data_str = max(datas_ftp)
+
+    if not data_str:
+        return None
+    try:
+        ultimo = date.fromisoformat(data_str)
+        return (date.today() - ultimo).days
+    except ValueError:
+        return None
 
 
 async def get_zonas_potencia(user_id: str) -> dict | None:

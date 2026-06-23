@@ -1,4 +1,4 @@
-"""Geração da próxima semana de treinos usando IA (Claude Opus)."""
+"""Geração da próxima semana de treinos usando IA (Claude Sonnet / Gemini fallback)."""
 
 import json
 import logging
@@ -13,9 +13,37 @@ from app.services.user_service import get_por_id
 logger = logging.getLogger(__name__)
 
 _client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-_MODEL_PLANO = "claude-opus-4-8"  # melhor qualidade para geração de planos semanais
+_MODEL_PLANO = "claude-sonnet-4-6"
 
-_TIPOS_VALIDOS = {"Z2_LONGO", "TIROS", "VO2MAX", "TEMPO", "FORCA", "ACADEMIA", "RECUPERACAO", "DESCANSO"}
+_TIPOS_VALIDOS = {"Z2_LONGO", "TIROS", "VO2MAX", "TEMPO", "FORCA", "ACADEMIA", "RECUPERACAO", "DESCANSO", "TESTE_FTP"}
+
+
+async def _chamar_gemini(prompt: str) -> str:
+    """Chama Gemini Flash (gratuito) como fallback quando Claude está sem cota."""
+    from google import genai
+    from google.genai import types as gtypes
+
+    api_key = settings.GEMINI_API_KEY
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY não configurado")
+
+    client = genai.Client(api_key=api_key)
+    resp = await client.aio.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=prompt,
+        config=gtypes.GenerateContentConfig(
+            response_mime_type="application/json",
+        ),
+    )
+    return resp.text
+
+
+def _is_quota_error(exc: Exception) -> bool:
+    """Retorna True se o erro é de cota/rate-limit da Anthropic."""
+    if isinstance(exc, (anthropic.RateLimitError, anthropic.PermissionDeniedError)):
+        return True
+    msg = str(exc).lower()
+    return any(k in msg for k in ("rate limit", "quota", "credit", "overloaded", "529"))
 
 _DURACAO_PADRAO = {
     "Z2_LONGO":    120,
@@ -26,6 +54,7 @@ _DURACAO_PADRAO = {
     "VO2MAX":       75,
     "RECUPERACAO":  75,
     "DESCANSO":      0,
+    "TESTE_FTP":    62,
 }
 
 _DURACAO_MAXIMA = {
@@ -36,6 +65,7 @@ _DURACAO_MAXIMA = {
     "TIROS":        90,
     "VO2MAX":       90,
     "RECUPERACAO":  90,
+    "TESTE_FTP":    62,
 }
 
 _DESCRICAO_PADRAO = {
@@ -47,6 +77,7 @@ _DESCRICAO_PADRAO = {
     "VO2MAX":      "4x4 min Z5 (>177 bpm) com 4 min recuperação Z2.",
     "RECUPERACAO": "Pedal leve Z1 (<145 bpm). Recuperação ativa.",
     "DESCANSO":    "",
+    "TESTE_FTP":   "TESTE FTP (20min): esforço máximo sustentável. Potência média × 0.95 = novo FTP. Não exploda no início! Aquecimento: 10min Z1 → 5min Z3 progressivo → 3×(30s Z5 + 1min Z1) → 2min Z1. Desaquecimento: 15min Z1.",
 }
 
 
@@ -448,6 +479,22 @@ Formato OBRIGATÓRIO da "descricao" para ACADEMIA:
             'NÃO inclua sessões do tipo ACADEMIA. O campo "academia" deve ser null em todos os treinos.'
         )
 
+    # ── Verificação de TESTE_FTP a cada 3 meses ──────────────────────────────
+    from app.services.config_service import dias_desde_ultimo_ftp as _dias_ftp
+    dias_ftp = await _dias_ftp(user_id)
+    _FTP_INTERVALO_DIAS = 90
+    ftp_vencido = (dias_ftp is None) or (dias_ftp >= _FTP_INTERVALO_DIAS)
+    bloco_ftp_obrigatorio = ""
+    if ftp_vencido and ftp_user:
+        dias_txt = f"{dias_ftp} dias atrás" if dias_ftp is not None else "nunca realizado"
+        bloco_ftp_obrigatorio = f"""
+⚡ TESTE DE FTP OBRIGATÓRIO NESTA SEMANA:
+O último teste FTP foi {dias_txt} (ciclo = {_FTP_INTERVALO_DIAS} dias).
+INCLUA OBRIGATORIAMENTE um dia com tipo TESTE_FTP (duração 62 min) num dia de treino da semana.
+Posicione o TESTE_FTP num dia de qualidade (seg–sex), nunca no dia do longão.
+Após o TESTE_FTP coloque RECUPERACAO no dia seguinte.
+"""
+
     # Bloco de potência para o prompt
     if ftp_user and zonas_pot_user:
         zonas_pot_txt = " | ".join(
@@ -472,6 +519,7 @@ ZONAS GARMIN: {zonas_prompt}
 DIAS DE TREINO: {dias_treino_nomes}
 {bloco_academia}
 {bloco_prova}
+{bloco_ftp_obrigatorio}
 ═══════════════════════════════════════════
 ANÁLISE DA SEMANA ATUAL ({semana_atual}):
 {resumos}
@@ -561,6 +609,7 @@ REGRAS DO JSON:
 - O campo "progressao" deve descrever APENAS o que está nos treinos gerados acima — não mencione academia se nenhum dia tiver tipo ACADEMIA.
 """
 
+    modelo_usado = "claude"
     try:
         response = await _client.messages.create(
             model=_MODEL_PLANO,
@@ -570,8 +619,22 @@ REGRAS DO JSON:
         raw = response.content[0].text.strip().replace("```json", "").replace("```", "").strip()
         data = json.loads(raw)
     except Exception as e:
-        logger.warning("Claude falhou para gerar próxima semana: %s — usando fallback", e)
-        data = _fallback(treinos, proxima, preferencias)
+        if _is_quota_error(e) and settings.GEMINI_API_KEY:
+            logger.warning("Claude com cota esgotada (%s) — tentando Gemini Flash", e)
+            try:
+                raw = await _chamar_gemini(prompt)
+                raw = raw.strip().replace("```json", "").replace("```", "").strip()
+                data = json.loads(raw)
+                modelo_usado = "gemini"
+                logger.info("Gemini Flash usado como fallback para semana %s", proxima)
+            except Exception as eg:
+                logger.warning("Gemini também falhou (%s) — usando fallback determinístico", eg)
+                data = _fallback(treinos, proxima, preferencias)
+                modelo_usado = "fallback"
+        else:
+            logger.warning("Claude falhou para gerar próxima semana: %s — usando fallback", e)
+            data = _fallback(treinos, proxima, preferencias)
+            modelo_usado = "fallback"
 
     # normaliza e valida cada treino retornado pela IA
     treinos_out = []
@@ -609,6 +672,7 @@ REGRAS DO JSON:
         "progressao":     data.get("progressao", ""),
         "fase":           fase_prova,
         "treinos":        treinos_out,
+        "modelo_usado":   modelo_usado,
     }
 
 

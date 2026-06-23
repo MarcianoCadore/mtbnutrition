@@ -28,7 +28,7 @@ from garminconnect.workout import (
 logger = logging.getLogger(__name__)
 
 # Tipos de treino feitos no rolo (indoor) — recebem alvo de watts quando modo="indoor"
-_TIPOS_INDOOR = {"VO2MAX", "TIROS", "TEMPO", "FORCA"}
+_TIPOS_INDOOR = {"VO2MAX", "TIROS", "TEMPO", "FORCA", "TESTE_FTP"}
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -218,6 +218,30 @@ def _vo2max(duracao_min: int = 62) -> tuple[list, int]:
     return steps, total
 
 
+def _teste_ftp(duracao_min: int = 57) -> tuple[list, int]:
+    """Protocolo completo de teste FTP de 20min."""
+    # Aquecimento Z1 — 10min
+    # Progressivo Z3 — 5min
+    # 3x (30seg Z5 + 1min Z1 recuperação)
+    # Pré-teste Z1 — 2min suave
+    # TESTE FTP Z4 — 20min potência máxima sustentável
+    # Desaquecimento Z1 — 15min
+    inner_acel = [
+        create_interval_step(30, step_order=1, target_type=_hz(5)),
+        create_recovery_step(60, step_order=2, target_type=_hz(1)),
+    ]
+    steps = [
+        create_warmup_step(600, step_order=1, target_type=_hz(1)),         # 10min Z1
+        create_interval_step(300, step_order=2, target_type=_hz(3)),       # 5min Z3 progressivo
+        create_repeat_group(3, inner_acel, step_order=3),                  # 3x aceleração
+        create_interval_step(120, step_order=4, target_type=_hz(1)),       # 2min Z1 pré-teste
+        create_interval_step(1200, step_order=5, target_type=_hz(4)),      # 20min TESTE FTP Z4
+        create_cooldown_step(900, step_order=6, target_type=_hz(1)),       # 15min Z1
+    ]
+    total = 600 + 300 + 3 * (30 + 60) + 120 + 1200 + 900
+    return steps, total
+
+
 _BUILDERS = {
     "RECUPERACAO": _recuperacao,
     "Z2_LONGO":    _z2_longo,
@@ -225,6 +249,7 @@ _BUILDERS = {
     "FORCA":       _forca,
     "TIROS":       _tiros,
     "VO2MAX":      _vo2max,
+    "TESTE_FTP":   _teste_ftp,
 }
 
 _DESCRICOES_PADRAO = {
@@ -234,6 +259,7 @@ _DESCRICOES_PADRAO = {
     "FORCA":       "4x6 min em Z3 (159-165 bpm) com cadência baixa (50-60 rpm). 4 min recuperação Z2 entre blocos.",
     "TIROS":       "8x30s em Z5 (>177 bpm) com 3.5 min recuperação Z1. Sprints máximos.",
     "VO2MAX":      "4x4 min em Z5 (>177 bpm) com 4 min recuperação Z2. Esforço VO2max sustentado.",
+    "TESTE_FTP":   "TESTE FTP — 20min esforço máximo sustentável. Potência média × 0.95 = novo FTP. Não exploda no início!",
 }
 
 

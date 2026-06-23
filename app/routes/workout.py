@@ -628,6 +628,111 @@ async def marcar_indoor(
     }
 
 
+class CriarFTPBody(BaseModel):
+    data: str           # YYYY-MM-DD
+    duracao_min: int = 62
+    forcar_indoor: Optional[bool] = None
+
+
+@router.post("/criar-ftp")
+async def criar_treino_ftp(request: Request, body: CriarFTPBody):
+    """Cria (ou recria) o treino TESTE_FTP no Garmin para a data informada.
+
+    Busca qualquer workout já agendado nessa data, remove e faz upload do protocolo
+    correto de FTP (10min Z1 → 5min Z3 → 3x aceleração → 2min Z1 → 20min FTP → 15min Z1).
+    Salva referência na semana do banco (upsert).
+    """
+    from app.services.garmin_workout_service import upload_e_agendar, deletar_workout_garmin
+    from app.services.garmin_service import get_garmin_client
+    import asyncio
+
+    user_id = request.state.user_id
+    data_iso = body.data
+
+    try:
+        year, month, _ = (int(x) for x in data_iso.split("-"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="data deve ser YYYY-MM-DD")
+
+    # Busca workouts agendados no Garmin para o mês e deleta os da data alvo
+    try:
+        api = await get_garmin_client(user_id)
+
+        def _buscar_e_deletar():
+            scheduled = api.get_scheduled_workouts(year, month) or []
+            for entry in scheduled:
+                cal_date = entry.get("calendarDate") or entry.get("date", "")
+                if cal_date != data_iso:
+                    continue
+                wo = entry.get("workout") or {}
+                wid = wo.get("workoutId") or entry.get("workoutId")
+                if wid:
+                    try:
+                        api.unschedule_workout(str(wid))
+                    except Exception:
+                        pass
+                    try:
+                        api.delete_workout(str(wid))
+                    except Exception:
+                        pass
+
+        await asyncio.to_thread(_buscar_e_deletar)
+    except Exception as e:
+        logger.warning("criar_treino_ftp: falha ao limpar Garmin para %s — %s", data_iso, e)
+
+    descricao = (
+        "TESTE FTP (20min): esforço máximo sustentável. "
+        "Potência média dos 20min × 0.95 = novo FTP. Não exploda no início! "
+        "Aquecimento: 10min Z1 → 5min Z3 progressivo → 3×(30s Z5 + 1min Z1) → 2min Z1. "
+        "Desaquecimento: 15min Z1."
+    )
+    nome = f"TESTE FTP — {data_iso}"
+    gid = await upload_e_agendar(
+        user_id=user_id,
+        tipo="TESTE_FTP",
+        duracao_min=body.duracao_min,
+        nome=nome,
+        data_iso=data_iso,
+        descricao=descricao,
+        forcar_indoor=body.forcar_indoor,
+    )
+
+    if not gid:
+        raise HTTPException(status_code=502, detail="Falha ao fazer upload para o Garmin.")
+
+    # Salva na semana do banco (upsert na semana que contém a data)
+    from datetime import date, timedelta
+    db = get_db()
+    d = date.fromisoformat(data_iso)
+    semana_inicio = (d - timedelta(days=d.weekday())).isoformat()
+
+    treino_doc = {
+        "data": data_iso,
+        "tipo": "TESTE_FTP",
+        "duracao_min": body.duracao_min,
+        "nome": nome,
+        "descricao": descricao,
+        "garmin_workout_id": gid,
+    }
+
+    existing = await db.semanas.find_one(
+        {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": data_iso}
+    )
+    if existing:
+        await db.semanas.update_one(
+            {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": data_iso},
+            {"$set": {"treinos.$": treino_doc}},
+        )
+    else:
+        await db.semanas.update_one(
+            {"semana_inicio": semana_inicio, "user_id": user_id},
+            {"$push": {"treinos": treino_doc}},
+            upsert=True,
+        )
+
+    return {"status": "ok", "data": data_iso, "garmin_workout_id": gid, "nome": nome}
+
+
 @router.post("/garmin/conectar")
 async def garmin_conectar(
     request: Request,

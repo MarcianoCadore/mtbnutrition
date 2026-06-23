@@ -13,6 +13,7 @@ class TipoTreino(str, Enum):
     ACADEMIA    = "ACADEMIA"
     RECUPERACAO = "RECUPERACAO"
     DESCANSO    = "DESCANSO"
+    TESTE_FTP   = "TESTE_FTP"
 
 
 class ResultadoTreino(BaseModel):

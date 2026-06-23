@@ -8,7 +8,7 @@ from datetime import datetime
 
 _client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
 _MODEL = "claude-sonnet-4-6"
-_MODEL_ANALISE = "claude-opus-4-8"  # análise pós-treino: mais rico, ~20x/mês
+_MODEL_ANALISE = "claude-sonnet-4-6"
 
 KCAL_POR_TIPO = {
     TipoTreino.Z2_LONGO:    2500,

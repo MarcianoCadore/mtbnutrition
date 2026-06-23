@@ -234,6 +234,8 @@ HTML = """<!DOCTYPE html>
     .btn-test:hover:not(:disabled)  { background: #1da851; }
     .btn-sec   { background: #fff; color: var(--text); border: 1.5px solid var(--border); }
     .btn-sec:hover:not(:disabled)   { border-color: var(--green); color: var(--green); }
+    .btn-ftp   { background: #7c3aed; color: #fff; }
+    .btn-ftp:hover:not(:disabled)   { background: #6d28d9; }
     .btn:disabled { opacity: .5; cursor: not-allowed; }
 
     .spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.4); border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; }
@@ -332,6 +334,31 @@ HTML = """<!DOCTYPE html>
     <button class="btn btn-sec"  id="btnGarmin" onclick="sincronizarGarmin()">📡 Enviar + Sincronizar Garmin</button>
     <button class="btn btn-test" id="btnGenSemana" onclick="gerarProximaSemana()">🤖 Gerar próxima semana</button>
     <button class="btn btn-sec"  id="btnApagarGerados" style="display:none" onclick="apagarTreinosGerados()">🗑 Apagar treinos gerados</button>
+    <button class="btn btn-ftp"  id="btnCriarFTP" onclick="abrirModalFTP()">⚡ Criar Teste FTP</button>
+  </div>
+
+  <div class="modal-overlay" id="ftpModal" onclick="fecharFTPModal(event)">
+    <div class="modal" style="max-width:380px" onclick="event.stopPropagation()">
+      <button class="modal-close" onclick="fecharFTPModal()">✕</button>
+      <div class="modal-head"><h3>⚡ Criar Teste FTP no Garmin</h3></div>
+      <div class="modal-body" style="padding:20px">
+        <p style="margin-bottom:14px;color:#444;font-size:.93rem">
+          Cria o protocolo completo de teste FTP com os passos corretos no Garmin Connect
+          (aquecimento, acelerações, 20min de teste e desaquecimento).
+        </p>
+        <label style="font-size:.85rem;font-weight:600;display:block;margin-bottom:6px">Data do teste</label>
+        <input type="date" id="ftpData" style="padding:9px 10px;border:1.5px solid #ddd;border-radius:7px;font-size:1rem;width:100%;box-sizing:border-box;margin-bottom:16px">
+        <div style="display:flex;gap:8px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:.88rem;cursor:pointer">
+            <input type="checkbox" id="ftpIndoor" checked> Indoor (watts)
+          </label>
+        </div>
+        <div id="ftpStatus" style="margin-top:12px;font-size:.85rem;color:#1565c0;min-height:20px"></div>
+        <button onclick="confirmarCriarFTP()" style="margin-top:16px;width:100%;padding:12px;background:#7c3aed;color:#fff;border:none;border-radius:8px;font-size:1rem;font-weight:600;cursor:pointer">
+          📡 Criar e enviar ao Garmin
+        </button>
+      </div>
+    </div>
   </div>
 </main>
 
@@ -383,6 +410,7 @@ const TIPOS = [
   {v:'FORCA',      l:'💪 Força (bike)',  s:'Força Bike'},
   {v:'ACADEMIA',   l:'🏋️ Academia',     s:'Academia'},
   {v:'RECUPERACAO',l:'🌿 Recuperação',  s:'Recuperação'},
+  {v:'TESTE_FTP',  l:'⚡ Teste FTP',    s:'Teste FTP'},
 ];
 
 let monday = getMonday(new Date());
@@ -420,6 +448,18 @@ const ESPEC_TREINO = {
     obj: 'Recuperação ativa. Acelera a regeneração sem gerar fadiga adicional.',
     estrutura: ['Pedal leve e contínuo em Z1 (<145 bpm)'],
     dica: 'Bem leve mesmo. Se a FC subir, reduza o ritmo. É descanso, não treino.',
+  },
+  TESTE_FTP: {
+    obj: 'Teste de FTP (Functional Threshold Power). Mede a potência máxima que você sustenta por ~1h. Resultado × 0,95 = novo FTP.',
+    estrutura: [
+      'Aquecimento 10 min em Z1 (abaixo de 139 bpm)',
+      'Progressivo 5 min em Z3 (148–155 bpm)',
+      '3× [30s máximo Z5 + 1 min Z1 recuperação]',
+      'Pré-teste 2 min suave Z1',
+      'TESTE 20 min — potência máxima sustentável (Z4)',
+      'Desaquecimento 15 min em Z1',
+    ],
+    dica: 'Saída CONTROLADA nos primeiros 3 min. Aumente gradualmente. Pedal leve em Z1 durante os 3 min de desaquecimento ao final.',
   },
 };
 
@@ -863,7 +903,46 @@ async function abrirNutriModal(key) {
 function fecharNutriModal(e) {
   document.getElementById('nutriModal').classList.remove('show');
 }
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { fecharNutriModal(); fecharAvalModal(); fecharGenModal(); } });
+
+function abrirModalFTP() {
+  const inp = document.getElementById('ftpData');
+  // Pré-preenche com amanhã
+  const amanha = new Date(); amanha.setDate(amanha.getDate() + 1);
+  inp.value = amanha.toISOString().slice(0,10);
+  document.getElementById('ftpStatus').textContent = '';
+  document.getElementById('ftpModal').classList.add('show');
+}
+
+function fecharFTPModal(e) {
+  if (!e || e.target === document.getElementById('ftpModal'))
+    document.getElementById('ftpModal').classList.remove('show');
+}
+
+async function confirmarCriarFTP() {
+  const data = document.getElementById('ftpData').value;
+  const indoor = document.getElementById('ftpIndoor').checked;
+  const st = document.getElementById('ftpStatus');
+  if (!data) { st.textContent = 'Informe a data.'; st.style.color = '#c62828'; return; }
+  st.style.color = '#1565c0';
+  st.textContent = 'Enviando para o Garmin…';
+  try {
+    const r = await fetch('/workout/criar-ftp', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({data, duracao_min: 62, forcar_indoor: indoor}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const d = await r.json();
+    fecharFTPModal({});
+    toast(`⚡ Teste FTP criado no Garmin para ${data}!`, 'ok');
+    await load();
+  } catch(e) {
+    st.style.color = '#c62828';
+    st.textContent = 'Erro: ' + e.message;
+  }
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { fecharNutriModal(); fecharAvalModal(); fecharGenModal(); fecharFTPModal({}); } });
 
 function collect() {
   const treinos = [];
@@ -1214,10 +1293,12 @@ function fecharGenModal(e) {
 const TIPO_CORES = {
   Z2_LONGO:'#1565c0', TIROS:'#c62828', VO2MAX:'#6a1b9a',
   TEMPO:'#e65100', FORCA:'#5d4037', ACADEMIA:'#2e7d32', RECUPERACAO:'#00695c', DESCANSO:'#607d8b',
+  TESTE_FTP:'#7c3aed',
 };
 const TIPO_LABELS2 = {
   Z2_LONGO:'Z2 Longo', TIROS:'Tiros', VO2MAX:'VO2Max',
   TEMPO:'Tempo', FORCA:'Força Bike', ACADEMIA:'Academia', RECUPERACAO:'Recuperação', DESCANSO:'Descanso',
+  TESTE_FTP:'Teste FTP',
 };
 const DIAS_PT = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 
@@ -1266,13 +1347,22 @@ async function gerarProximaSemana() {
     }).join('');
 
     head.innerHTML = `<h3>🤖 Próxima semana</h3><div class="modal-sub">${d.semana_proxima}</div>`;
+    const geminiAviso = d.modelo_usado === 'gemini'
+      ? `<div id="geminiAviso" style="background:#fff3e0;border:1.5px solid #ff9800;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:.85rem;color:#e65100;display:flex;align-items:center;gap:8px">
+          <span>⚠️</span>
+          <span>Cota do Claude esgotada — plano gerado pelo <strong>Gemini</strong> (modo gratuito). Qualidade pode ser ligeiramente menor.</span>
+          <button onclick="document.getElementById('geminiAviso').remove()" style="margin-left:auto;background:none;border:none;cursor:pointer;font-size:1rem;color:#e65100">✕</button>
+        </div>`
+      : '';
     body.innerHTML = `
+      ${geminiAviso}
       ${d.analise_semana ? `<div class="gen-analise">📊 ${d.analise_semana}</div>` : ''}
       ${d.progressao ? `<div class="gen-prog">⬆️ ${d.progressao}</div>` : ''}
       ${cards}
       <button class="btn-enviar" id="btnEnviarGarmin" onclick="enviarParaGarmin()">
         📡 Salvar + Enviar pro Garmin
       </button>`;
+    if (d.modelo_usado === 'gemini') setTimeout(() => { const el = document.getElementById('geminiAviso'); if (el) el.remove(); }, 30000);
   } catch(e) {
     body.innerHTML = `<div style="padding:16px;color:#c62828">Erro: ${e.message}</div>`;
   } finally {

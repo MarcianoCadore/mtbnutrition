@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
-    GEMINI_API_KEY: str = ""  # legado — não usado após migração para Claude
+    GEMINI_API_KEY: str = ""  # fallback gratuito quando cota Claude esgota
     MONGODB_URL: str = "mongodb://127.0.0.1:27017"
     # Diretório onde os arquivos .fit são salvos. Em produção apontar para um
     # disco persistente (ex.: /opt/mtbnutrition/uploads/fit). Vazio = padrão local.
