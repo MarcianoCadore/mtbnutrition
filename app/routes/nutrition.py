@@ -113,7 +113,7 @@ async def _alvo_calorico(user_id: str, data: str, tipo: str, modo: str) -> int |
 
     meta = nutricao.get("meta_calorica_diaria")
     if meta:
-        return int(round(meta + treino_kcal))
+        return int(meta)
 
     basal_manual = nutricao.get("basal_metabolico")
     if basal_manual:
