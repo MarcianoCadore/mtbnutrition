@@ -405,6 +405,7 @@ window.NUTRICAO_ON = {{NUTRICAO_ON}};
 window.FTP_ON      = {{FTP_ON}};
 window.GARMIN_ON   = {{GARMIN_ON}};
 window.DIAS_FTP    = {{DIAS_FTP}};
+window.ZONAS_POT   = {{ZONAS_POT}};
 const DIAS  = ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo'];
 const TIPOS = [
   {v:'DESCANSO',    l:'🛌 Descanso',    s:'Descanso'},
@@ -417,6 +418,23 @@ const TIPOS = [
   {v:'RECUPERACAO',l:'🌿 Recuperação',  s:'Recuperação'},
   {v:'TESTE_FTP',  l:'⚡ Teste FTP',    s:'Teste FTP'},
 ];
+
+// Zona de potência principal por tipo de treino (índice Coggan 1-7)
+const TIPO_ZONA_POT = {
+  RECUPERACAO: 1, Z2_LONGO: 2, TEMPO: 3, FORCA: 3,
+  TIROS: 5, VO2MAX: 5, TESTE_FTP: 4,
+};
+
+function _alvoPotencia(tipo) {
+  const zp = window.ZONAS_POT;
+  if (!window.FTP_ON || !zp || !zp.zonas) return null;
+  const zonaNum = TIPO_ZONA_POT[tipo];
+  if (!zonaNum) return null;
+  const z = zp.zonas.find(zz => zz.zona === zonaNum);
+  if (!z) return null;
+  const range = z.min === 0 ? `até ${z.max}W` : z.max >= 9999 ? `>${z.min}W` : `${z.min}–${z.max}W`;
+  return `${range} (Z${zonaNum})`;
+}
 
 let monday = getMonday(new Date());
 const _resultados = {};
@@ -579,21 +597,25 @@ function buildCards(treinos) {
       : '';
 
     const isAcademia = t.tipo === 'ACADEMIA';
-    const cadReal = (res && res.cadencia_media_rpm) ? res.cadencia_media_rpm : '';
-    const metricsHTML = (dur || dist || elev || cadReal)
+    const cadReal    = (res && res.cadencia_media_rpm) ? res.cadencia_media_rpm : '';
+    const avgPowReal = (res && res.avg_power) ? res.avg_power : null;
+    const metricsHTML = (dur || dist || elev || cadReal || avgPowReal)
       ? `<div class="metrics" id="metrics-${key}">
            ${dur  ? `<div class="metric"><div class="mv">${dur} min</div><div class="ml">Duração</div></div>` : ''}
            ${!isAcademia && cadReal ? `<div class="metric"><div class="mv">${cadReal} rpm</div><div class="ml">Cad. real</div></div>` : ''}
+           ${!isAcademia && avgPowReal ? `<div class="metric"><div class="mv">${avgPowReal}W</div><div class="ml">Potência</div></div>` : ''}
            ${dist ? `<div class="metric"><div class="mv">${dist} km</div><div class="ml">Distância</div></div>` : ''}
            ${elev ? `<div class="metric"><div class="mv">${elev} m</div><div class="ml">Elevação</div></div>` : ''}
          </div>`
       : `<div id="metrics-${key}"></div>`;
 
     const durStr = dur ? (() => { const h = Math.floor(dur/60); const m = dur%60; return (h>0?h+'h':'')+( m>0?m+'min':''); })() : '';
+    const potAlvo = (!hide && !isAcademia) ? _alvoPotencia(t.tipo) : null;
     const resumoHTML = !hide ? `
       <ul class="treino-resumo" id="resumo-${key}">
         <li><span class="ri">⏱</span><span class="rk">Tempo</span><span class="rv" id="resumo-dur-${key}">${durStr || '—'}</span></li>
         ${!isAcademia ? `<li><span class="ri">🦵</span><span class="rk">Cad. alvo</span><span class="rv rv-cad" id="resumo-cad-${key}">${cad ? cad+' rpm' : '—'}</span></li>` : ''}
+        ${potAlvo ? `<li id="resumo-alvo-${key}" style="${!t.indoor ? 'display:none' : ''}"><span class="ri">⚡</span><span class="rk">Alvo indoor</span><span class="rv">${potAlvo}</span></li>` : ''}
       </ul>` : '';
 
     const acSub = t.academia;
@@ -730,6 +752,9 @@ async function setIndoor(key, indoor) {
 
     btnIn.classList.toggle('ativo', indoor);
     btnOut.classList.toggle('ativo', !indoor);
+
+    const liAlvo = document.getElementById(`resumo-alvo-${key}`);
+    if (liAlvo) liAlvo.style.display = indoor ? '' : 'none';
 
     const label = indoor ? '🏠 Indoor (Watts)' : '🚵 Outdoor (FC)';
     if (d.garmin_sync && d.garmin_sync.ok) {
@@ -1540,12 +1565,15 @@ async def portal(request: Request):
         '<a class="btn btn-sec" href="/workout/integracao">⌚ Conectar Garmin</a>'
     )
 
-    from app.services.config_service import get_ftp
+    from app.services.config_service import get_ftp, get_zonas_potencia as _get_zp
     from app.services.user_service import get_por_id
     from datetime import date as _date, datetime as _datetime
     import pytz as _pytz
+    import json as _json
     ftp_val, _ = await get_ftp(request.state.user_id)
     ftp_on_js = "true" if ftp_val else "false"
+    zonas_pot = await _get_zp(request.state.user_id)
+    zonas_pot_js = _json.dumps(zonas_pot or {})
     garmin_on_js = "true" if garmin_conectado else "false"
 
     _user = await get_por_id(request.state.user_id) or {}
@@ -1570,4 +1598,5 @@ async def portal(request: Request):
         .replace("{{FTP_ON}}", ftp_on_js)
         .replace("{{GARMIN_ON}}", garmin_on_js)
         .replace("{{DIAS_FTP}}", dias_ftp_js)
+        .replace("{{ZONAS_POT}}", zonas_pot_js)
     )
