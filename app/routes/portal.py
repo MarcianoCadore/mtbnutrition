@@ -436,6 +436,66 @@ function _alvoPotencia(tipo) {
   return `${range} (Z${zonaNum})`;
 }
 
+function _rangeZona(n) {
+  const zp = window.ZONAS_POT;
+  if (!window.FTP_ON || !zp || !zp.zonas) return null;
+  const z = zp.zonas.find(zz => zz.zona === n);
+  if (!z) return null;
+  if (z.min === 0) return `até ${z.max}W`;
+  if (z.max >= 9999) return `>${z.min}W`;
+  return `${z.min}–${z.max}W`;
+}
+
+function _estruturaIndoor(tipo) {
+  const z1 = _rangeZona(1), z2 = _rangeZona(2), z3 = _rangeZona(3), z5 = _rangeZona(5);
+  if (!z1) return null;
+  switch (tipo) {
+    case 'Z2_LONGO':
+      return [
+        `Aquecimento 15 min em Z1 (${z1})`,
+        `Bloco principal contínuo em Z2 (${z2})`,
+        `Volta à calma 15 min em Z1 (${z1})`,
+      ];
+    case 'TEMPO':
+      return [
+        `Aquecimento 15 min em Z2 (${z2})`,
+        `3× [10 min em Z3 (${z3}) + 5 min Z2]`,
+        `Volta à calma 10 min em Z2 (${z2})`,
+      ];
+    case 'FORCA':
+      return [
+        `Aquecimento 15 min em Z2 (${z2})`,
+        `4× [6 min em Z3 (${z3}) com cadência 50–60 rpm + 4 min Z2]`,
+        `Volta à calma 10 min em Z2 (${z2})`,
+      ];
+    case 'TIROS':
+      return [
+        `Aquecimento 15 min em Z2 (${z2})`,
+        `8× [30 s máximo em Z5 (${z5}) + 3,5 min Z1]`,
+        `Volta à calma 15 min em Z2 (${z2})`,
+      ];
+    case 'VO2MAX':
+      return [
+        `Aquecimento 15 min em Z2 (${z2})`,
+        `4× [4 min forte em Z5 (${z5}) + 4 min Z2]`,
+        `Volta à calma 15 min em Z2 (${z2})`,
+      ];
+    case 'RECUPERACAO':
+      return [`Pedal leve e contínuo em Z1 (${z1})`];
+    case 'TESTE_FTP':
+      return [
+        `Aquecimento 10 min em Z1 (${z1})`,
+        `Progressivo 5 min em Z3 (${z3})`,
+        '3× [30s máximo Z5 + 1 min Z1 recuperação]',
+        'Pré-teste 2 min suave Z1',
+        'TESTE 20 min — potência máxima sustentável (Z4)',
+        'Desaquecimento 15 min em Z1',
+      ];
+    default:
+      return null;
+  }
+}
+
 let monday = getMonday(new Date());
 const _resultados = {};
 const _planejado = {};
@@ -582,7 +642,7 @@ function buildCards(treinos) {
     const tipoLbl = (TIPOS.find(tp => tp.v === t.tipo) || {l: t.tipo}).l;
     const lockAttr = isFuturo ? 'disabled' : '';
 
-    _planejado[key] = {tipo: t.tipo, duracao_min: t.duracao_min, cadencia_rpm: t.cadencia_rpm, descricao: t.descricao, academia: t.academia || null};
+    _planejado[key] = {tipo: t.tipo, duracao_min: t.duracao_min, cadencia_rpm: t.cadencia_rpm, descricao: t.descricao, academia: t.academia || null, indoor: t.indoor || false};
     const res = t.resultado || null;
     if (res) _resultados[key] = res;
     const resHTML = res
@@ -753,6 +813,8 @@ async function setIndoor(key, indoor) {
     btnIn.classList.toggle('ativo', indoor);
     btnOut.classList.toggle('ativo', !indoor);
 
+    if (_planejado[key]) _planejado[key].indoor = indoor;
+
     const liAlvo = document.getElementById(`resumo-alvo-${key}`);
     if (liAlvo) liAlvo.style.display = indoor ? '' : 'none';
 
@@ -857,9 +919,12 @@ function abrirTreinoInfo(key) {
   } else {
     // Treino de bike: mostra estrutura normal
     if (esp) {
+      const isIndoor = p.indoor || false;
+      const estrutura = (isIndoor && _estruturaIndoor(tipo)) || esp.estrutura;
+      const modoLabel = isIndoor ? ' <span style="font-size:.72rem;background:#e3f2fd;color:#1565c0;border-radius:4px;padding:1px 6px;font-weight:700;vertical-align:middle">🏠 Indoor — Watts</span>' : '';
       corpo += `<div class="esp-obj">${esp.obj}</div>`;
-      corpo += `<div class="esp-bloco"><div class="esp-titulo">Como executar</div>`
-             + `<ul class="esp-lista">${esp.estrutura.map(s => `<li>${s}</li>`).join('')}</ul></div>`;
+      corpo += `<div class="esp-bloco"><div class="esp-titulo">Como executar${modoLabel}</div>`
+             + `<ul class="esp-lista">${estrutura.map(s => `<li>${s}</li>`).join('')}</ul></div>`;
       corpo += `<div class="esp-dica">💡 ${esp.dica}</div>`;
     }
     if (notas && notas.trim()) {
