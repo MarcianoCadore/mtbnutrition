@@ -1618,7 +1618,7 @@ async def portal(request: Request):
 
     nutricao_on_js = "true" if perder_peso else "false"
 
-    garmin_conectado = bool((u.get("integracao") or {}).get("garmin", {}).get("email"))
+    garmin_conectado = bool(((u.get("integracao") or {}).get("garmin") or {}).get("email"))
     garmin_nav = (
         '<a href="/workout/integracao">✅ Garmin conectado</a>'
         if garmin_conectado else
