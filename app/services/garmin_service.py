@@ -362,9 +362,11 @@ async def sync_treinos_planejados(user_id: str, semana_inicio: str) -> int:
                 "tipo": "movido", "de": antes[wid]["data"],
                 "para": info["data"], "nome": info["nome"] or antes[wid]["nome"],
             })
+    removidos_wids = []
     for wid, info in antes.items():
         if wid not in garmin_info:
             mudancas.append({"tipo": "removido", "data": info["data"], "nome": info["nome"]})
+            removidos_wids.append((wid, info["data"]))
 
     if mudancas:
         try:
@@ -375,6 +377,17 @@ async def sync_treinos_planejados(user_id: str, semana_inicio: str) -> int:
                 await send_message(telefone, _formatar_mudancas_treino(mudancas))
         except Exception as e:
             logger.error("WhatsApp mudanças de treino error: %s", e)
+
+        # Limpa garmin_workout_id dos treinos removidos do calendário Garmin para que
+        # o próximo sync não os re-detecte como "removido" e reenvie o WhatsApp.
+        for wid, data_treino in removidos_wids:
+            try:
+                await db.semanas.update_one(
+                    {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": data_treino},
+                    {"$unset": {"treinos.$.garmin_workout_id": ""}},
+                )
+            except Exception as e:
+                logger.error("Erro ao limpar garmin_workout_id (%s, %s): %s", wid, data_treino, e)
 
     return sincronizados
 
