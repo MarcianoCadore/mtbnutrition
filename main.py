@@ -195,6 +195,13 @@ _CHAT_WIDGET = """
       this.style.height='';
       this.style.height=Math.min(this.scrollHeight,100)+'px';
     });
+    const isMobile = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+    inp.addEventListener('keydown',function(e){
+      if(e.key==='Enter' && !e.shiftKey && !isMobile){
+        e.preventDefault();
+        cwSend();
+      }
+    });
   });
 })();
 </script>
