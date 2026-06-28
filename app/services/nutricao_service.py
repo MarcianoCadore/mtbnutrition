@@ -183,8 +183,10 @@ TIPO_PARA_MENU = {
     TipoTreino.Z2_LONGO:    "z2",
     TipoTreino.TEMPO:       "moderado",
     TipoTreino.FORCA:       "moderado",
+    TipoTreino.ACADEMIA:    "moderado",
     TipoTreino.TIROS:       "intenso",
     TipoTreino.VO2MAX:      "intenso",
+    TipoTreino.TESTE_FTP:   "intenso",
 }
 
 ESTRATEGIA_POR_TIPO = {
@@ -193,8 +195,10 @@ ESTRATEGIA_POR_TIPO = {
     TipoTreino.Z2_LONGO:    "Pedal longo aeróbico: carregue carboidrato no café (pré) e logo após o treino para repor o glicogênio gasto nas horas de Z2.",
     TipoTreino.TEMPO:       "Esforço de limiar/sweet spot: carboidrato médio-alto, concentrado em volta do treino. Proteína alta para a recuperação muscular.",
     TipoTreino.FORCA:       "Força/torque: prioridade na proteína para o estímulo de força, com carboidrato médio-alto para sustentar a sessão pesada.",
+    TipoTreino.ACADEMIA:    "Academia/musculação: prioridade na proteína para preservação e ganho muscular. Carboidrato moderado para sustentar a sessão. Whey logo após o treino.",
     TipoTreino.TIROS:       "Alta intensidade: o corpo queima muito carboidrato. Encha o tanque antes (café) e reponha bem depois — sem isso a potência cai.",
     TipoTreino.VO2MAX:      "VO2máx: máxima demanda de carboidrato. Pré-treino reforçado e reposição imediata no pós para aguentar os esforços máximos.",
+    TipoTreino.TESTE_FTP:   "Teste FTP: esforço máximo sustentado. Carboidrato alto para garantir energia disponível — pré-treino reforçado e reposição imediata após o teste.",
 }
 
 
