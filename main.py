@@ -211,7 +211,6 @@ _CHAT_WIDGET = """
 # ─── Token com identidade de usuário ─────────────────────────────────────────
 
 _TTL_SESSAO = None  # sentinel: usa PORTAL_SESSAO_MIN
-_TTL_LEMBRAR = 30 * 24 * 3600  # 30 dias
 
 
 def _assinar(user_id: str, ts: int, ttl: int) -> str:
@@ -277,15 +276,8 @@ def _token_valido(token: str) -> tuple[str | None, int | None]:
     return user_id, ttl
 
 
-def _set_auth_cookie(resp, token: str, ttl: int | None = None) -> None:
-    """Grava o cookie de autenticação.
-
-    ttl > PORTAL_SESSAO_MIN*60 → cookie persistente com max_age=ttl.
-    ttl menor ou None → cookie de sessão (sem max_age).
-    """
-    sessao_seg = settings.PORTAL_SESSAO_MIN * 60
-    max_age = ttl if (ttl and ttl > sessao_seg) else None
-    resp.set_cookie(_COOKIE, token, httponly=True, samesite="lax", max_age=max_age)
+def _set_auth_cookie(resp, token: str) -> None:
+    resp.set_cookie(_COOKIE, token, httponly=True, samesite="lax")
 
 
 # ─── Middleware de autenticação ───────────────────────────────────────────────
@@ -302,8 +294,9 @@ async def auth(request: Request, call_next):
     if user_id:
         request.state.user_id = user_id
         response = await call_next(request)
-        # renova a janela de inatividade preservando o ttl original
-        _set_auth_cookie(response, _gerar_token(user_id, ttl), ttl)
+        # renova a janela de inatividade (sempre usa PORTAL_SESSAO_MIN, ignora TTL original)
+        inatividade = settings.PORTAL_SESSAO_MIN * 60
+        _set_auth_cookie(response, _gerar_token(user_id, inatividade))
         return response
 
     # Não autenticado (ou sessão expirada) → redireciona para login
@@ -401,9 +394,6 @@ LOGIN_HTML = """<!DOCTYPE html>
     .login-link { text-align:center; margin-top:16px; font-size:.88rem; color:var(--muted); }
     .login-link a { color:var(--green); text-decoration:none; font-weight:600; }
     .login-link a:hover { text-decoration:underline; }
-    .lembrar-row { display:flex; align-items:center; gap:8px; margin-bottom:18px; }
-    .lembrar-row input[type=checkbox] { width:18px; height:18px; accent-color:var(--green); cursor:pointer; }
-    .lembrar-row label { font-size:.88rem; color:var(--muted); cursor:pointer; margin:0; text-transform:none; letter-spacing:0; font-weight:500; }
   </style>
 </head>
 <body>
@@ -419,10 +409,6 @@ LOGIN_HTML = """<!DOCTYPE html>
       <input id="usuario" name="usuario" autocomplete="username" autofocus required>
       <label for="senha">Senha</label>
       <input id="senha" name="senha" type="password" autocomplete="current-password" required>
-      <div class="lembrar-row">
-        <input type="checkbox" id="lembrar" name="lembrar" value="1" checked>
-        <label for="lembrar">Lembrar de mim por 30 dias</label>
-      </div>
       <button class="login-btn" type="submit">Entrar</button>
       <div class="login-link"><a href="/signup">Criar conta</a></div>
     </div>
@@ -665,8 +651,6 @@ async def login_submit(request: Request):
     form = await request.form()
     usuario = str(form.get("usuario", "")).strip().lower()
     senha = str(form.get("senha", ""))
-    lembrar = bool(form.get("lembrar"))
-
     u = await user_service.get_por_login(usuario)
     if not u or not user_service.verificar_senha(senha, u.get("senha_hash", "")):
         return RedirectResponse(url="/login?erro=1", status_code=303)
@@ -676,10 +660,9 @@ async def login_submit(request: Request):
         tel = u.get("telefone", "")
         return RedirectResponse(url=f"/verificar?tel={tel}", status_code=303)
 
-    ttl = _TTL_LEMBRAR if lembrar else None
-    token = _gerar_token(str(u["_id"]), ttl)
+    token = _gerar_token(str(u["_id"]))
     resp = RedirectResponse(url="/", status_code=303)
-    _set_auth_cookie(resp, token, ttl)
+    _set_auth_cookie(resp, token)
     return resp
 
 

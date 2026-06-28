@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # (some ao fechar o navegador), mas navegadores que restauram a sessão revivem
     # o cookie — por isso o servidor também expira por tempo (renovado a cada
     # requisição). Reduza para deslogar mais rápido após fechar o navegador.
-    PORTAL_SESSAO_MIN: int = 30
+    PORTAL_SESSAO_MIN: int = 20
     # OTP de verificação de telefone por WhatsApp.
     OTP_EXPIRA_MIN: int = 10
     OTP_MAX_TENTATIVAS: int = 5
