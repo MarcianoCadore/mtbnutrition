@@ -523,16 +523,43 @@ async def sync_atividades(user_id: str, semana_inicio: str) -> int:
     db = get_db()
     processadas = 0
 
+    # IDs válidos por data: usados para detectar atividades deletadas do Garmin.
+    ids_validos_por_data: dict[str, set[str]] = {}
+    for act in atividades:
+        sl = act.get("startTimeLocal") or ""
+        d = sl[:10]
+        aid = str(act.get("activityId", ""))
+        if d and aid:
+            ids_validos_por_data.setdefault(d, set()).add(aid)
+
     # Backfill: atividades que já têm resultado salvo são marcadas como
     # processadas para que NÃO sejam notificadas de novo após um restart.
+    # Se o activity_id salvo não existe mais no Garmin (foi deletado), limpa o
+    # resultado e remove de atividades_processadas para que o sync reprocesse
+    # a atividade correta.
     doc_semana = await db.semanas.find_one({"semana_inicio": semana_inicio, "user_id": user_id})
     if doc_semana:
         for t in doc_semana.get("treinos", []):
             aid = (t.get("resultado") or {}).get("garmin_activity_id")
-            if aid:
+            if not aid:
+                continue
+            t_data = t.get("data", "")
+            ids_do_dia = ids_validos_por_data.get(t_data, set())
+            if ids_do_dia and aid not in ids_do_dia:
+                # Atividade foi deletada do Garmin — limpa resultado e dedup
+                logger.info(
+                    "Garmin: atividade %s do dia %s não existe mais → limpando resultado",
+                    aid, t_data,
+                )
+                await db.semanas.update_one(
+                    {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": t_data},
+                    {"$unset": {"treinos.$.resultado": ""}},
+                )
+                await db.atividades_processadas.delete_one({"_id": aid})
+            else:
                 await db.atividades_processadas.update_one(
                     {"_id": aid},
-                    {"$setOnInsert": {"data": t.get("data"), "processada_em": datetime.now()}},
+                    {"$setOnInsert": {"data": t_data, "processada_em": datetime.now()}},
                     upsert=True,
                 )
 
@@ -641,8 +668,15 @@ async def sync_atividades(user_id: str, semana_inicio: str) -> int:
             ftp_val = None
         resultado.update(_metricas_extra(treino_planejado, resultado, limiar, act.get("averageSpeed"), fit_path, ftp_val))
 
-        # análise IA — reutiliza se já existe para não consumir API desnecessariamente
-        analise_ia_existente = (treino_planejado.get("resultado") or {}).get("analise_ia")
+        # análise IA — reutiliza só se a atividade salva é a mesma (mesmo ID).
+        # Se o ID diferir, a atividade anterior foi substituída e a avaliação
+        # deve ser gerada do zero com os dados corretos.
+        saved_resultado = treino_planejado.get("resultado") or {}
+        analise_ia_existente = (
+            saved_resultado.get("analise_ia")
+            if saved_resultado.get("garmin_activity_id") == act_id
+            else None
+        )
         if analise_ia_existente:
             resultado["analise_ia"] = analise_ia_existente
         else:
