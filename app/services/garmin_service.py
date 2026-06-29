@@ -546,7 +546,9 @@ async def sync_atividades(user_id: str, semana_inicio: str) -> int:
             t_data = t.get("data", "")
             ids_do_dia = ids_validos_por_data.get(t_data, set())
             if ids_do_dia and aid not in ids_do_dia:
-                # Atividade foi deletada do Garmin — limpa resultado e dedup
+                # Atividade foi deletada do Garmin — limpa resultado e dedup.
+                # Remove também os IDs válidos do mesmo dia de atividades_processadas
+                # para que o sync possa reprocessar a atividade correta que ficou.
                 logger.info(
                     "Garmin: atividade %s do dia %s não existe mais → limpando resultado",
                     aid, t_data,
@@ -555,7 +557,8 @@ async def sync_atividades(user_id: str, semana_inicio: str) -> int:
                     {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": t_data},
                     {"$unset": {"treinos.$.resultado": ""}},
                 )
-                await db.atividades_processadas.delete_one({"_id": aid})
+                ids_para_limpar = list({aid} | ids_do_dia)
+                await db.atividades_processadas.delete_many({"_id": {"$in": ids_para_limpar}})
             else:
                 await db.atividades_processadas.update_one(
                     {"_id": aid},

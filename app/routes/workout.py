@@ -711,6 +711,45 @@ async def criar_treino_ftp(request: Request, body: CriarFTPBody):
     return {"status": "ok", "data": data_iso, "garmin_workout_id": gid, "nome": nome}
 
 
+@router.post("/treino/{semana_inicio}/{data}/reanalisar")
+async def reanalisar_treino(request: Request, semana_inicio: str, data: str):
+    """Regenera a análise IA de um treino já realizado sem re-baixar o .fit do Garmin."""
+    from app.services.ai_service import analisar_atividade_pos_treino
+
+    db = get_db()
+    user_id = request.state.user_id
+
+    doc = await db.semanas.find_one({"semana_inicio": semana_inicio, "user_id": user_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Semana não encontrada.")
+
+    treino = next((t for t in doc.get("treinos", []) if t["data"] == data), None)
+    if not treino:
+        raise HTTPException(status_code=404, detail="Treino não encontrado.")
+
+    resultado = treino.get("resultado")
+    if not resultado:
+        raise HTTPException(status_code=400, detail="Treino não tem resultado registrado.")
+
+    fit_filename = resultado.get("fit_file")
+    fit_path = None
+    if fit_filename:
+        candidate = os.path.join(UPLOADS_DIR, semana_inicio, fit_filename)
+        if os.path.exists(candidate):
+            fit_path = candidate
+
+    try:
+        analise_ia = await analisar_atividade_pos_treino(treino, resultado, user_id, fit_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro na análise IA: {e}")
+
+    await db.semanas.update_one(
+        {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": data},
+        {"$set": {"treinos.$.resultado.analise_ia": analise_ia}},
+    )
+    return {"status": "ok", "analise_ia": analise_ia}
+
+
 @router.post("/garmin/conectar")
 async def garmin_conectar(
     request: Request,
