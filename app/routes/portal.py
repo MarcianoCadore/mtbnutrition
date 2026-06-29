@@ -881,29 +881,8 @@ function abrirAvaliacao(key) {
       ${fortes ? `<ul class="analise-lista">${fortes}</ul>` : ''}
       ${fracos ? `<ul class="analise-lista" style="margin-top:6px">${fracos}</ul>` : ''}
     </div>
-    <button id="reanalisarBtn" onclick="reanalisarTreino('${key}')" style="margin-top:14px;width:100%;background:#f5f5f5;border:1px solid #ddd;border-radius:8px;padding:9px;font-size:.8rem;cursor:pointer;color:#555;">🔄 Re-analisar com IA</button>
-    <div id="reanalisarMsg" style="font-size:.78rem;color:#888;margin-top:6px;text-align:center;"></div>`;
+    `;
   document.getElementById('avalModal').classList.add('show');
-}
-
-async function reanalisarTreino(data) {
-  const btn = document.getElementById('reanalisarBtn');
-  const msg = document.getElementById('reanalisarMsg');
-  if (!btn) return;
-  btn.disabled = true;
-  msg.textContent = '⏳ Gerando nova avaliação...';
-  const semanaInicio = iso(monday);
-  try {
-    const r = await fetch(`/workout/treino/${semanaInicio}/${data}/reanalisar`, {method: 'POST'});
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.detail || 'Erro');
-    msg.textContent = '✅ Avaliação atualizada! Feche e abra novamente para ver.';
-    // atualiza _resultados localmente
-    if (_resultados[data]) _resultados[data].analise_ia = d.analise_ia;
-  } catch(e) {
-    msg.textContent = '❌ ' + e.message;
-    btn.disabled = false;
-  }
 }
 
 function fecharAvalModal(e) {
