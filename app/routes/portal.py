@@ -11,13 +11,21 @@ HTML = """<!DOCTYPE html>
   <title>MTB Nutrition — Portal de Treinos</title>
   <style>
     :root {
-      --green: #128c7e; --green2: #25d366; --bg: #f0f2f5;
-      --card: #fff; --text: #1a1a2e; --muted: #888; --border: #e0e0e0;
+      --green: #0f8b7d; --green-dark: #0b6d62; --green2: #25d366;
+      --accent: #14b8a6; --bg: #eef1f6;
+      --card: #fff; --text: #0f172a; --muted: #64748b; --border: #e6e9ef;
+      --radius: 16px; --radius-sm: 11px;
+      --shadow-sm: 0 1px 2px rgba(15,23,42,.04), 0 1px 3px rgba(15,23,42,.06);
+      --shadow-md: 0 4px 10px -2px rgba(15,23,42,.08), 0 2px 6px -2px rgba(15,23,42,.05);
+      --shadow-lg: 0 16px 32px -8px rgba(15,23,42,.14), 0 6px 12px -6px rgba(15,23,42,.08);
+      --grad-green: linear-gradient(135deg, #0f8b7d 0%, #14b8a6 100%);
+      --grad-nav: linear-gradient(120deg, #0e8577 0%, #128c7e 55%, #14a291 100%);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+    ::selection { background: rgba(20,184,166,.28); }
 
-    nav { background: var(--green); color: #fff; padding: 14px 24px; display: flex; align-items: center; gap: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+    nav { background: var(--grad-nav); color: #fff; padding: 14px 24px; display: flex; align-items: center; gap: 12px; box-shadow: 0 4px 20px -4px rgba(14,138,125,.45); position: sticky; top: 0; z-index: 50; }
     nav .logo { font-size: 1.35rem; font-weight: 700; }
     nav .sub  { font-size: 0.8rem; opacity: .8; }
     nav > div:first-of-type { flex-shrink: 0; }
@@ -31,14 +39,14 @@ HTML = """<!DOCTYPE html>
     main { max-width: 1400px; margin: 0 auto; padding: 24px 20px 80px; }
 
     .week-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
-    .week-bar .arrow { background: #fff; border: 1.5px solid var(--border); border-radius: 8px; width: 38px; height: 38px; cursor: pointer; font-size: 1.1rem; display: flex; align-items: center; justify-content: center; transition: all .15s; }
-    .week-bar .arrow:hover { border-color: var(--green); color: var(--green); }
-    .week-label { font-size: 1.05rem; font-weight: 700; flex: 1; text-align: center; }
+    .week-bar .arrow { background: var(--card); border: 1px solid var(--border); border-radius: 50%; width: 40px; height: 40px; cursor: pointer; font-size: 1.1rem; color: var(--text); display: flex; align-items: center; justify-content: center; transition: transform .18s, box-shadow .18s, border-color .18s, color .18s; box-shadow: var(--shadow-sm); }
+    .week-bar .arrow:hover { border-color: var(--green); color: var(--green); transform: translateY(-1px); box-shadow: var(--shadow-md); }
+    .week-label { font-size: 1.1rem; font-weight: 800; flex: 1; text-align: center; letter-spacing: -.01em; }
     .today-btn { background: none; border: none; color: var(--green); font-size: 0.85rem; text-decoration: underline; cursor: pointer; }
 
-    .card { background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .card { background: var(--card); border-radius: var(--radius); padding: 22px; margin-bottom: 20px; box-shadow: var(--shadow-sm); border: 1px solid var(--border); }
 
-    .prova-panel { background: linear-gradient(135deg, #0e8a7d, #128c7e); color: #fff; border-radius: 12px; padding: 18px 20px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(14,138,125,.3); }
+    .prova-panel { background: linear-gradient(135deg, #0e8a7d 0%, #14b8a6 100%); color: #fff; border-radius: var(--radius); padding: 20px 22px; margin-bottom: 20px; box-shadow: 0 10px 28px -8px rgba(14,138,125,.5); }
     .prova-panel .pp-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     .prova-panel .pp-label { font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; opacity: .85; }
     .prova-panel .pp-nome { font-size: 1.15rem; font-weight: 800; }
@@ -78,9 +86,9 @@ HTML = """<!DOCTYPE html>
     @media(max-width:760px) { .days-grid { grid-template-columns: repeat(2,1fr); } }
     @media(max-width:560px) { .days-grid { grid-template-columns: 1fr; } }
 
-    .day-card { background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.08); transition: box-shadow .2s; }
-    .day-card:hover { box-shadow: 0 4px 14px rgba(0,0,0,.13); }
-    .day-card.today { outline: 2.5px solid var(--green); }
+    .day-card { background: var(--card); border-radius: var(--radius-sm); overflow: hidden; box-shadow: var(--shadow-sm); border: 1px solid var(--border); transition: transform .18s, box-shadow .18s; }
+    .day-card:hover { box-shadow: var(--shadow-lg); transform: translateY(-3px); }
+    .day-card.today { outline: 2.5px solid var(--green); outline-offset: 1px; }
     .day-card.realizado { background: #d9f7e1; }
     .day-card.realizado .day-body { background: #d9f7e1; }
     .day-card.perdido { background: #ffe2bf; }
@@ -228,15 +236,16 @@ HTML = """<!DOCTYPE html>
     .academia-bloco .ac-obs { font-size: .72rem; color: #666; line-height: 1.4; }
 
     .actions { display: flex; gap: 12px; flex-wrap: wrap; }
-    .btn { padding: 13px 22px; border: none; border-radius: 10px; font-size: .95rem; font-weight: 700; cursor: pointer; transition: all .2s; display: flex; align-items: center; gap: 6px; }
-    .btn-save  { background: var(--green);  color: #fff; flex: 1; justify-content: center; }
-    .btn-save:hover:not(:disabled)  { background: #0e7166; }
-    .btn-test  { background: var(--green2); color: #fff; }
-    .btn-test:hover:not(:disabled)  { background: #1da851; }
-    .btn-sec   { background: #fff; color: var(--text); border: 1.5px solid var(--border); }
-    .btn-sec:hover:not(:disabled)   { border-color: var(--green); color: var(--green); }
-    .btn-ftp   { background: #7c3aed; color: #fff; }
-    .btn-ftp:hover:not(:disabled)   { background: #6d28d9; }
+    .btn { padding: 13px 22px; border: none; border-radius: 12px; font-size: .95rem; font-weight: 700; cursor: pointer; transition: transform .15s, box-shadow .15s, background .2s, border-color .2s, color .2s; display: flex; align-items: center; gap: 6px; }
+    .btn-save  { background: var(--grad-green);  color: #fff; flex: 1; justify-content: center; box-shadow: 0 4px 12px -2px rgba(15,139,125,.4); }
+    .btn-save:hover:not(:disabled)  { transform: translateY(-2px); box-shadow: 0 9px 20px -4px rgba(15,139,125,.5); }
+    .btn-test  { background: linear-gradient(135deg, #25d366 0%, #16b34a 100%); color: #fff; box-shadow: 0 4px 12px -2px rgba(37,211,102,.4); }
+    .btn-test:hover:not(:disabled)  { transform: translateY(-2px); box-shadow: 0 9px 20px -4px rgba(37,211,102,.5); }
+    .btn-sec   { background: var(--card); color: var(--text); border: 1.5px solid var(--border); box-shadow: var(--shadow-sm); }
+    .btn-sec:hover:not(:disabled)   { border-color: var(--green); color: var(--green); transform: translateY(-2px); box-shadow: var(--shadow-md); }
+    .btn-ftp   { background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: #fff; box-shadow: 0 4px 12px -2px rgba(124,58,237,.4); }
+    .btn-ftp:hover:not(:disabled)   { transform: translateY(-2px); box-shadow: 0 9px 20px -4px rgba(124,58,237,.5); }
+    .btn:active:not(:disabled) { transform: translateY(0); }
     .btn:disabled { opacity: .5; cursor: not-allowed; }
 
     .spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.4); border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; }
@@ -252,7 +261,11 @@ HTML = """<!DOCTYPE html>
     .theme-btn:hover { background: rgba(255,255,255,.28); }
 
     /* ── Dark theme ── */
-    [data-theme="dark"] { --bg:#111827; --card:#1f2937; --text:#e5e7eb; --muted:#9ca3af; --border:#374151; --green:#1db39e; }
+    [data-theme="dark"] { --bg:#0b1220; --card:#1a2536; --text:#e5e7eb; --muted:#94a3b8; --border:#2a3852; --green:#1db39e; --accent:#2dd4bf;
+      --shadow-sm: 0 1px 3px rgba(0,0,0,.45);
+      --shadow-md: 0 4px 12px -2px rgba(0,0,0,.55);
+      --shadow-lg: 0 18px 36px -10px rgba(0,0,0,.65);
+      --grad-green: linear-gradient(135deg, #14a897 0%, #1db39e 100%); }
     [data-theme="dark"] body { background: var(--bg); color: var(--text); }
     [data-theme="dark"] .card,
     [data-theme="dark"] .day-card { background: var(--card); }
