@@ -66,7 +66,10 @@ _HTML_NUTRICAO_DESABILITADA = """<!DOCTYPE html>
   h1 { font-size:1.3rem; color:#1f2937; margin-bottom:10px; }
   p { color:#6b7280; font-size:.95rem; line-height:1.6; }
   a { color:#0e8a7d; font-weight:700; text-decoration:none; }
+  [data-theme="dark"] body { background:#111827; color:#e5e7eb; }
+  [data-theme="dark"] .card { background:#1f2937; }
 </style>
+  <script>(function(){var t=localStorage.getItem('mtb-tema')||'light';document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <div class="card">
@@ -558,7 +561,11 @@ async def guia_nutricao(request: Request):
   .ref ul {{ list-style:none; }}
   .ref li {{ display:flex; justify-content:space-between; gap:10px; padding:3px 0; font-size:.84rem; }}
   .ref li .kc {{ color:var(--muted); font-size:.76rem; white-space:nowrap; }}
+  [data-theme="dark"] {{ --bg:#111827; --card:#1f2937; --text:#e5e7eb; --muted:#9ca3af; --border:#374151; --green:#1db39e; }}
+  [data-theme="dark"] body {{ background:var(--bg); color:var(--text); }}
+  [data-theme="dark"] .card {{ background:var(--card); }}
 </style>
+  <script>(function(){{var t=localStorage.getItem('mtb-tema')||'light';document.documentElement.setAttribute('data-theme',t)}})();</script>
 </head>
 <body>
 <nav>
@@ -651,7 +658,11 @@ async def guia_alimentos(request: Request):
   .lista .por {{ color:var(--muted); font-size:.76rem; }}
   .lista .kc {{ color:var(--green); font-size:.76rem; font-weight:700; white-space:nowrap; min-width:110px; text-align:right; }}
   .dica {{ margin-top:12px; font-size:.84rem; color:#8a5a00; background:#fff7e6; border-radius:8px; padding:9px 11px; }}
+  [data-theme="dark"] {{ --bg:#111827; --card:#1f2937; --text:#e5e7eb; --muted:#9ca3af; --border:#374151; --green:#1db39e; }}
+  [data-theme="dark"] body {{ background:var(--bg); color:var(--text); }}
+  [data-theme="dark"] .card {{ background:var(--card); }}
 </style>
+  <script>(function(){{var t=localStorage.getItem('mtb-tema')||'light';document.documentElement.setAttribute('data-theme',t)}})();</script>
 </head>
 <body>
 <nav>
@@ -714,7 +725,12 @@ async def pagina_ajuste():
   .ref-obs { font-size:.76rem; color:#8a5a00; margin-top:4px; }
   .clear-btn { background:none; border:none; color:#c62828; font-size:.8rem; font-weight:700; cursor:pointer; width:auto; padding:6px 0; }
   #thumb { max-width:120px; border-radius:8px; margin-top:8px; display:none; }
+  [data-theme="dark"] { --bg:#111827; --card:#1f2937; --text:#e5e7eb; --muted:#9ca3af; --border:#374151; --green:#1db39e; }
+  [data-theme="dark"] body { background:var(--bg); color:var(--text); }
+  [data-theme="dark"] .card { background:var(--card); }
+  [data-theme="dark"] input, [data-theme="dark"] select, [data-theme="dark"] textarea { background:#111827; color:var(--text); border-color:var(--border); }
 </style>
+  <script>(function(){var t=localStorage.getItem('mtb-tema')||'light';document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <nav>
@@ -881,7 +897,12 @@ async def pagina_chat():
   .ajuste-item:first-of-type { border-top:none; }
   .ajuste-rm { background:none; border:none; color:#c62828; font-weight:700; cursor:pointer; padding:4px 8px; font-size:.8rem; }
   .vazio { color:var(--muted); font-size:.85rem; }
+  [data-theme="dark"] { --bg:#111827; --card:#1f2937; --text:#e5e7eb; --muted:#9ca3af; --border:#374151; --green:#1db39e; }
+  [data-theme="dark"] body { background:var(--bg); color:var(--text); }
+  [data-theme="dark"] .card { background:var(--card); }
+  [data-theme="dark"] input, [data-theme="dark"] select, [data-theme="dark"] textarea { background:#111827; color:var(--text); border-color:var(--border); }
 </style>
+  <script>(function(){var t=localStorage.getItem('mtb-tema')||'light';document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <nav>
@@ -1063,7 +1084,12 @@ async def config_horarios():
   .status { margin-top:14px; padding:12px; border-radius:10px; font-size:.9rem; display:none; }
   .ok { background:#e8f5e9; color:#2e7d32; display:block; }
   .err { background:#fdecea; color:#c62828; display:block; }
+  [data-theme="dark"] { --bg:#111827; --card:#1f2937; --text:#e5e7eb; --muted:#9ca3af; --border:#374151; --green:#1db39e; }
+  [data-theme="dark"] body { background:var(--bg); color:var(--text); }
+  [data-theme="dark"] .card { background:var(--card); }
+  [data-theme="dark"] input, [data-theme="dark"] select { background:#111827; color:var(--text); border-color:var(--border); }
 </style>
+  <script>(function(){var t=localStorage.getItem('mtb-tema')||'light';document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <nav>

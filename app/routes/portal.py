@@ -248,6 +248,55 @@ HTML = """<!DOCTYPE html>
     .toast.err { background: #c62828; color: #fff; }
     .toast.info{ background: #323232; color: #fff; }
 
+    .theme-btn { background: rgba(255,255,255,.15); border: none; color: #fff; border-radius: 8px; padding: 5px 9px; cursor: pointer; font-size: 1rem; line-height: 1.4; flex-shrink: 0; }
+    .theme-btn:hover { background: rgba(255,255,255,.28); }
+
+    /* ── Dark theme ── */
+    [data-theme="dark"] { --bg:#111827; --card:#1f2937; --text:#e5e7eb; --muted:#9ca3af; --border:#374151; --green:#1db39e; }
+    [data-theme="dark"] body { background: var(--bg); color: var(--text); }
+    [data-theme="dark"] .card,
+    [data-theme="dark"] .day-card { background: var(--card); }
+    [data-theme="dark"] .week-bar .arrow { background: var(--card); color: var(--text); border-color: var(--border); }
+    [data-theme="dark"] .btn-sec { background: var(--card); color: var(--text); border-color: var(--border); }
+    [data-theme="dark"] .btn-sec:hover:not(:disabled) { border-color: var(--green); color: var(--green); background: var(--card); }
+    [data-theme="dark"] .modal { background: #1f2937; }
+    [data-theme="dark"] .modal-close { background: #374151; color: var(--text); }
+    [data-theme="dark"] .modal-close:hover { background: #4b5563; }
+    [data-theme="dark"] .day-body select,
+    [data-theme="dark"] .day-body input[type=number],
+    [data-theme="dark"] .day-body textarea { background: #111827; color: var(--text); border-color: var(--border); }
+    [data-theme="dark"] .card textarea { background: #111827; color: var(--text); border-color: var(--border); }
+    [data-theme="dark"] .metric { background: #111827; }
+    [data-theme="dark"] .treino-resumo,
+    [data-theme="dark"] .analise-bloco,
+    [data-theme="dark"] .nota-treino,
+    [data-theme="dark"] .gen-modal-treino,
+    [data-theme="dark"] .esp-lista li,
+    [data-theme="dark"] .esp-notas,
+    [data-theme="dark"] .nutri-estrat { background: #111827; }
+    [data-theme="dark"] .treino-resumo li { border-bottom-color: var(--border); }
+    [data-theme="dark"] .gen-analise { background: #2a1900; color: #fbbf24; }
+    [data-theme="dark"] .gen-prog { background: #0d2020; color: #6ee7b7; }
+    [data-theme="dark"] .indoor-toggle button { background: #1f2937; color: var(--muted); }
+    [data-theme="dark"] .novato-panel { background: var(--card); }
+    [data-theme="dark"] .prova-cta { background: var(--card); border-color: var(--green); }
+    [data-theme="dark"] .nutri-prova { background: #0d2020; border-color: #1a5e40; }
+    [data-theme="dark"] .nutri-prova .np-tit { color: #6ee7b7; }
+    [data-theme="dark"] .nutri-prova li { color: var(--text); }
+    [data-theme="dark"] .bike-progress-wrap { background: #374151; }
+    [data-theme="dark"] .day-card.realizado { background: #1a3a1f; }
+    [data-theme="dark"] .day-card.realizado .day-body { background: #1a3a1f; }
+    [data-theme="dark"] .day-card.perdido { background: #3a2200; }
+    [data-theme="dark"] .day-card.perdido .day-body { background: #3a2200; }
+    [data-theme="dark"] .aval-btn { background: #1a2a40; border-color: #2a4060; color: #93c5fd; }
+    [data-theme="dark"] .nutri-toggle { background: #0d2020; border-color: #1a5e40; color: #6ee7b7; }
+    [data-theme="dark"] .nutri-toggle:hover { background: #112820; }
+    [data-theme="dark"] .nutri-ref { border-bottom-color: var(--border); }
+    [data-theme="dark"] .academia-bloco { background: #0d2020; border-color: #1a5e40; }
+    [data-theme="dark"] .academia-bloco .ac-titulo { color: #6ee7b7; }
+    [data-theme="dark"] .academia-bloco .ac-porque { background: #1f2937; color: var(--text); }
+    [data-theme="dark"] .academia-bloco .ac-exercicios li { border-bottom-color: #1a5e40; }
+
     /* Ajustes para celular */
     @media(max-width:640px) {
       nav { position: relative; padding: 12px 16px; }
@@ -280,6 +329,7 @@ HTML = """<!DOCTYPE html>
       .toast { white-space: normal; max-width: 90vw; text-align: center; }
     }
   </style>
+  <script>(function(){var t=localStorage.getItem('mtb-tema')||'light';document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 
@@ -289,6 +339,7 @@ HTML = """<!DOCTYPE html>
     <div class="logo">MTB Nutrition</div>
     <div class="sub">Portal de Treinos</div>
   </div>
+  <button class="theme-btn" id="themeBtn" onclick="toggleTema()" title="Alternar tema claro/escuro">🌙</button>
   <button class="nav-toggle" aria-label="Abrir menu" onclick="this.closest('nav').classList.toggle('open')">☰</button>
   <div class="nav-links">
     {{NAV_NUTRI}}
@@ -318,8 +369,8 @@ HTML = """<!DOCTYPE html>
   <div class="section-label" style="margin-bottom:12px">📅 Treinos da Semana</div>
   <div class="novato-panel" id="novatoPanel" style="display:none">
     <div class="np-emoji">🚴</div>
-    <div class="np-titulo">Sua semana está vazia</div>
-    <div class="np-sub">Você ainda não tem treinos nesta semana. Posso montar um plano pra você
+    <div class="np-titulo" id="npTitulo">Sua semana está vazia</div>
+    <div class="np-sub" id="npSub">Você ainda não tem treinos nesta semana. Posso montar um plano pra você
       a partir do seu perfil (idade, peso, objetivo e dias de treino) — ou você conecta
       o Garmin para importar seus treinos.</div>
     <div class="np-botoes">
@@ -1081,11 +1132,11 @@ async function load() {
     const d = await r.json();
     document.getElementById('objetivo').value = d.objetivo || '';
     buildCards(d.treinos || []);
-    _atualizarBotaoProximaSemana(d.treinos || []);
+    _atualizarBotaoProximaSemana(d.treinos || [], d.proxima_semana_gerada);
     _atualizarBotoesNovato(d);
   } catch {
     buildCards([]);
-    _atualizarBotaoProximaSemana([]);
+    _atualizarBotaoProximaSemana([], false);
     _atualizarBotoesNovato({treinos: []});
   }
 }
@@ -1097,9 +1148,21 @@ function _temTreinoReal(treinos) {
 function _atualizarBotoesNovato(d) {
   const treinos = d.treinos || [];
   const vazia = !_temTreinoReal(treinos);
-  // Painel de boas-vindas (gerar / conectar Garmin): só quando a semana está vazia.
+  const semanaAtual = iso(getMonday(new Date())) === iso(monday);
+  // Painel de geração: só na semana vigente e vazia.
   const panel = document.getElementById('novatoPanel');
-  if (panel) panel.style.display = vazia ? '' : 'none';
+  if (panel) panel.style.display = (vazia && semanaAtual) ? '' : 'none';
+  if (vazia && semanaAtual) {
+    const titulo = document.getElementById('npTitulo');
+    const sub = document.getElementById('npSub');
+    if (d.tem_historico) {
+      if (titulo) titulo.textContent = 'Você ainda não gerou os treinos desta semana';
+      if (sub) sub.textContent = 'Parece que a semana começou sem um plano. Posso montar um baseado no seu histórico recente.';
+    } else {
+      if (titulo) titulo.textContent = 'Sua semana está vazia';
+      if (sub) sub.textContent = 'Você ainda não tem treinos nesta semana. Posso montar um plano pra você a partir do seu perfil (idade, peso, objetivo e dias de treino) — ou você conecta o Garmin para importar seus treinos.';
+    }
+  }
   // Botão de apagar: só para semana gerada automaticamente e ainda não realizada.
   const btnApagar = document.getElementById('btnApagarGerados');
   if (btnApagar) {
@@ -1186,15 +1249,17 @@ async function apagarTreinosGerados() {
   }
 }
 
-function _atualizarBotaoProximaSemana(treinos) {
+function _atualizarBotaoProximaSemana(treinos, proximaGerada) {
   const btn = document.getElementById('btnGenSemana');
   if (!btn) return;
   const semanaAtual = iso(getMonday(new Date())) === iso(monday);
   const treinosAtivos = treinos.filter(t => t.tipo !== 'DESCANSO');
   const todosConcluidos = treinosAtivos.length > 0 && treinosAtivos.every(t => !!t.resultado);
-  const habilitado = semanaAtual && todosConcluidos;
+  const habilitado = semanaAtual && todosConcluidos && !proximaGerada;
   btn.disabled = !habilitado;
-  btn.title = habilitado ? '' : 'Conclua todos os treinos da semana para gerar a próxima semana';
+  btn.title = proximaGerada
+    ? 'A próxima semana já foi gerada'
+    : (habilitado ? '' : 'Conclua todos os treinos da semana para gerar a próxima semana');
   btn.style.opacity = habilitado ? '1' : '0.5';
   btn.style.cursor = habilitado ? 'pointer' : 'not-allowed';
 }
@@ -1582,6 +1647,23 @@ load();
 carregarProva();
 renderFTPBtn();
 window.addEventListener('mtb:recarregar', load);
+
+function toggleTema() {
+  const cur = document.documentElement.getAttribute('data-theme') || 'light';
+  _aplicarTema(cur === 'dark' ? 'light' : 'dark');
+}
+function _aplicarTema(t) {
+  localStorage.setItem('mtb-tema', t);
+  document.documentElement.setAttribute('data-theme', t);
+  const btn = document.getElementById('themeBtn');
+  if (btn) btn.textContent = t === 'dark' ? '☀️' : '🌙';
+}
+// Sincroniza ícone do botão com o tema carregado antes do DOMContentLoaded
+(function(){
+  const t = localStorage.getItem('mtb-tema') || 'light';
+  const btn = document.getElementById('themeBtn');
+  if (btn) btn.textContent = t === 'dark' ? '☀️' : '🌙';
+})();
 </script>
 </body>
 </html>"""

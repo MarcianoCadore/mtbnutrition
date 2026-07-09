@@ -75,12 +75,22 @@ async def treino_hoje(request: Request):
 
 @router.get("/semana/{semana_inicio}")
 async def get_semana(request: Request, semana_inicio: str):
+    from datetime import date, timedelta
     db = get_db()
+    user_id = request.state.user_id
     doc = await db.semanas.find_one(
-        {"semana_inicio": semana_inicio, "user_id": request.state.user_id}, {"_id": 0})
-    if not doc:
-        return {"semana_inicio": semana_inicio, "objetivo": "", "treinos": []}
-    return doc
+        {"semana_inicio": semana_inicio, "user_id": user_id}, {"_id": 0})
+
+    prox = (date.fromisoformat(semana_inicio) + timedelta(days=7)).isoformat()
+    proxima_existe = await db.semanas.count_documents(
+        {"semana_inicio": prox, "user_id": user_id}, limit=1)
+    tem_historico = await db.semanas.count_documents(
+        {"semana_inicio": {"$lt": semana_inicio}, "user_id": user_id}, limit=1)
+
+    base = dict(doc) if doc else {"semana_inicio": semana_inicio, "objetivo": "", "treinos": []}
+    base["proxima_semana_gerada"] = bool(proxima_existe)
+    base["tem_historico"] = bool(tem_historico)
+    return base
 
 
 @router.post("/semana")
@@ -1204,7 +1214,18 @@ _PAGINA_ZONAS = """<!DOCTYPE html>
   .garmin-warn { background:#fef3c7; border:1.5px solid #fbbf24; border-radius:9px; padding:10px 13px; font-size:.84rem; color:#92400e; margin-bottom:12px; }
   .garmin-warn a { color:#b45309; font-weight:700; text-decoration:none; }
   .garmin-warn a:hover { text-decoration:underline; }
+  [data-theme="dark"] { --bg:#111827; --card:#1f2937; --text:#e5e7eb; --muted:#9ca3af; --border:#374151; --green:#1db39e; }
+  [data-theme="dark"] body { background:var(--bg); color:var(--text); }
+  [data-theme="dark"] .card { background:var(--card); }
+  [data-theme="dark"] input, [data-theme="dark"] select { background:#111827; color:var(--text); border-color:var(--border); }
+  [data-theme="dark"] .garmin-warn { background:#2a1900; border-color:#7c3a00; color:#fbbf24; }
+  [data-theme="dark"] .garmin-warn a { color:#fbbf24; }
+  [data-theme="dark"] .metodo-desc { background:#111827; border-left-color:var(--green); color:var(--text); }
+  [data-theme="dark"] .tab-btn { background:#1f2937; color:var(--muted); border-color:var(--border); }
+  [data-theme="dark"] .tab-btn.active { background:var(--green); color:#fff; }
+  [data-theme="dark"] .zona-row input { background:#111827; }
 </style>
+  <script>(function(){var t=localStorage.getItem('mtb-tema')||'light';document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <nav>
@@ -1455,7 +1476,12 @@ _PAGINA_INTEGRACAO = """<!DOCTYPE html>
   .banner { padding:12px 14px; border-radius:10px; font-size:.9rem; font-weight:600; margin-bottom:18px; }
   .banner.ok { background:#e8f5e9; color:#2e7d32; }
   .banner.err { background:#fdecea; color:#c62828; }
+  [data-theme="dark"] { --bg:#111827; --card:#1f2937; --text:#e5e7eb; --muted:#9ca3af; --border:#374151; --green:#1db39e; }
+  [data-theme="dark"] body { background:var(--bg); color:var(--text); }
+  [data-theme="dark"] .card { background:var(--card); }
+  [data-theme="dark"] input, [data-theme="dark"] select { background:#111827; color:var(--text); border-color:var(--border); }
 </style>
+  <script>(function(){var t=localStorage.getItem('mtb-tema')||'light';document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <nav>
@@ -1573,7 +1599,14 @@ _PAGINA_CALENDARIO = """<!DOCTYPE html>
   .prova-acoes button { width:auto; flex:1; margin-top:0; padding:8px; font-size:.82rem; }
   .prova-acoes .del { background:#fdecea; color:#c62828; }
   .vazio { color:var(--muted); font-size:.9rem; text-align:center; padding:18px 0; }
+  [data-theme="dark"] { --bg:#111827; --card:#1f2937; --text:#e5e7eb; --muted:#9ca3af; --border:#374151; --green:#1db39e; }
+  [data-theme="dark"] body { background:var(--bg); color:var(--text); }
+  [data-theme="dark"] .card { background:var(--card); }
+  [data-theme="dark"] input, [data-theme="dark"] select, [data-theme="dark"] textarea { background:#111827; color:var(--text); border-color:var(--border); }
+  [data-theme="dark"] .prova-card { background:var(--card); border-color:var(--border); }
+  [data-theme="dark"] .prova-acoes button { background:var(--card); border-color:var(--border); color:var(--text); }
 </style>
+  <script>(function(){var t=localStorage.getItem('mtb-tema')||'light';document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <nav>
@@ -1838,7 +1871,37 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
   .aca-sel { width:110px; flex-shrink:0; padding:7px 10px; font-size:.85rem; border-radius:8px; border:1.5px solid var(--border); }
   .aca-sel:disabled { opacity:.35; }
   .aca-auto-tip { margin-top:12px; padding:9px 12px; background:#eef6ff; border-radius:8px; font-size:.83rem; color:#1d4ed8; }
+  .theme-toggle { display:flex; gap:8px; margin:12px 0 4px; }
+  .theme-opt { flex:1; padding:10px; border-radius:9px; border:1.5px solid var(--border); background:#fff; font-size:.9rem; font-weight:700; cursor:pointer; color:var(--muted); transition:.15s; }
+  .theme-opt.active { background:var(--green); color:#fff; border-color:var(--green); }
+  .theme-opt:hover:not(.active) { border-color:var(--green); color:var(--green); }
+  /* ── Dark theme ── */
+  [data-theme="dark"] { --bg:#111827; --card:#1f2937; --text:#e5e7eb; --muted:#9ca3af; --border:#374151; --green:#1db39e; }
+  [data-theme="dark"] body { background:var(--bg); color:var(--text); }
+  [data-theme="dark"] .card { background:var(--card); }
+  [data-theme="dark"] input,
+  [data-theme="dark"] select { background:#111827; color:var(--text); border-color:var(--border); }
+  [data-theme="dark"] .theme-opt { background:#1f2937; color:var(--text); border-color:var(--border); }
+  [data-theme="dark"] .tdee { background:#1a2a40; color:#93c5fd; }
+  [data-theme="dark"] .metodo-desc { background:#111827; color:var(--text); border-left-color:var(--green); }
+  [data-theme="dark"] .metodo-desc b { color:var(--text); }
+  [data-theme="dark"] .tab-btn { background:#1f2937; color:var(--muted); border-color:var(--border); }
+  [data-theme="dark"] .tab-btn.active { background:var(--green); color:#fff; border-color:var(--green); }
+  [data-theme="dark"] .tab-btn:hover:not(.active) { border-color:var(--green); color:var(--green); }
+  [data-theme="dark"] .aca-btn { background:#1f2937; color:var(--text); border-color:var(--border); }
+  [data-theme="dark"] .freq-btn { background:#1f2937; color:var(--text); border-color:var(--border); }
+  [data-theme="dark"] .aca-hint { background:#111827; border-left-color:var(--green); color:var(--muted); }
+  [data-theme="dark"] .aca-auto-tip { background:#1a2a40; color:#93c5fd; }
+  [data-theme="dark"] .aca-row { border-bottom-color:var(--border); }
+  [data-theme="dark"] .aca-sel { background:#111827; color:var(--text); border-color:var(--border); }
+  [data-theme="dark"] .garmin-warn { background:#2a1900; border-color:#7c3a00; color:#fbbf24; }
+  [data-theme="dark"] .garmin-warn a { color:#fbbf24; }
+  [data-theme="dark"] .garmin-badge { background:#0d2020; color:#6ee7b7; }
+  [data-theme="dark"] .zona-row input { background:#111827; color:var(--text); border-color:var(--border); }
+  [data-theme="dark"] #desc-objetivo { background:#111827; color:#86efac; }
+  [data-theme="dark"] nav { background:var(--green); }
 </style>
+  <script>(function(){var t=localStorage.getItem('mtb-tema')||'light';document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <nav>
@@ -2042,6 +2105,17 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
     <div id="zonas-pot-preview" style="display:none;margin-top:12px">
       <p style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:6px">ZONAS DE POTÊNCIA CALCULADAS</p>
       <div id="zonas-pot-lista"></div>
+    </div>
+  </div>
+
+  <!-- ── Aparência ── -->
+  <div class="section-title">🎨 Aparência</div>
+  <div class="card">
+    <h2>🌗 Tema do portal</h2>
+    <p class="hint">Escolha entre o tema claro ou escuro. A preferência fica salva no dispositivo.</p>
+    <div class="theme-toggle">
+      <button type="button" id="tema-claro" class="theme-opt" onclick="setTema('light')">☀️ Claro</button>
+      <button type="button" id="tema-escuro" class="theme-opt" onclick="setTema('dark')">🌙 Escuro</button>
     </div>
   </div>
 </main>
@@ -2404,6 +2478,19 @@ async function salvarAcademia() {
 setAcademia(_academiaTreina);
 renderAcaGrid();
 setFreq(_academiaFreq);
+
+function setTema(t) {
+  localStorage.setItem('mtb-tema', t);
+  document.documentElement.setAttribute('data-theme', t);
+  document.getElementById('tema-claro').classList.toggle('active', t === 'light');
+  document.getElementById('tema-escuro').classList.toggle('active', t === 'dark');
+}
+// Inicializa botões com o tema atual
+(function(){
+  const t = localStorage.getItem('mtb-tema') || 'light';
+  document.getElementById('tema-claro').classList.toggle('active', t === 'light');
+  document.getElementById('tema-escuro').classList.toggle('active', t === 'dark');
+})();
 </script>
 </body>
 </html>"""

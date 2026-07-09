@@ -209,6 +209,44 @@ async def agendar_lembretes_refeicao():
             n_jobs += 1
     print(f"🍽️ Lembretes de refeição agendados ({n_jobs} job(s) p/ {len(usuarios)} usuário(s))")
 
+async def job_gerar_semana_vigente():
+    """Segunda 12h — para cada usuário sem plano para a semana vigente, gera automaticamente."""
+    from app.services.plano_semana_service import gerar_primeira_semana
+    from app.services.user_service import listar_usuarios
+
+    db = get_db()
+    hoje = datetime.now(TZ).date()
+    seg = (hoje - timedelta(days=hoje.weekday())).isoformat()
+
+    print(f"[{datetime.now()}] Auto-geração semana vigente ({seg})...")
+    gerados = 0
+    for u in await listar_usuarios():
+        user_id = str(u["_id"])
+        try:
+            existing = await db.semanas.find_one({"semana_inicio": seg, "user_id": user_id})
+            tem_treino_real = existing and any(
+                (t.get("tipo") != "DESCANSO" and t.get("duracao_min")) or t.get("resultado")
+                for t in existing.get("treinos", [])
+            )
+            if tem_treino_real:
+                continue
+            if existing and existing.get("origem") == "auto":
+                continue
+            plano = await gerar_primeira_semana(user_id, seg)
+            await db.semanas.replace_one(
+                {"semana_inicio": seg, "user_id": user_id},
+                {"semana_inicio": seg, "user_id": user_id,
+                 "objetivo": plano.get("progressao", ""), "origem": "auto",
+                 "treinos": plano["treinos"]},
+                upsert=True,
+            )
+            gerados += 1
+            await asyncio.sleep(2)   # throttle Gemini / IA
+        except Exception as e:
+            logger.error("job_gerar_semana_vigente user=%s: %s", user_id, e)
+    print(f"[{datetime.now()}] Auto-geração concluída: {gerados} semana(s) gerada(s).")
+
+
 async def job_garmin_sync():
     """Roda a cada 10 min — sincroniza treinos planejados e atividades do Garmin.
     Fase 2: itera todos os usuários que têm integracao.tipo == "garmin".
@@ -330,6 +368,14 @@ def start_scheduler():
         job_alerta_prova,
         CronTrigger(day_of_week="mon", hour=8, minute=5, timezone=TZ),
         id="alerta_prova",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        job_gerar_semana_vigente,
+        CronTrigger(day_of_week="mon", hour=12, minute=0, timezone=TZ),
+        id="gerar_semana_vigente",
         replace_existing=True,
         coalesce=True,
         max_instances=1,
