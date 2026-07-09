@@ -26,6 +26,12 @@ logger = logging.getLogger(__name__)
 LIMITE_CORTE_DIA = 400
 
 
+async def _get_por_id_tema(user_id: str) -> str:
+    from app.services.user_service import get_por_id
+    u = await get_por_id(user_id) or {}
+    return (u.get("preferencias") or {}).get("tema") or "light"
+
+
 async def _nutricao_habilitada(user_id: str) -> bool:
     """Retorna True se a nutrição é relevante para o usuário.
 
@@ -565,7 +571,7 @@ async def guia_nutricao(request: Request):
   [data-theme="dark"] body {{ background:var(--bg); color:var(--text); }}
   [data-theme="dark"] .card {{ background:var(--card); }}
 </style>
-  <script>(function(){{var t=localStorage.getItem('mtb-tema')||'light';document.documentElement.setAttribute('data-theme',t)}})();</script>
+  <script>(function(){{var t=localStorage.getItem('mtb-tema')||'__TEMA__';document.documentElement.setAttribute('data-theme',t)}})();</script>
 </head>
 <body>
 <nav>
@@ -603,7 +609,7 @@ async def guia_nutricao(request: Request):
   {''.join(blocos)}
 </main>
 </body>
-</html>"""
+</html>""".replace("__TEMA__", (await _get_por_id_tema(user_id)))
 
 
 @router.get("/alimentos", response_class=HTMLResponse)
@@ -662,7 +668,7 @@ async def guia_alimentos(request: Request):
   [data-theme="dark"] body {{ background:var(--bg); color:var(--text); }}
   [data-theme="dark"] .card {{ background:var(--card); }}
 </style>
-  <script>(function(){{var t=localStorage.getItem('mtb-tema')||'light';document.documentElement.setAttribute('data-theme',t)}})();</script>
+  <script>(function(){{var t=localStorage.getItem('mtb-tema')||'__TEMA__';document.documentElement.setAttribute('data-theme',t)}})();</script>
 </head>
 <body>
 <nav>
@@ -676,12 +682,12 @@ async def guia_alimentos(request: Request):
   {''.join(blocos)}
 </main>
 </body>
-</html>"""
+</html>""".replace("__TEMA__", (await _get_por_id_tema(request.state.user_id)))
 
 
 @router.get("/ajuste", response_class=HTMLResponse)
-async def pagina_ajuste():
-    return """<!DOCTYPE html>
+async def pagina_ajuste(request: Request):
+    return ("""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -730,7 +736,7 @@ async def pagina_ajuste():
   [data-theme="dark"] .card { background:var(--card); }
   [data-theme="dark"] input, [data-theme="dark"] select, [data-theme="dark"] textarea { background:#111827; color:var(--text); border-color:var(--border); }
 </style>
-  <script>(function(){var t=localStorage.getItem('mtb-tema')||'light';document.documentElement.setAttribute('data-theme',t)})();</script>
+  <script>(function(){var t=localStorage.getItem('mtb-tema')||'__TEMA__';document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <nav>
@@ -823,7 +829,7 @@ async def pagina_ajuste():
   carregar();
 </script>
 </body>
-</html>"""
+</html>""").replace("__TEMA__", (await _get_por_id_tema(request.state.user_id)))
 
 
 class MensagemChat(BaseModel):
@@ -861,8 +867,8 @@ async def _aplicar_acao_chat(user_id: str, acao: dict) -> dict | None:
 
 
 @router.get("/chat", response_class=HTMLResponse)
-async def pagina_chat():
-    return """<!DOCTYPE html>
+async def pagina_chat(request: Request):
+    return ("""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -902,7 +908,7 @@ async def pagina_chat():
   [data-theme="dark"] .card { background:var(--card); }
   [data-theme="dark"] input, [data-theme="dark"] select, [data-theme="dark"] textarea { background:#111827; color:var(--text); border-color:var(--border); }
 </style>
-  <script>(function(){var t=localStorage.getItem('mtb-tema')||'light';document.documentElement.setAttribute('data-theme',t)})();</script>
+  <script>(function(){var t=localStorage.getItem('mtb-tema')||'__TEMA__';document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <nav>
@@ -993,7 +999,7 @@ async def pagina_chat():
   carregarAjustes();
 </script>
 </body>
-</html>"""
+</html>""").replace("__TEMA__", (await _get_por_id_tema(request.state.user_id)))
 
 
 @router.get("/chat/historico")
@@ -1052,8 +1058,8 @@ async def remover_ajuste_chat(request: Request, escopo: str, chave: str, refeica
 
 
 @router.get("/config", response_class=HTMLResponse)
-async def config_horarios():
-    return """<!DOCTYPE html>
+async def config_horarios(request: Request):
+    return ("""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -1089,7 +1095,7 @@ async def config_horarios():
   [data-theme="dark"] .card { background:var(--card); }
   [data-theme="dark"] input, [data-theme="dark"] select { background:#111827; color:var(--text); border-color:var(--border); }
 </style>
-  <script>(function(){var t=localStorage.getItem('mtb-tema')||'light';document.documentElement.setAttribute('data-theme',t)})();</script>
+  <script>(function(){var t=localStorage.getItem('mtb-tema')||'__TEMA__';document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <nav>
@@ -1163,4 +1169,4 @@ async def config_horarios():
   carregar();
 </script>
 </body>
-</html>"""
+</html>""").replace("__TEMA__", (await _get_por_id_tema(request.state.user_id)))

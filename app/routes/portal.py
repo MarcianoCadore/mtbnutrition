@@ -329,7 +329,7 @@ HTML = """<!DOCTYPE html>
       .toast { white-space: normal; max-width: 90vw; text-align: center; }
     }
   </style>
-  <script>(function(){var t=localStorage.getItem('mtb-tema')||'light';document.documentElement.setAttribute('data-theme',t)})();</script>
+  <script>(function(){var t=localStorage.getItem('mtb-tema')||'__TEMA__';document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 
@@ -1657,6 +1657,7 @@ function _aplicarTema(t) {
   document.documentElement.setAttribute('data-theme', t);
   const btn = document.getElementById('themeBtn');
   if (btn) btn.textContent = t === 'dark' ? '☀️' : '🌙';
+  fetch('/workout/tema', {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tema:t})});
 }
 // Sincroniza ícone do botão com o tema carregado antes do DOMContentLoaded
 (function(){
@@ -1736,6 +1737,7 @@ async def portal(request: Request):
         _dias_ftp = None
     dias_ftp_js = str(_dias_ftp) if _dias_ftp is not None else "null"
 
+    tema = (u.get("preferencias") or {}).get("tema") or "light"
     return (
         HTML
         .replace("{{NAV_NUTRI}}", nav_nutri)
@@ -1747,4 +1749,5 @@ async def portal(request: Request):
         .replace("{{GARMIN_ON}}", garmin_on_js)
         .replace("{{DIAS_FTP}}", dias_ftp_js)
         .replace("{{ZONAS_POT}}", zonas_pot_js)
+        .replace("__TEMA__", tema)
     )

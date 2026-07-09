@@ -842,7 +842,10 @@ async def pagina_zonas(request: Request):
     except Exception:
         u = {}
     garmin_email = str(((u.get("integracao") or {}).get("garmin") or {}).get("email") or "")
-    return _PAGINA_ZONAS.replace("{{GARMIN_EMAIL}}", garmin_email)
+    tema = (u.get("preferencias") or {}).get("tema") or "light"
+    return (_PAGINA_ZONAS
+            .replace("{{GARMIN_EMAIL}}", garmin_email)
+            .replace("__TEMA__", tema))
 
 
 @router.get("/integracao", response_class=HTMLResponse)
@@ -884,7 +887,10 @@ async def pagina_integracao(request: Request):
       </form>
       <div id="stGarmin" class="status"></div>"""
 
-    return _PAGINA_INTEGRACAO.replace("{{GARMIN_BLOCO}}", garmin_html)
+    tema = (u.get("preferencias") or {}).get("tema") or "light"
+    return (_PAGINA_INTEGRACAO
+            .replace("{{GARMIN_BLOCO}}", garmin_html)
+            .replace("__TEMA__", tema))
 
 
 # ─── Provas (calendário de competições) ───────────────────────────────────────
@@ -971,8 +977,11 @@ async def remover_prova_rt(request: Request, prova_id: str):
 
 
 @router.get("/calendario", response_class=HTMLResponse)
-async def pagina_calendario():
-    return _PAGINA_CALENDARIO
+async def pagina_calendario(request: Request):
+    from app.services.user_service import get_por_id
+    u = await get_por_id(request.state.user_id) or {}
+    tema = (u.get("preferencias") or {}).get("tema") or "light"
+    return _PAGINA_CALENDARIO.replace("__TEMA__", tema)
 
 
 _OBJETIVOS_VALIDOS = {"performance_mtb", "aumentar_potencia", "base_aerobica", "manter_performance", "emagrecimento"}
@@ -994,6 +1003,7 @@ async def pagina_perfil(request: Request):
     academia_treina = "1" if academia.get("treina") else "0"
     academia_disp_json = _json.dumps(academia.get("disponibilidade") or {})
     academia_freq = str(int(academia.get("frequencia_semanal") or 0))
+    tema = (pref.get("tema")) or "light"
     html = (_PAGINA_PERFIL
             .replace("{{IDADE}}", val(p.get("idade")))
             .replace("{{PESO}}", val(p.get("peso_kg")))
@@ -1006,7 +1016,8 @@ async def pagina_perfil(request: Request):
             .replace("{{ACADEMIA_DISP_JSON}}", academia_disp_json)
             .replace("{{ACADEMIA_FREQ}}", academia_freq)
             .replace("{{BASAL_METABOLICO}}", val(nutricao.get("basal_metabolico")))
-            .replace("{{META_CALORICA}}", val(nutricao.get("meta_calorica_diaria"))))
+            .replace("{{META_CALORICA}}", val(nutricao.get("meta_calorica_diaria")))
+            .replace("__TEMA__", tema))
     for o in _OBJETIVOS_VALIDOS:
         html = html.replace(f"{{{{OBJ_{o}}}}}", "selected" if obj == o else "")
     return html
@@ -1063,6 +1074,17 @@ async def salvar_perfil(request: Request):
         "nutricao.meta_calorica_diaria": meta_calorica_diaria,
     }
     await atualizar_usuario(request.state.user_id, campos)
+    return {"status": "ok"}
+
+
+@router.patch("/tema")
+async def salvar_tema(request: Request):
+    from app.services.user_service import atualizar_usuario
+    body = await request.json()
+    tema = body.get("tema", "light")
+    if tema not in ("light", "dark"):
+        raise HTTPException(status_code=400, detail="Tema inválido")
+    await atualizar_usuario(request.state.user_id, {"preferencias.tema": tema})
     return {"status": "ok"}
 
 
@@ -1225,7 +1247,7 @@ _PAGINA_ZONAS = """<!DOCTYPE html>
   [data-theme="dark"] .tab-btn.active { background:var(--green); color:#fff; }
   [data-theme="dark"] .zona-row input { background:#111827; }
 </style>
-  <script>(function(){var t=localStorage.getItem('mtb-tema')||'light';document.documentElement.setAttribute('data-theme',t)})();</script>
+  <script>(function(){var t=localStorage.getItem('mtb-tema')||'__TEMA__';document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <nav>
@@ -1481,7 +1503,7 @@ _PAGINA_INTEGRACAO = """<!DOCTYPE html>
   [data-theme="dark"] .card { background:var(--card); }
   [data-theme="dark"] input, [data-theme="dark"] select { background:#111827; color:var(--text); border-color:var(--border); }
 </style>
-  <script>(function(){var t=localStorage.getItem('mtb-tema')||'light';document.documentElement.setAttribute('data-theme',t)})();</script>
+  <script>(function(){var t=localStorage.getItem('mtb-tema')||'__TEMA__';document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <nav>
@@ -1606,7 +1628,7 @@ _PAGINA_CALENDARIO = """<!DOCTYPE html>
   [data-theme="dark"] .prova-card { background:var(--card); border-color:var(--border); }
   [data-theme="dark"] .prova-acoes button { background:var(--card); border-color:var(--border); color:var(--text); }
 </style>
-  <script>(function(){var t=localStorage.getItem('mtb-tema')||'light';document.documentElement.setAttribute('data-theme',t)})();</script>
+  <script>(function(){var t=localStorage.getItem('mtb-tema')||'__TEMA__';document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <nav>
@@ -1901,7 +1923,7 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
   [data-theme="dark"] #desc-objetivo { background:#111827; color:#86efac; }
   [data-theme="dark"] nav { background:var(--green); }
 </style>
-  <script>(function(){var t=localStorage.getItem('mtb-tema')||'light';document.documentElement.setAttribute('data-theme',t)})();</script>
+  <script>(function(){var t=localStorage.getItem('mtb-tema')||'__TEMA__';document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <nav>
@@ -2484,6 +2506,7 @@ function setTema(t) {
   document.documentElement.setAttribute('data-theme', t);
   document.getElementById('tema-claro').classList.toggle('active', t === 'light');
   document.getElementById('tema-escuro').classList.toggle('active', t === 'dark');
+  fetch('/workout/tema', {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tema:t})});
 }
 // Inicializa botões com o tema atual
 (function(){
