@@ -616,7 +616,7 @@ function renderAcademiaBloco(ac) {
   const raw = (ac.descricao || '').replace(/</g, '&lt;');
   const lines = raw.split('\\n');
 
-  const focoM = lines[0] ? lines[0].match(/\(foco:\s*([^)]+)\)/i) : null;
+  const focoM = lines[0] ? lines[0].match(/\\(foco:\\s*([^)]+)\\)/i) : null;
   const foco = focoM ? focoM[1] : '';
 
   let porqueText = '', obsText = '', section = '';
