@@ -630,7 +630,7 @@ function renderAcademiaBloco(ac) {
     if (l.indexOf('OBSERVA') === 0 && l.indexOf(':') > 0) { section = 'obs'; continue; }
     if (section === 'porque') porqueText += ' ' + l;
     else if (section === 'ex') exItems.push(l);
-    else if (section === 'obs') obsText += (obsText ? ' · ' : '') + l.replace(/^-\s*/, '');
+    else if (section === 'obs') obsText += (obsText ? ' · ' : '') + l.replace(/^-\\s*/, '');
   }
 
   let html = '<div class="academia-bloco">';
