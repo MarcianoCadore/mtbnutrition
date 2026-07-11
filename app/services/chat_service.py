@@ -1,8 +1,11 @@
 import anthropic
+import logging
 from datetime import datetime, timezone, timedelta
 
 from config.settings import settings
 from app.services.mongo_service import get_db
+
+logger = logging.getLogger(__name__)
 
 _client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
 _MODEL = "claude-sonnet-4-6"
@@ -228,6 +231,26 @@ async def _build_sistema(user_id: str) -> str:
     return "\n".join(linhas)
 
 
+async def _cancelar_no_garmin(user_id: str, ids: list) -> None:
+    """Remove do calendário Garmin os workouts que foram desanexados por uma
+    remoção/movimentação no chat.
+
+    Sem isto, o agendamento antigo permanece no Garmin e o pull seguinte
+    (sync_treinos_planejados) o re-importa — o treino "volta como antes".
+    Best-effort: falhas (ex.: usuário sem Garmin conectado) só são logadas e
+    não quebram a resposta do chat.
+    """
+    ids = [i for i in ids if i]
+    if not ids:
+        return
+    try:
+        from app.services.garmin_workout_service import deletar_workout_garmin
+        for gid in ids:
+            await deletar_workout_garmin(user_id, gid)
+    except Exception as exc:
+        logger.warning("Chat: falha ao cancelar workout(s) no Garmin %s: %s", ids, exc)
+
+
 async def _executar_ferramenta(user_id: str, nome: str, args: dict) -> str:
     from app.services.treino_semana_service import (
         get_treinos_semana,
@@ -257,23 +280,32 @@ async def _executar_ferramenta(user_id: str, nome: str, args: dict) -> str:
             return "\n".join(linhas)
 
         elif nome == "adicionar_treino":
-            await criar_treino_dia(
+            resultado = await criar_treino_dia(
                 user_id,
                 args["data"],
                 args["tipo"],
                 args.get("duracao_min", 60),
                 args.get("descricao"),
             )
+            # Se substituiu um treino que já estava agendado no Garmin, cancela o antigo.
+            await _cancelar_no_garmin(user_id, [resultado.get("garmin_id_antigo")])
             return f"Treino adicionado: {args['data']} [{args['tipo']}] {args.get('duracao_min', 60)}min"
 
         elif nome == "remover_treino":
             resultado = await remover_treino_dia(user_id, args["data"])
+            # Remove do Garmin o workout que ficou órfão (o banco já zerou o id).
+            await _cancelar_no_garmin(user_id, [resultado.get("garmin_id_antigo")])
             return f"Treino de {args['data']} removido (era {resultado['tipo_antigo']})."
 
         elif nome == "mover_treino":
-            await mover_treino(
+            resultado = await mover_treino(
                 user_id, args["origem"], args["destino"], args.get("modo", "sobrescrever")
             )
+            # Cancela no Garmin os agendamentos antigos da origem e do destino.
+            await _cancelar_no_garmin(user_id, [
+                resultado.get("garmin_id_origem_antigo"),
+                resultado.get("garmin_id_destino_antigo"),
+            ])
             return f"Treino movido de {args['origem']} para {args['destino']} (modo: {args.get('modo', 'sobrescrever')})."
 
         else:
