@@ -470,6 +470,7 @@ window.FTP_ON      = {{FTP_ON}};
 window.GARMIN_ON   = {{GARMIN_ON}};
 window.DIAS_FTP    = {{DIAS_FTP}};
 window.ZONAS_POT   = {{ZONAS_POT}};
+window.ZONAS_FC    = {{ZONAS_FC}};
 const DIAS  = ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo'];
 const TIPOS = [
   {v:'DESCANSO',    l:'🛌 Descanso',    s:'Descanso'},
@@ -510,8 +511,20 @@ function _rangeZona(n) {
   return `${z.min}–${z.max}W`;
 }
 
-function _estruturaIndoor(tipo) {
-  const z1 = _rangeZona(1), z2 = _rangeZona(2), z3 = _rangeZona(3), z5 = _rangeZona(5);
+// Faixa de FC (bpm) da zona n, lida das zonas REAIS do atleta — nunca fixa.
+function _rangeZonaFC(n) {
+  const zf = window.ZONAS_FC;
+  if (!zf || !zf.zonas) return null;
+  const z = zf.zonas.find(zz => zz.zona === n);
+  if (!z) return null;
+  if (z.min <= 0) return `<${z.max} bpm`;
+  if (z.max >= 9999) return `>${z.min} bpm`;
+  return `${z.min}–${z.max} bpm`;
+}
+
+// Estrutura "como executar" parametrizada pela fonte de faixa (watts ou bpm).
+function _estruturaZonas(tipo, rz) {
+  const z1 = rz(1), z2 = rz(2), z3 = rz(3), z5 = rz(5);
   if (!z1) return null;
   switch (tipo) {
     case 'Z2_LONGO':
@@ -560,6 +573,10 @@ function _estruturaIndoor(tipo) {
   }
 }
 
+// Indoor usa watts (ZONAS_POT); outdoor usa FC em bpm (ZONAS_FC). Ambos por atleta.
+function _estruturaIndoor(tipo)  { return _estruturaZonas(tipo, _rangeZona); }
+function _estruturaOutdoor(tipo) { return _estruturaZonas(tipo, _rangeZonaFC); }
+
 let monday = getMonday(new Date());
 const _resultados = {};
 const _planejado = {};
@@ -568,12 +585,12 @@ const _planejado = {};
 const ESPEC_TREINO = {
   Z2_LONGO: {
     obj: 'Base aeróbica. Constrói resistência e melhora a queima de gordura mantendo esforço controlado.',
-    estrutura: ['Aquecimento 15 min em Z1', 'Bloco principal contínuo em Z2 (146–158 bpm)', 'Volta à calma 15 min em Z1'],
+    estrutura: ['Aquecimento 15 min em Z1', 'Bloco principal contínuo em Z2', 'Volta à calma 15 min em Z1'],
     dica: 'Cadência 85–95 rpm e FC estável. Sem picos — se subir para Z3, alivie.',
   },
   TEMPO: {
     obj: 'Esforço de limiar. Eleva a capacidade de sustentar um ritmo forte por mais tempo.',
-    estrutura: ['Aquecimento 15 min em Z2', '3× [10 min em Z3 (159–165 bpm) + 5 min Z2]', 'Volta à calma 10 min em Z2'],
+    estrutura: ['Aquecimento 15 min em Z2', '3× [10 min em Z3 + 5 min Z2]', 'Volta à calma 10 min em Z2'],
     dica: 'Esforço moderado-alto sustentável. Respiração ritmada, ainda sob controle.',
   },
   FORCA: {
@@ -583,24 +600,24 @@ const ESPEC_TREINO = {
   },
   TIROS: {
     obj: 'Tiros neuromusculares. Desenvolve potência e velocidade máxima de pedalada.',
-    estrutura: ['Aquecimento 15 min em Z2', '8× [30 s máximo em Z5 (>177 bpm) + 3,5 min Z1]', 'Volta à calma 15 min em Z2'],
+    estrutura: ['Aquecimento 15 min em Z2', '8× [30 s máximo em Z5 + 3,5 min Z1]', 'Volta à calma 15 min em Z2'],
     dica: 'Cada tiro é all-out, do início ao fim. Recupere bem antes do próximo.',
   },
   VO2MAX: {
     obj: 'VO2max. Eleva o teto cardiorrespiratório — o maior estímulo para a performance.',
-    estrutura: ['Aquecimento 15 min em Z2', '4× [4 min forte em Z5 (>177 bpm) + 4 min Z2]', 'Volta à calma 15 min em Z2'],
+    estrutura: ['Aquecimento 15 min em Z2', '4× [4 min forte em Z5 + 4 min Z2]', 'Volta à calma 15 min em Z2'],
     dica: 'Os blocos doem. O objetivo é manter a Z5 do primeiro ao último bloco.',
   },
   RECUPERACAO: {
     obj: 'Recuperação ativa. Acelera a regeneração sem gerar fadiga adicional.',
-    estrutura: ['Pedal leve e contínuo em Z1 (<145 bpm)'],
+    estrutura: ['Pedal leve e contínuo em Z1'],
     dica: 'Bem leve mesmo. Se a FC subir, reduza o ritmo. É descanso, não treino.',
   },
   TESTE_FTP: {
     obj: 'Teste de FTP (Functional Threshold Power). Mede a potência máxima que você sustenta por ~1h. Resultado × 0,95 = novo FTP.',
     estrutura: [
-      'Aquecimento 10 min em Z1 (abaixo de 139 bpm)',
-      'Progressivo 5 min em Z3 (148–155 bpm)',
+      'Aquecimento 10 min em Z1',
+      'Progressivo 5 min em Z3',
       '3× [30s máximo Z5 + 1 min Z1 recuperação]',
       'Pré-teste 2 min suave Z1',
       'TESTE 20 min — potência máxima sustentável (Z4)',
@@ -985,7 +1002,7 @@ function abrirTreinoInfo(key) {
     // Treino de bike: mostra estrutura normal
     if (esp) {
       const isIndoor = p.indoor || false;
-      const estrutura = (isIndoor && _estruturaIndoor(tipo)) || esp.estrutura;
+      const estrutura = (isIndoor ? _estruturaIndoor(tipo) : _estruturaOutdoor(tipo)) || esp.estrutura;
       const modoLabel = isIndoor ? ' <span style="font-size:.72rem;background:#e3f2fd;color:#1565c0;border-radius:4px;padding:1px 6px;font-weight:700;vertical-align:middle">🏠 Indoor — Watts</span>' : '';
       corpo += `<div class="esp-obj">${esp.obj}</div>`;
       corpo += `<div class="esp-bloco"><div class="esp-titulo">Como executar${modoLabel}</div>`
@@ -1741,7 +1758,7 @@ async def portal(request: Request):
         '<a class="btn btn-sec" href="/workout/integracao">⌚ Conectar Garmin</a>'
     )
 
-    from app.services.config_service import get_ftp, get_zonas_potencia as _get_zp
+    from app.services.config_service import get_ftp, get_zonas_potencia as _get_zp, get_zonas as _get_zonas_fc
     from app.services.user_service import get_por_id
     from datetime import date as _date, datetime as _datetime
     import pytz as _pytz
@@ -1750,6 +1767,8 @@ async def portal(request: Request):
     ftp_on_js = "true" if ftp_val else "false"
     zonas_pot = await _get_zp(request.state.user_id)
     zonas_pot_js = _json.dumps(zonas_pot or {})
+    zonas_fc = await _get_zonas_fc(request.state.user_id)
+    zonas_fc_js = _json.dumps(zonas_fc or {})
     garmin_on_js = "true" if garmin_conectado else "false"
 
     _user = await get_por_id(request.state.user_id) or {}
@@ -1776,5 +1795,6 @@ async def portal(request: Request):
         .replace("{{GARMIN_ON}}", garmin_on_js)
         .replace("{{DIAS_FTP}}", dias_ftp_js)
         .replace("{{ZONAS_POT}}", zonas_pot_js)
+        .replace("{{ZONAS_FC}}", zonas_fc_js)
         .replace("__TEMA__", tema)
     )

@@ -1,12 +1,10 @@
 """Builders de CyclingWorkout para o Garmin Connect.
 
-Zonas de FC configuradas no Garmin do Marciano:
-  Z1: 123-145 bpm  (Aquecimento)
-  Z2: 146-158 bpm  (Fácil)
-  Z3: 159-165 bpm  (Aeróbico)
-  Z4: 166-177 bpm  (Limite)
-  Z5: >177 bpm     (Máximo)
-FCmáx: 190 | Limiar de lactato: 172
+Os alvos são montados por NÚMERO de zona (Z1 aquecimento, Z2 fácil, Z3 aeróbico,
+Z4 limiar, Z5 máximo) e convertidos para as faixas reais de bpm/watts de CADA
+atleta em tempo de envio (_aplicar_bpm / _aplicar_watts, a partir das zonas
+configuradas pelo usuário). Nenhuma faixa fixa é embutida aqui — cada atleta tem
+suas próprias frequências e potências.
 """
 
 import asyncio
