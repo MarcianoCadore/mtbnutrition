@@ -88,6 +88,12 @@ async def get_semana(request: Request, semana_inicio: str):
         {"semana_inicio": {"$lt": semana_inicio}, "user_id": user_id}, limit=1)
 
     base = dict(doc) if doc else {"semana_inicio": semana_inicio, "objetivo": "", "treinos": []}
+    # Garantia de display: nunca devolve bpm no texto (o número real vem do modal/
+    # legenda, por atleta). Robusto contra qualquer fonte que re-injete bpm.
+    from app.services.plano_semana_service import limpar_bpm_descricao
+    for t in base.get("treinos", []):
+        if t.get("descricao"):
+            t["descricao"] = limpar_bpm_descricao(t["descricao"])
     base["proxima_semana_gerada"] = bool(proxima_existe)
     base["tem_historico"] = bool(tem_historico)
     return base

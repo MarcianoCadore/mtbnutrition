@@ -3,7 +3,7 @@
 Remove apenas os PARÊNTESES de bpm (info suplementar) — nunca deixa rótulo
 pendurado, nunca remove watts corretos por atleta, nunca toca em cadência.
 """
-from scripts.limpar_bpm_descricoes import limpar_descricao as L
+from app.services.plano_semana_service import limpar_bpm_descricao as L
 
 
 class TestLimparDescricao:

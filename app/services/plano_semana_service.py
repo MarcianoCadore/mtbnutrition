@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta
 
 import anthropic
@@ -79,6 +80,24 @@ _DESCRICAO_PADRAO = {
     "DESCANSO":    "",
     "TESTE_FTP":   "TESTE FTP (20min): esforço máximo sustentável. Potência média × 0.95 = novo FTP. Não exploda no início! Aquecimento: 10min Z1 → 5min Z3 progressivo → 3×(30s Z5 + 1min Z1) → 2min Z1. Desaquecimento: 15min Z1.",
 }
+
+# Parênteses citando bpm no texto: "(113-132 bpm)", "(>177 bpm)", "(109-139 bpm, ...)".
+# Conservador: remove só o parêntese de bpm (info suplementar) — nunca deixa rótulo
+# pendurado nem toca em watts/cadência. O número real de FC vem do modal/legenda.
+_BPM_PAREN_RE = re.compile(r"[ \t]*\([^)]*bpm[^)]*\)", re.IGNORECASE)
+
+
+def limpar_bpm_descricao(txt: str | None) -> str | None:
+    """Remove os parênteses de bpm da descrição (fonte da verdade da FC é o
+    modal/legenda, por atleta). Aplicada na geração, no import do Garmin e na
+    resposta da API — senão o pull do Garmin re-injeta o bpm antigo."""
+    if not txt:
+        return txt
+    t = _BPM_PAREN_RE.sub("", txt)
+    t = re.sub(r"[ \t]{2,}", " ", t)
+    t = re.sub(r"[ \t]+([.,;])", r"\1", t)
+    return t.strip()
+
 
 _MARCADOR_LEGENDA = "🎯 Alvo"
 

@@ -15,7 +15,6 @@ Uso:
 """
 
 import asyncio
-import re
 import sys
 import os
 
@@ -24,24 +23,8 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from app.services.mongo_service import get_db  # noqa: E402
-
-# Parênteses citando bpm: "(113-132 bpm)", "(>177 bpm)", "(<145 bpm)",
-# "(109-139 bpm, idealmente <130)". Conservador DE PROPÓSITO: remove apenas o
-# PARÊNTESE de bpm (info suplementar), o que nunca deixa rótulo pendurado nem
-# remove watts corretos por atleta. Faixas de bpm fora de parênteses (raras) e
-# faixas de watts (que costumam ser as reais, derivadas do FTP) NÃO são tocadas.
-_BPM_PAREN = re.compile(r"[ \t]*\([^)]*bpm[^)]*\)", re.IGNORECASE)
-
-
-def limpar_descricao(txt: str | None) -> str | None:
-    """Remove os parênteses de bpm do texto, preservando cadência, watts, zona e
-    estrutura. O número real de FC aparece no modal 'como executar' (por atleta)."""
-    if not txt:
-        return txt
-    t = _BPM_PAREN.sub("", txt)
-    t = re.sub(r"[ \t]{2,}", " ", t)
-    t = re.sub(r"[ \t]+([.,;])", r"\1", t)         # espaço antes de pontuação
-    return t.strip()
+# Função canônica de limpeza (mesma usada no import do Garmin e na resposta da API).
+from app.services.plano_semana_service import limpar_bpm_descricao as limpar_descricao  # noqa: E402
 
 
 async def main(apply: bool) -> None:

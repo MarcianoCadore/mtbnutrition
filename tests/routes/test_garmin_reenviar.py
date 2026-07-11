@@ -98,3 +98,24 @@ class TestSalvarPreservaAcademia:
         doc = run(fake_db.semanas.find_one({"semana_inicio": SEG, "user_id": uid}))
         quarta = next(t for t in doc["treinos"] if t["data"] == QUA)
         assert quarta.get("academia") == academia
+
+
+class TestGetSemanaLimpaBpm:
+    """Garantia de display: /workout/semana nunca devolve bpm no texto,
+    mesmo se o sync do Garmin re-injetar o bpm antigo no banco."""
+
+    def test_descricao_com_bpm_e_limpa_na_resposta(self, auth_client, fake_db, run):
+        client, uid = auth_client
+        run(fake_db.semanas.insert_one({
+            "semana_inicio": SEG, "user_id": uid, "objetivo": "",
+            "treinos": [{
+                "data": QUA, "tipo": "Z2_LONGO", "duracao_min": 90,
+                "descricao": "Pedalando na Zona 2 (113-132 bpm), ritmo conversacional. Cadência 75-85 rpm.",
+            }],
+        }))
+        r = client.get(f"/workout/semana/{SEG}")
+        assert r.status_code == 200
+        desc = r.json()["treinos"][0]["descricao"]
+        assert "bpm" not in desc and "113-132" not in desc
+        assert "Zona 2, ritmo" in desc      # frase intacta
+        assert "75-85 rpm" in desc          # cadência preservada
