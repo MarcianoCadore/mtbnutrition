@@ -1007,7 +1007,10 @@ function abrirTreinoInfo(key) {
       corpo += `<div class="esp-obj">${esp.obj}</div>`;
       corpo += `<div class="esp-bloco"><div class="esp-titulo">Como executar${modoLabel}</div>`
              + `<ul class="esp-lista">${estrutura.map(s => `<li>${s}</li>`).join('')}</ul></div>`;
-      corpo += `<div class="esp-dica">💡 ${esp.dica}</div>`;
+      // Cadência da dica vem do treino (não fixa) — evita divergir do header/estrutura.
+      let dica = esp.dica;
+      if (cad) dica = dica.replace(/\\d{2,3}\\s*[–-]\\s*\\d{2,3}\\s*rpm/gi, `${cad} rpm`);
+      corpo += `<div class="esp-dica">💡 ${dica}</div>`;
     }
     if (notas && notas.trim()) {
       corpo += `<div class="esp-bloco" style="margin-top:14px"><div class="esp-titulo">Notas do treino</div>`
