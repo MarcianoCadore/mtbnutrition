@@ -25,28 +25,22 @@ if _ROOT not in sys.path:
 
 from app.services.mongo_service import get_db  # noqa: E402
 
-# Parênteses citando bpm: "(113-132 bpm)", "(>177 bpm)", "(<145 bpm)"
-_BPM_PAREN = re.compile(r"\s*\([^)]*bpm[^)]*\)", re.IGNORECASE)
-# Parênteses citando watts: "(171-231W)", "(>327 W)"
-_WATTS_PAREN = re.compile(r"\s*\([^)]*\d\s*W\s*\)", re.IGNORECASE)
-# Faixas soltas de bpm (com preposição opcional): "abaixo de 153 bpm", "146-158 bpm", ">177 bpm"
-_BPM_BARE = re.compile(
-    r"\s*(?:abaixo de |acima de |at[ée] |de )?[<>]?\s*\d{2,3}\s*[–\-a]?\s*\d{0,3}\s*bpm",
-    re.IGNORECASE,
-)
+# Parênteses citando bpm: "(113-132 bpm)", "(>177 bpm)", "(<145 bpm)",
+# "(109-139 bpm, idealmente <130)". Conservador DE PROPÓSITO: remove apenas o
+# PARÊNTESE de bpm (info suplementar), o que nunca deixa rótulo pendurado nem
+# remove watts corretos por atleta. Faixas de bpm fora de parênteses (raras) e
+# faixas de watts (que costumam ser as reais, derivadas do FTP) NÃO são tocadas.
+_BPM_PAREN = re.compile(r"[ \t]*\([^)]*bpm[^)]*\)", re.IGNORECASE)
 
 
 def limpar_descricao(txt: str | None) -> str | None:
-    """Remove faixas de bpm/watts do texto, preservando o resto (cadência, zona, estrutura)."""
+    """Remove os parênteses de bpm do texto, preservando cadência, watts, zona e
+    estrutura. O número real de FC aparece no modal 'como executar' (por atleta)."""
     if not txt:
         return txt
     t = _BPM_PAREN.sub("", txt)
-    t = _WATTS_PAREN.sub("", t)
-    t = _BPM_BARE.sub("", t)
     t = re.sub(r"[ \t]{2,}", " ", t)
-    t = re.sub(r"\s+([.,;:])", r"\1", t)          # remove espaço antes de pontuação
-    t = re.sub(r"\(\s*\)", "", t)                  # parênteses vazios residuais
-    t = re.sub(r"\n{3,}", "\n\n", t)
+    t = re.sub(r"[ \t]+([.,;])", r"\1", t)         # espaço antes de pontuação
     return t.strip()
 
 
