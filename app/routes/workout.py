@@ -124,6 +124,10 @@ async def salvar_semana(request: Request, plano: PlanoSemanal):
                 t["garmin_workout_id"] = saved["garmin_workout_id"]
             if saved.get("indoor") is not None and t.get("indoor") is None:
                 t["indoor"] = saved["indoor"]
+            # academia não está no modelo TreinoSemana → seria descartada no
+            # model_dump(); preserva o bloco salvo quando o cliente não o envia.
+            if saved.get("academia") and not t.get("academia"):
+                t["academia"] = saved["academia"]
             # bloqueia alteração se data >= hoje E treino ainda não foi realizado
             if t["data"] >= today_iso and not saved.get("resultado") and saved:
                 data["treinos"][i] = saved
@@ -400,7 +404,19 @@ async def reenviar_para_garmin(request: Request, semana_inicio: str):
     resultados = []
     for t in doc.get("treinos", []):
         if t.get("tipo") in ("DESCANSO", "ACADEMIA") or not t.get("duracao_min"):
-            resultados.append({"data": t.get("data"), "status": "pulado"})
+            # O dia virou descanso/academia. Se ainda houver um workout agendado
+            # no Garmin, remove-o — senão o pull seguinte (sync_treinos_planejados)
+            # o re-importa e o treino "volta" mesmo após ter sido excluído.
+            gid_orfao = t.get("garmin_workout_id")
+            if gid_orfao:
+                await deletar_workout_garmin(user_id, gid_orfao)
+                await db.semanas.update_one(
+                    {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": t["data"]},
+                    {"$unset": {"treinos.$.garmin_workout_id": ""}},
+                )
+                resultados.append({"data": t.get("data"), "status": "removido_do_garmin"})
+            else:
+                resultados.append({"data": t.get("data"), "status": "pulado"})
             continue
 
         # Remove o agendamento anterior do Garmin antes de re-enviar

@@ -1444,6 +1444,20 @@ async function sincronizarGarmin() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner" style="border-color:rgba(0,0,0,.2);border-top-color:#333"></span> Enviando e sincronizando...';
   try {
+    // 0. Salva o estado atual da semana ANTES de mexer no Garmin. Sem isto, o
+    //    envio lê o estado antigo do banco e re-cria no Garmin o treino que você
+    //    acabou de excluir/mover — e o pull seguinte o traz "de volta".
+    const rSave = await fetch('/workout/semana', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        semana_inicio: iso(monday),
+        objetivo: document.getElementById('objetivo').value.trim(),
+        treinos: collect(),
+      }),
+    });
+    if (!rSave.ok) throw new Error(await rSave.text());
+
     // 1. Envia treinos da semana pro Garmin (push)
     const rEnv = await fetch(`/workout/reenviar-garmin/${iso(monday)}`, {method: 'POST'});
     if (!rEnv.ok) throw new Error(await rEnv.text());
