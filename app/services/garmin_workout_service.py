@@ -252,13 +252,16 @@ _BUILDERS = {
     "TESTE_FTP":   _teste_ftp,
 }
 
+# NÃO embutir bpm/watts fixos aqui — cada atleta tem suas próprias zonas. As
+# faixas reais são anexadas pela legenda (plano_semana_service._legenda_alvos) e
+# o alvo enviado ao Garmin é calculado das zonas do atleta (_aplicar_bpm/_watts).
 _DESCRICOES_PADRAO = {
-    "RECUPERACAO": "Pedal leve em Z1. Recuperação ativa, mantenha FC abaixo de 145 bpm.",
-    "Z2_LONGO":    "Base aeróbica em Z2 (146-158 bpm). Cadência: 85-95 rpm. Esforço controlado.",
-    "TEMPO":       "3x10 min em Z3 (159-165 bpm) com 5 min de recuperação Z2. Esforço moderado-alto sustentado.",
-    "FORCA":       "4x6 min em Z3 (159-165 bpm) com cadência baixa (50-60 rpm). 4 min recuperação Z2 entre blocos.",
-    "TIROS":       "8x30s em Z5 (>177 bpm) com 3.5 min recuperação Z1. Sprints máximos.",
-    "VO2MAX":      "4x4 min em Z5 (>177 bpm) com 4 min recuperação Z2. Esforço VO2max sustentado.",
+    "RECUPERACAO": "Pedal leve em Z1. Recuperação ativa, esforço mínimo.",
+    "Z2_LONGO":    "Base aeróbica em Z2. Cadência: 85-95 rpm. Esforço controlado.",
+    "TEMPO":       "3x10 min em Z3 com 5 min de recuperação Z2. Esforço moderado-alto sustentado.",
+    "FORCA":       "4x6 min em Z3 com cadência baixa (50-60 rpm). 4 min recuperação Z2 entre blocos.",
+    "TIROS":       "8x30s em Z5 com 3.5 min recuperação Z1. Sprints máximos.",
+    "VO2MAX":      "4x4 min em Z5 com 4 min recuperação Z2. Esforço VO2max sustentado.",
     "TESTE_FTP":   "TESTE FTP — 20min esforço máximo sustentável. Potência média × 0.95 = novo FTP. Não exploda no início!",
 }
 

@@ -69,16 +69,70 @@ _DURACAO_MAXIMA = {
 }
 
 _DESCRICAO_PADRAO = {
-    "Z2_LONGO":    "Base aeróbica Z2. FC 146-158 bpm, cadência 85-95 rpm.",
-    "TEMPO":       "3x10 min Z3 (159-165 bpm), recuperação Z2.",
+    "Z2_LONGO":    "Base aeróbica Z2, cadência 85-95 rpm, ritmo conversacional.",
+    "TEMPO":       "3x10 min Z3, recuperação Z2.",
     "FORCA":       "4x6 min Z3 cadência baixa (50-60 rpm), recuperação Z2.",
     "ACADEMIA":    "ACADEMIA — Força para MTB\n\nEXERCÍCIOS:\n1. Agachamento búlgaro — 4x8 cada perna (potência de subida)\n2. Stiff romeno com halteres — 3x10 (isquiotibiais e glúteos)\n3. Prancha abdominal — 4x45s\n4. Dead bug — 3x12 cada lado (estabilidade core no bike)\n5. Remada curvada — 3x10 (controle do guidão)\n6. Panturrilha em pé — 4x15\n\nOBSERVAÇÕES:\n- Descanso 90s entre séries\n- Foco em glúteos, core e estabilidade para MTB",
-    "TIROS":       "8x30s Z5 (>177 bpm) com 3.5 min recuperação Z1.",
-    "VO2MAX":      "4x4 min Z5 (>177 bpm) com 4 min recuperação Z2.",
-    "RECUPERACAO": "Pedal leve Z1 (<145 bpm). Recuperação ativa.",
+    "TIROS":       "8x30s Z5 com 3.5 min recuperação Z1.",
+    "VO2MAX":      "4x4 min Z5 com 4 min recuperação Z2.",
+    "RECUPERACAO": "Pedal leve Z1. Recuperação ativa.",
     "DESCANSO":    "",
     "TESTE_FTP":   "TESTE FTP (20min): esforço máximo sustentável. Potência média × 0.95 = novo FTP. Não exploda no início! Aquecimento: 10min Z1 → 5min Z3 progressivo → 3×(30s Z5 + 1min Z1) → 2min Z1. Desaquecimento: 15min Z1.",
 }
+
+_MARCADOR_LEGENDA = "🎯 Alvo"
+
+
+def _fmt_faixa(z: dict) -> str:
+    """Formata a faixa de uma zona: '132-150', '<180' (min 0) ou '>500' (max aberto)."""
+    mn, mx = int(z["min"]), int(z["max"])
+    if mn <= 0:
+        return f"<{mx}"
+    if mx >= 9000:
+        return f">{mn}"
+    return f"{mn}-{mx}"
+
+
+def _legenda_alvos(zonas_fc: list[dict], zonas_watts: list[dict] | None) -> str:
+    """Legenda determinística dos alvos reais do atleta, em FC (outdoor) e — se o
+    FTP estiver configurado — em watts (indoor).
+
+    O código é dono dos números: a IA cita a zona apenas pelo nome (ex.: "Z2") e
+    o app anexa aqui as faixas exatas das zonas do atleta. Assim a prosa nunca
+    diverge das zonas reais (bug do Alderossi: "Zona 2 (113-132)" quando a Z2
+    dele é 132-150). Cobre os dois modos porque o alvo enviado ao Garmin muda
+    conforme o dia é marcado indoor (watts) ou outdoor (FC).
+    """
+    # IMPORTANTE: usa "Zona N" (e não "ZN") de propósito. O reclassificador
+    # (classificar_por_texto) casa \bz2\b/\bz5\b etc. na descrição; "Zona 2" não
+    # casa esses padrões, então a legenda não altera o tipo do treino.
+    linhas = []
+    if zonas_fc:
+        fc = " · ".join(f"Zona {z['zona']} {_fmt_faixa(z)}" for z in zonas_fc if int(z["zona"]) <= 5)
+        if fc:
+            linhas.append(f"{_MARCADOR_LEGENDA} — Outdoor (FC): {fc} bpm")
+    if zonas_watts:
+        pw = " · ".join(f"Zona {z['zona']} {_fmt_faixa(z)}" for z in zonas_watts if int(z["zona"]) <= 5)
+        if pw:
+            linhas.append(f"⚡ Indoor (Watts): {pw} W")
+    return "\n".join(linhas)
+
+
+def _anexar_legenda_alvos(
+    treinos: list[dict], zonas_fc: list[dict], zonas_watts: list[dict] | None = None
+) -> None:
+    """Anexa (in-place) a legenda de alvos (FC + watts) à descrição de cada treino
+    de bike. Pula DESCANSO/ACADEMIA e evita duplicar."""
+    legenda = _legenda_alvos(zonas_fc, zonas_watts)
+    if not legenda:
+        return
+    for t in treinos:
+        if t.get("tipo") in ("DESCANSO", "ACADEMIA"):
+            continue
+        desc = (t.get("descricao") or "").strip()
+        if _MARCADOR_LEGENDA in desc:
+            continue
+        t["descricao"] = f"{desc}\n\n{legenda}" if desc else legenda
 
 
 _INSTRUCOES_OBJETIVO = {
@@ -97,7 +151,7 @@ PROGRESSÃO CONTÍNUA (use os dados da semana atual para decidir):
 - Semana DIFÍCIL (FC muito alta, muitos pontos fracos, incompleta): REDUZIR volume 10% e reforçar recuperação.
 - A cada 4 semanas: semana de recuperação com volume -20-30%, sem VO2MAX.
 
-DETALHAMENTO DAS SESSÕES DURAS (use dados reais das zonas do atleta na descrição):
+DETALHAMENTO DAS SESSÕES DURAS (cite a intensidade pelo NOME da zona — Z1 a Z5 — nunca em bpm):
 - TIROS: progressão de 6→8→10→12 repetições de 30s Z5, com 3-4 min recuperação Z1. Cadência alta (95-110 rpm).
 - VO2MAX: progressão de 4→5→6 blocos de 4-5 min Z5, recuperação igual ao bloco. Cadência 90-100 rpm.
 - TEMPO: progressão de 2→3 blocos de 10-15 min Z3-Z4, recuperação 5 min Z2. Cadência 85-95 rpm.
@@ -514,7 +568,7 @@ Após o TESTE_FTP coloque RECUPERACAO no dia seguinte.
 
 ATLETA: {nome_atleta}, {idade} anos, {peso:.0f} kg, objetivo: {objetivo}.
 FCMÁX: {fc_max} bpm{limiar_txt}
-ZONAS GARMIN: {zonas_prompt}
+ZONAS GARMIN (apenas para SUA decisão de intensidade — NÃO copie os bpm nas descrições; cite só o nome da zona): {zonas_prompt}
 {bloco_potencia}
 DIAS DE TREINO: {dias_treino_nomes}
 {bloco_academia}
@@ -542,40 +596,40 @@ RESTRIÇÕES DE AGENDA (OBRIGATÓRIAS):
 
 {_instrucoes_objetivo(objetivo)}
 
-TIPOS DE TREINO NA BIKE — PRESCRIÇÃO DETALHADA (use nas descrições com as zonas reais do atleta):
+TIPOS DE TREINO NA BIKE — PRESCRIÇÃO DETALHADA (cite a intensidade SEMPRE pelo nome da zona — Z1 a Z5 — NUNCA escreva faixas em bpm; o app anexa as faixas reais do atleta):
 
-- Z2_LONGO: Base aeróbica. FC em {zonas_prompt.split('|')[1].strip() if '|' in zonas_prompt else 'Z2'}.
-  Descrição deve incluir: duração total, FC alvo, cadência (85-95 rpm), observação de ritmo conversacional.
+- Z2_LONGO: Base aeróbica. Intensidade Z2.
+  Descrição deve incluir: duração total, zona-alvo (Z2), cadência (85-95 rpm), observação de ritmo conversacional.
   Duração típica em dia útil: 90-120 min. Use os dados da semana anterior para decidir.
-  Ex: "105 min base aeróbica Z2 ({zonas_prompt.split('|')[1].strip() if '|' in zonas_prompt else 'Z2 bpm'}). Cadência 85-95 rpm, ritmo conversacional. Mantenha FC estável — desacelere nas subidas."
+  Ex: "105 min base aeróbica Z2. Cadência 85-95 rpm, ritmo conversacional. Mantenha a FC estável — desacelere nas subidas."
 
 - RECUPERACAO: Pedal muito leve Z1. FC mínima possível. Ativa circulação, não gera fadiga.
   Duração: proporcional à carga da semana anterior — se o atleta fez longões de 2h+, use 75-90 min; semanas leves use 45-60 min. NÃO use valor fixo.
-  Ex: "75 min recuperação ativa Z1 (<{zonas_prompt.split('|')[0].replace('Z1','').strip() if '|' in zonas_prompt else '145'} bpm). Sem esforço — só mover as pernas."
+  Ex: "75 min recuperação ativa Z1. Sem esforço — só mover as pernas."
 
-- TEMPO (limiar): Treino de limiar para elevar FTP. FC em Z3-Z4.
-  Descrição deve incluir: aquecimento, blocos (N×X min), FC alvo por bloco, recuperação entre blocos, volta à calma.
+- TEMPO (limiar): Treino de limiar para elevar FTP. Intensidade Z3-Z4.
+  Descrição deve incluir: aquecimento, blocos (N×X min), zona-alvo por bloco, recuperação entre blocos, volta à calma.
   Duração típica: 90-105 min (aquecimento 15min + blocos + recuperações + volta à calma 10min).
-  Ex: "15 min aquecimento Z1-Z2. 3×15 min Z3-Z4 ({zonas_prompt.split('|')[2].strip() if len(zonas_prompt.split('|'))>2 else '159-177 bpm'}), recuperação 5 min Z2 entre blocos. Cadência 88-95 rpm. 10 min volta à calma Z1."
+  Ex: "15 min aquecimento Z1-Z2. 3×15 min Z3-Z4, recuperação 5 min Z2 entre blocos. Cadência 88-95 rpm. 10 min volta à calma Z1."
 
 - TIROS (neuromuscular/sprint): Alta intensidade Z5. Desenvolve potência e capacidade anaeróbica.
-  Descrição deve incluir: aquecimento, número de repetições, duração do esforço, FC alvo, recuperação, cadência alta.
+  Descrição deve incluir: aquecimento, número de repetições, duração do esforço, zona-alvo, recuperação, cadência alta.
   Duração típica: 75-90 min (aquecimento longo + tiros + recuperações + volta à calma).
-  Ex: "20 min aquecimento progressivo. 10×30s sprint máximo Z5 (>{fc_max - 13} bpm), cadência 100-115 rpm. Recuperação 3.5 min Z1 entre cada. 15 min volta à calma."
+  Ex: "20 min aquecimento progressivo. 10×30s sprint máximo Z5, cadência 100-115 rpm. Recuperação 3.5 min Z1 entre cada. 15 min volta à calma."
 
 - VO2MAX: Blocos longos em Z5 para elevar VO2max e potência aeróbica máxima.
-  Descrição deve incluir: aquecimento, número de blocos, duração do bloco, FC alvo, recuperação igual ao esforço, cadência.
+  Descrição deve incluir: aquecimento, número de blocos, duração do bloco, zona-alvo, recuperação igual ao esforço, cadência.
   Duração típica: 75-90 min (aquecimento + blocos com recuperação igual + volta à calma).
-  Ex: "15 min aquecimento progressivo até Z3. 5×4 min Z5 (>{fc_max - 13} bpm), cadência 90-100 rpm. Recuperação 4 min Z2 entre blocos. 15 min volta à calma Z1."
+  Ex: "15 min aquecimento progressivo até Z3. 5×4 min Z5, cadência 90-100 rpm. Recuperação 4 min Z2 entre blocos. 15 min volta à calma Z1."
 
 - FORCA (treino de força na BIKE — NÃO é academia):
-  Cadência baixa (50-60 rpm), marcha pesada, FC em Z3. Simula subidas longas e fortalece musculatura de pedalada.
+  Cadência baixa (50-60 rpm), marcha pesada, intensidade Z3. Simula subidas longas e fortalece musculatura de pedalada.
   Duração típica: 90-105 min.
   Ex: "15 min aquecimento. 6×8 min cadência 50-58 rpm marcha pesada Z3, subida ou resistência alta. Recuperação 3 min Z1 cadência livre. 10 min volta à calma."
 
 {_bloco_academia_prompt}
 
-{"POTÊNCIA (WATTS) NAS PRESCRIÇÕES:" + chr(10) + ("Inclua o alvo em watts NA DESCRIÇÃO de TODOS os treinos: ex. 'Z2 FC 146-158 bpm | 171-231W'." if potencia_modo == "sempre" else "Inclua o alvo em watts NA DESCRIÇÃO dos treinos de qualidade (VO2MAX, TIROS, TEMPO, FORCA): ex. '4×4 min Z5 >177 bpm | >327W'. Z2_LONGO e RECUPERACAO não têm potência (feitos na rua sem medidor).") if ftp_user else ""}
+{"POTÊNCIA (WATTS) NAS PRESCRIÇÕES:" + chr(10) + ("Inclua o alvo em watts NA DESCRIÇÃO de TODOS os treinos: ex. 'Z2 | 171-231W'." if potencia_modo == "sempre" else "Inclua o alvo em watts NA DESCRIÇÃO dos treinos de qualidade (VO2MAX, TIROS, TEMPO, FORCA): ex. '4×4 min Z5 | >327W'. Z2_LONGO e RECUPERACAO não têm potência (feitos na rua sem medidor).") if ftp_user else ""}
 
 REGRAS DE PROGRESSÃO:
 - Aumentar volume (+5-10% em duracao_min) quando a semana foi bem executada, respeitando o teto de 120 min em dias úteis.
@@ -592,7 +646,7 @@ IMPORTANTE: gere os "treinos" PRIMEIRO — depois escreva "analise_semana" e "pr
       "data": "YYYY-MM-DD",
       "tipo": "TIPO",
       "duracao_min": 90,
-      "descricao": "Prescrição COMPLETA do treino: aquecimento + estrutura principal (séries×tempo, FC alvo em bpm, cadência) + volta à calma. Para ACADEMIA: lista completa de exercícios com séries×reps.",
+      "descricao": "Prescrição COMPLETA do treino: aquecimento + estrutura principal (séries×tempo, zona-alvo pelo NOME — Z1 a Z5, cadência) + volta à calma. NUNCA escreva faixas de FC em bpm — só o nome da zona; o app anexa as faixas reais. Para ACADEMIA: lista completa de exercícios com séries×reps.",
       "cadencia_rpm": "85-95",
       "academia": null
     }}
@@ -605,7 +659,7 @@ REGRAS DO JSON:
 - "cadencia_rpm" deve ser null para dias ACADEMIA puro (é ginásio, não bike).
 - ACADEMIA é sempre tipo exclusivo — nunca use o campo "academia" como sub-objeto dentro de outro tipo. Um dia = uma atividade.
 - Exatamente 7 entradas em "treinos" (uma por dia: {proxima} a {_shift_data(proxima, 6)}).
-- Descrições de treinos de bike devem sempre incluir FC alvo em bpm (usando as zonas reais do atleta).
+- Descrições de treinos de bike devem citar a intensidade pelo NOME da zona (Z1-Z5). NUNCA escreva faixas de FC em bpm — o app anexa automaticamente as faixas reais do atleta.
 - O campo "progressao" deve descrever APENAS o que está nos treinos gerados acima — não mencione academia se nenhum dia tiver tipo ACADEMIA.
 """
 
@@ -665,6 +719,10 @@ REGRAS DO JSON:
                 "descricao": academia_sub["descricao"],
             }
         treinos_out.append(treino_out)
+
+    # Código é dono dos números: anexa a legenda com as faixas reais do atleta
+    # em FC (outdoor) e watts (indoor). A IA cita só o nome da zona na prosa.
+    _anexar_legenda_alvos(treinos_out, zonas_lista, zonas_pot_user)
 
     return {
         "semana_proxima": proxima,
@@ -834,7 +892,8 @@ Mantenha EXATAMENTE os tipos e durações abaixo (não invente treinos novos, n�
 {resumo_dias}
 
 Para cada dia com treino, escreva uma descrição clara de 1-2 frases que um iniciante
-entenda (o que fazer, intensidade em zona de FC, cadência). Para DESCANSO, deixe vazio.
+entenda (o que fazer, intensidade pelo NOME da zona — Z1 a Z5, cadência). NUNCA escreva
+faixas de FC em bpm — só o nome da zona; o app anexa as faixas reais. Para DESCANSO, deixe vazio.
 
 Responda APENAS JSON válido, sem markdown:
 {{
@@ -860,6 +919,12 @@ Responda APENAS JSON válido, sem markdown:
                 t["descricao"] = desc_por_data[t["data"]]
     except Exception as e:
         logger.info("IA indisponível para refinar 1ª semana (%s) — usando template puro", e)
+
+    # Código é dono dos números: anexa a legenda de alvos (FC + watts, se houver FTP).
+    from app.services.config_service import get_zonas_potencia as _get_zp
+    zp_doc = await _get_zp(user_id)
+    zonas_pot = (zp_doc or {}).get("zonas", [])
+    _anexar_legenda_alvos(treinos, zonas_doc.get("zonas") or [], zonas_pot)
 
     return {
         "semana_inicio": semana_inicio,
