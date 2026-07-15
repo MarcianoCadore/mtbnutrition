@@ -501,128 +501,41 @@ function _alvoPotencia(tipo) {
   return `${range} (Z${zonaNum})`;
 }
 
-function _rangeZona(n) {
-  const zp = window.ZONAS_POT;
-  if (!window.FTP_ON || !zp || !zp.zonas) return null;
-  const z = zp.zonas.find(zz => zz.zona === n);
-  if (!z) return null;
-  if (z.min === 0) return `até ${z.max}W`;
-  if (z.max >= 9999) return `>${z.min}W`;
-  return `${z.min}–${z.max}W`;
-}
-
-// Faixa de FC (bpm) da zona n, lida das zonas REAIS do atleta — nunca fixa.
-function _rangeZonaFC(n) {
-  const zf = window.ZONAS_FC;
-  if (!zf || !zf.zonas) return null;
-  const z = zf.zonas.find(zz => zz.zona === n);
-  if (!z) return null;
-  if (z.min <= 0) return `<${z.max} bpm`;
-  if (z.max >= 9999) return `>${z.min} bpm`;
-  return `${z.min}–${z.max} bpm`;
-}
-
-// Estrutura "como executar" parametrizada pela fonte de faixa (watts ou bpm).
-function _estruturaZonas(tipo, rz) {
-  const z1 = rz(1), z2 = rz(2), z3 = rz(3), z5 = rz(5);
-  if (!z1) return null;
-  switch (tipo) {
-    case 'Z2_LONGO':
-      return [
-        `Aquecimento 15 min em Z1 (${z1})`,
-        `Bloco principal contínuo em Z2 (${z2})`,
-        `Volta à calma 15 min em Z1 (${z1})`,
-      ];
-    case 'TEMPO':
-      return [
-        `Aquecimento 15 min em Z2 (${z2})`,
-        `3× [10 min em Z3 (${z3}) + 5 min Z2]`,
-        `Volta à calma 10 min em Z2 (${z2})`,
-      ];
-    case 'FORCA':
-      return [
-        `Aquecimento 15 min em Z2 (${z2})`,
-        `4× [6 min em Z3 (${z3}) com cadência 50–60 rpm + 4 min Z2]`,
-        `Volta à calma 10 min em Z2 (${z2})`,
-      ];
-    case 'TIROS':
-      return [
-        `Aquecimento 15 min em Z2 (${z2})`,
-        `8× [30 s máximo em Z5 (${z5}) + 3,5 min Z1]`,
-        `Volta à calma 15 min em Z2 (${z2})`,
-      ];
-    case 'VO2MAX':
-      return [
-        `Aquecimento 15 min em Z2 (${z2})`,
-        `4× [4 min forte em Z5 (${z5}) + 4 min Z2]`,
-        `Volta à calma 15 min em Z2 (${z2})`,
-      ];
-    case 'RECUPERACAO':
-      return [`Pedal leve e contínuo em Z1 (${z1})`];
-    case 'TESTE_FTP':
-      return [
-        `Aquecimento 10 min em Z1 (${z1})`,
-        `Progressivo 5 min em Z3 (${z3})`,
-        '3× [30s máximo Z5 + 1 min Z1 recuperação]',
-        'Pré-teste 2 min suave Z1',
-        'TESTE 20 min — potência máxima sustentável (Z4)',
-        'Desaquecimento 15 min em Z1',
-      ];
-    default:
-      return null;
-  }
-}
-
-// Indoor usa watts (ZONAS_POT); outdoor usa FC em bpm (ZONAS_FC). Ambos por atleta.
-function _estruturaIndoor(tipo)  { return _estruturaZonas(tipo, _rangeZona); }
-function _estruturaOutdoor(tipo) { return _estruturaZonas(tipo, _rangeZonaFC); }
-
 let monday = getMonday(new Date());
 const _resultados = {};
 const _planejado = {};
 
-// Especificação de cada tipo de treino — o que está programado e como executar.
+// Objetivo e dica por tipo de treino. A prescrição concreta (séries×tempo,
+// cadência, recuperação) vem SÓ das "Notas do treino" — texto real gerado por
+// dia/prova. Nada de estrutura fixa por tipo aqui: era um template genérico que
+// divergia das notas (a IA varia reps/tempo por semana) e confundia o atleta.
 const ESPEC_TREINO = {
   Z2_LONGO: {
     obj: 'Base aeróbica. Constrói resistência e melhora a queima de gordura mantendo esforço controlado.',
-    estrutura: ['Aquecimento 15 min em Z1', 'Bloco principal contínuo em Z2', 'Volta à calma 15 min em Z1'],
     dica: 'Cadência 85–95 rpm e FC estável. Sem picos — se subir para Z3, alivie.',
   },
   TEMPO: {
     obj: 'Esforço de limiar. Eleva a capacidade de sustentar um ritmo forte por mais tempo.',
-    estrutura: ['Aquecimento 15 min em Z2', '3× [10 min em Z3 + 5 min Z2]', 'Volta à calma 10 min em Z2'],
     dica: 'Esforço moderado-alto sustentável. Respiração ritmada, ainda sob controle.',
   },
   FORCA: {
     obj: 'Força específica na bike. Recruta mais fibras musculares pedalando com cadência baixa e marcha pesada.',
-    estrutura: ['Aquecimento 15 min em Z2', '4× [6 min em Z3 com cadência 50–60 rpm + 4 min Z2]', 'Volta à calma 10 min em Z2'],
     dica: 'Marcha pesada, empurre o pedal. Sente o trabalho nas pernas, não no fôlego.',
   },
   TIROS: {
     obj: 'Tiros neuromusculares. Desenvolve potência e velocidade máxima de pedalada.',
-    estrutura: ['Aquecimento 15 min em Z2', '8× [30 s máximo em Z5 + 3,5 min Z1]', 'Volta à calma 15 min em Z2'],
     dica: 'Cada tiro é all-out, do início ao fim. Recupere bem antes do próximo.',
   },
   VO2MAX: {
     obj: 'VO2max. Eleva o teto cardiorrespiratório — o maior estímulo para a performance.',
-    estrutura: ['Aquecimento 15 min em Z2', '4× [4 min forte em Z5 + 4 min Z2]', 'Volta à calma 15 min em Z2'],
     dica: 'Os blocos doem. O objetivo é manter a Z5 do primeiro ao último bloco.',
   },
   RECUPERACAO: {
     obj: 'Recuperação ativa. Acelera a regeneração sem gerar fadiga adicional.',
-    estrutura: ['Pedal leve e contínuo em Z1'],
     dica: 'Bem leve mesmo. Se a FC subir, reduza o ritmo. É descanso, não treino.',
   },
   TESTE_FTP: {
     obj: 'Teste de FTP (Functional Threshold Power). Mede a potência máxima que você sustenta por ~1h. Resultado × 0,95 = novo FTP.',
-    estrutura: [
-      'Aquecimento 10 min em Z1',
-      'Progressivo 5 min em Z3',
-      '3× [30s máximo Z5 + 1 min Z1 recuperação]',
-      'Pré-teste 2 min suave Z1',
-      'TESTE 20 min — potência máxima sustentável (Z4)',
-      'Desaquecimento 15 min em Z1',
-    ],
     dica: 'Saída CONTROLADA nos primeiros 3 min. Aumente gradualmente. Pedal leve em Z1 durante os 3 min de desaquecimento ao final.',
   },
 };
@@ -999,21 +912,20 @@ function abrirTreinoInfo(key) {
       corpo += `<div class="esp-obj" style="margin-top:8px">Exercícios ainda não definidos — gere a semana com IA.</div>`;
     }
   } else {
-    // Treino de bike: mostra estrutura normal
+    // Treino de bike: objetivo + dica + a prescrição REAL (notas). Não há mais
+    // lista "Como executar" fixa por tipo — ela divergia das notas. As "Notas do
+    // treino" são a única fonte da prescrição (séries×tempo, cadência, recup).
+    const isIndoor = p.indoor || false;
+    const modoLabel = isIndoor ? ' <span style="font-size:.72rem;background:#e3f2fd;color:#1565c0;border-radius:4px;padding:1px 6px;font-weight:700;vertical-align:middle">🏠 Indoor — Watts</span>' : '';
     if (esp) {
-      const isIndoor = p.indoor || false;
-      const estrutura = (isIndoor ? _estruturaIndoor(tipo) : _estruturaOutdoor(tipo)) || esp.estrutura;
-      const modoLabel = isIndoor ? ' <span style="font-size:.72rem;background:#e3f2fd;color:#1565c0;border-radius:4px;padding:1px 6px;font-weight:700;vertical-align:middle">🏠 Indoor — Watts</span>' : '';
       corpo += `<div class="esp-obj">${esp.obj}</div>`;
-      corpo += `<div class="esp-bloco"><div class="esp-titulo">Como executar${modoLabel}</div>`
-             + `<ul class="esp-lista">${estrutura.map(s => `<li>${s}</li>`).join('')}</ul></div>`;
-      // Cadência da dica vem do treino (não fixa) — evita divergir do header/estrutura.
+      // Cadência da dica vem do treino (não fixa) — evita divergir do header/notas.
       let dica = esp.dica;
       if (cad) dica = dica.replace(/\\d{2,3}\\s*[–-]\\s*\\d{2,3}\\s*rpm/gi, `${cad} rpm`);
       corpo += `<div class="esp-dica">💡 ${dica}</div>`;
     }
     if (notas && notas.trim()) {
-      corpo += `<div class="esp-bloco" style="margin-top:14px"><div class="esp-titulo">Notas do treino</div>`
+      corpo += `<div class="esp-bloco" style="margin-top:14px"><div class="esp-titulo">Notas do treino${modoLabel}</div>`
              + `<div class="esp-notas">${notas.replace(/</g,'&lt;').replace(/\\n/g,'<br>')}</div></div>`;
     }
     // Sub-objeto academia (bike + gym no mesmo dia): seção separada
