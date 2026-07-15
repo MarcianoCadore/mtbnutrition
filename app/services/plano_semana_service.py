@@ -99,7 +99,38 @@ def limpar_bpm_descricao(txt: str | None) -> str | None:
     return t.strip()
 
 
+# Linha exatamente no formato do NOME de workout gerado pelo app:
+# "VO2MAX — 2026-07-14", "Z2 LONGO — 2026-07-14", "TESTE FTP — 2026-07-14".
+# É metadado (tipo + data), nunca faz parte da prescrição. Só maiúsculas/dígitos/
+# espaço antes do travessão (a legenda "🎯 Alvo — Outdoor…" começa com emoji e o
+# corpo com texto minúsculo, então nenhum dos dois casa).
+_TITULO_APP_RE = re.compile(r"^[ \t]*[A-Z0-9][A-Z0-9 ]*[—–][ \t]*\d{4}-\d{2}-\d{2}[ \t]*$")
+
+
+def limpar_titulo_descricao(txt: str | None) -> str | None:
+    """Remove linhas de cabeçalho no formato do nome de workout do app.
+
+    Bug do round-trip de sync: ao enviar pro Garmin o app usa o nome "TIPO — DATA";
+    ao puxar de volta (sync_treinos_planejados) esse nome era prefixado na
+    descrição. A cada envia→puxa o cabeçalho reaparecia e, quando o foco do dia
+    mudava (ex.: VO2MAX → RECUPERACAO), acumulavam-se vários cabeçalhos divergindo
+    do tipo real. O tipo verdadeiro vem do campo `tipo`; a FC/watts, do modal/legenda.
+    Idempotente e conservador: só remove linhas 100% no formato do nome do app."""
+    if not txt:
+        return txt
+    linhas = [ln for ln in txt.splitlines() if not _TITULO_APP_RE.match(ln)]
+    return "\n".join(linhas).strip()
+
+
 _MARCADOR_LEGENDA = "🎯 Alvo"
+
+
+def limpar_descricao_planejada(txt: str | None) -> str | None:
+    """Limpeza canônica da descrição de um treino planejado: remove parênteses de
+    bpm (a FC real vem do modal/legenda) e os cabeçalhos 'TIPO — DATA' (nome do
+    workout do app) que o round-trip de sync acumulava. NÃO mexe no corpo da
+    prescrição — o tipo do dia é derivado da descrição, não o contrário."""
+    return limpar_titulo_descricao(limpar_bpm_descricao(txt))
 
 
 def _fmt_faixa(z: dict) -> str:

@@ -292,10 +292,12 @@ async def sync_treinos_planejados(user_id: str, semana_inicio: str) -> int:
             except Exception:
                 pass
 
-        # Remove parênteses de bpm que o Garmin devolve na descrição — senão o pull
-        # re-injeta o bpm antigo que a limpeza tirou. A FC real vem do modal/legenda.
-        from app.services.plano_semana_service import limpar_bpm_descricao
-        notas = limpar_bpm_descricao(notas)
+        # Limpa a descrição que o Garmin devolve — senão o pull re-injeta lixo que
+        # a limpeza tirou: parênteses de bpm (FC real vem do modal/legenda) e os
+        # cabeçalhos "TIPO — DATA" (nome do workout do app), prefixados a cada
+        # round-trip. O tipo já saiu da descrição via classificar_tipo_treino.
+        from app.services.plano_semana_service import limpar_descricao_planejada
+        notas = limpar_descricao_planejada(notas)
 
         treino_entry = {
             "data": date_str,

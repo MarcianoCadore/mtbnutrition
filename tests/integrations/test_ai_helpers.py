@@ -4,6 +4,7 @@ import pytest
 from app.services.ai_service import (
     _e_cota, _nota_valida, _zona_de,
     extrair_cadencia_texto, classificar_por_texto, _limpar_datas,
+    tipo_definitivo,
 )
 
 
@@ -86,6 +87,52 @@ class TestClassificarPorTexto:
 
     def test_sem_palavra_chave_retorna_none(self):
         assert classificar_por_texto("xpto qwerty") is None
+
+    def test_serie_z5_em_minutos_e_vo2max_apesar_do_aquecimento(self):
+        # Caso real (dia da terça): o aquecimento Z1/Z2 e a "recuperação entre
+        # blocos" NÃO podem rebaixar um treino cuja série principal é 5×4 min Z5.
+        desc = (
+            "15 min aquecimento progressivo: 8 min Z1, 5 min Z2, 2 min Z3. "
+            "Sessão principal: 5×4 min Z5 | alvo >318W, cadência 90-100 rpm. "
+            "Recuperação de 4 min Z1-Z2 entre cada bloco. 15 min volta à calma Z1."
+        )
+        assert classificar_por_texto(desc) == "VO2MAX"
+
+    def test_titulo_recuperacao_nao_vence_serie_z5_da_descricao(self):
+        # O nome do workout do app ("RECUPERACAO — …") NÃO pode ganhar da série
+        # principal de Z5 que está na descrição (era o loop do sync).
+        assert classificar_por_texto(
+            "RECUPERACAO — 2026-07-14",
+            "5×4 min Z5 | alvo >318W",
+        ) == "VO2MAX"
+
+    def test_default_vo2max_do_app_classifica_vo2max(self):
+        assert classificar_por_texto("4x4 min Z5 com 4 min recuperação Z2.") == "VO2MAX"
+
+    def test_serie_z5_em_segundos_e_tiros(self):
+        assert classificar_por_texto(
+            "8x30s Z5 all-out com 3.5 min recuperação Z1.") == "TIROS"
+
+    def test_serie_z3z4_nao_vira_vo2max_nem_tiros(self):
+        # Série em Z3-Z4 (não Z5) não pode ser confundida com esforço de Z5.
+        tipo = classificar_por_texto(
+            "15 min aquecimento. 3×15 min Z3-Z4, recuperação Z2. Cadência 88-95 rpm.")
+        assert tipo not in ("VO2MAX", "TIROS")
+
+
+class TestTipoDefinitivo:
+    def test_minutos_z5(self):
+        assert tipo_definitivo("Série: 5×4 min Z5 | >318W") == "VO2MAX"
+
+    def test_segundos_z5(self):
+        assert tipo_definitivo("10×45s Z5 máximo") == "TIROS"
+
+    def test_sem_z5_retorna_none(self):
+        assert tipo_definitivo("90 min base aeróbica Z2, cadência 85-95 rpm.") is None
+        assert tipo_definitivo("3×15 min Z3-Z4, recuperação Z2.") is None
+
+    def test_recuperacao_pura_retorna_none(self):
+        assert tipo_definitivo("75 min recuperação ativa Z1. Sem esforço.") is None
 
 
 class TestLimparDatas:

@@ -130,6 +130,35 @@ _PADROES_TIPO = {
 # baixa" deve vencer os sinais genéricos de "subida" (TEMPO) e "cadência" (Z2).
 _PRIORIDADE_TIPO = ["Z2_LONGO", "RECUPERACAO", "DESCANSO", "TEMPO", "FORCA", "ACADEMIA", "TIROS", "VO2MAX"]
 
+# Estrutura da SÉRIE PRINCIPAL — define o tipo acima de menções incidentais de
+# Z1/Z2/"recuperação" (aquecimento, recuperação ENTRE blocos, volta à calma).
+# É o que faltava: uma prescrição "5×4 min Z5 | >318W" é VO2máx, mas o scorer por
+# palavras-chave a lia como RECUPERACAO/Z2 por causa do aquecimento e da soltura.
+# Minutos em Z5 → VO2máx (blocos longos); segundos em Z5 → tiros (neuromuscular).
+_SERIE_Z5_MIN = re.compile(
+    r"\d+\s*[x×]\s*\d+\s*min(?:utos?)?[^.\n]*?\bz\s*5\b", re.IGNORECASE)
+_SERIE_Z5_SEG = re.compile(
+    r"\d+\s*[x×]\s*\d+\s*s(?:eg(?:undos?)?)?\b[^.\n]*?\bz\s*5\b", re.IGNORECASE)
+
+
+def tipo_definitivo(*textos: str | None) -> str | None:
+    """Tipo inferido da ESTRUTURA da série principal, quando inequívoca.
+
+    Só dispara para blocos de Z5 (o sinal mais confiável e o que o scorer errava):
+    minutos de Z5 = VO2máx, segundos de Z5 = tiros. Retorna None se não houver
+    série de Z5 clara ou se ambas casarem (aí o scorer por palavras decide)."""
+    for texto in textos:
+        if not texto:
+            continue
+        t = _limpar_datas(texto)
+        vo2 = bool(_SERIE_Z5_MIN.search(t))
+        tiros = bool(_SERIE_Z5_SEG.search(t))
+        if vo2 and not tiros:
+            return "VO2MAX"
+        if tiros and not vo2:
+            return "TIROS"
+    return None
+
 
 def _limpar_datas(texto: str) -> str:
     """Remove datas e dias da semana que poluem a classificação por texto."""
@@ -165,6 +194,12 @@ def classificar_por_texto(*textos: str | None) -> str | None:
     O primeiro texto (título do treino) recebe peso maior. Retorna None
     quando nenhuma palavra-chave casa — aí o chamador usa outro sinal.
     """
+    # A estrutura da série principal (blocos de Z5) tem prioridade sobre a soma de
+    # palavras-chave: senão o aquecimento/soltura de um treino de Z5 o rebaixa.
+    definitivo = tipo_definitivo(*textos)
+    if definitivo:
+        return definitivo
+
     scores = {t: 0.0 for t in _PADROES_TIPO}
     for idx, texto in enumerate(textos):
         if not texto:
