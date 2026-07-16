@@ -10,10 +10,18 @@ class TestPublicasEAuth:
         assert r.status_code == 200
         assert r.json()["status"] == "ok"
 
-    def test_raiz_sem_login_redireciona(self, client):
+    def test_raiz_sem_login_mostra_landing(self, client):
         r = client.get("/", follow_redirects=False)
-        assert r.status_code == 303
-        assert r.headers["location"] == "/login"
+        assert r.status_code == 200
+        assert "text/html" in r.headers["content-type"]
+        assert "19,99" in r.text
+
+    def test_raiz_logado_redireciona_portal(self, client):
+        import main
+        client.cookies.set(main._COOKIE, main._gerar_token(str(ObjectId())))
+        r = client.get("/", follow_redirects=False)
+        assert r.status_code == 307
+        assert r.headers["location"] == "/portal/"
 
     def test_login_form_publico(self, client):
         assert client.get("/login").status_code == 200

@@ -12,7 +12,7 @@ from fastapi.responses import RedirectResponse, HTMLResponse
 from contextlib import asynccontextmanager
 
 from app.tasks.scheduler import start_scheduler, stop_scheduler
-from app.routes import workout, nutrition, whatsapp, portal, chat as chat_router, admin as admin_router
+from app.routes import workout, nutrition, whatsapp, portal, landing, chat as chat_router, admin as admin_router
 from app.services import user_service
 from app.services.whatsapp_service import send_message
 from app.services.mongo_service import get_db
@@ -56,6 +56,7 @@ _COOKIE = "mtb_auth"
 # O callback do Strava (/workout/strava/callback) é público porque o Strava redireciona
 # sem cookie de sessão; a identificação do usuário ocorre via parâmetro state=user_id.
 _PUBLIC_PATHS = {
+    "/",
     "/health",
     "/login",
     "/logout",
@@ -828,5 +829,10 @@ async def reenviar_codigo(request: Request):
 # ─── Root ─────────────────────────────────────────────────────────────────────
 
 @app.get("/", include_in_schema=False)
-async def root():
-    return RedirectResponse(url="/portal/")
+async def root(request: Request):
+    """Landing page pública; usuários com sessão válida vão direto ao portal."""
+    token = request.cookies.get(_COOKIE, "")
+    user_id, _ = _token_valido(token) if token else (None, None)
+    if user_id:
+        return RedirectResponse(url="/portal/")
+    return HTMLResponse(landing.LANDING_HTML)
