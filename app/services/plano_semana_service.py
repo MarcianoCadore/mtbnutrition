@@ -14,7 +14,13 @@ from app.services.user_service import get_por_id
 logger = logging.getLogger(__name__)
 
 _client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-_MODEL_PLANO = "claude-sonnet-4-6"
+_MODEL_PLANO = "claude-sonnet-5"
+
+
+def _extrair_texto(response) -> str:
+    """Primeiro bloco de texto da resposta (tolerante a blocos de thinking,
+    que o Sonnet 5 emite por padrão antes do texto)."""
+    return next(b.text for b in response.content if b.type == "text")
 
 _TIPOS_VALIDOS = {"Z2_LONGO", "TIROS", "VO2MAX", "TEMPO", "FORCA", "ACADEMIA", "RECUPERACAO", "DESCANSO", "TESTE_FTP"}
 
@@ -381,6 +387,17 @@ async def gerar_proxima_semana(user_id: str, semana_atual: str) -> dict:
     treinos = doc.get("treinos", [])
     proxima = _proxima_semana(semana_atual)
 
+    # ── Parecer fisiológico (passo 1 do pipeline) ────────────────────────────
+    # Analisa as últimas semanas executadas ANTES de montar a próxima. Nunca
+    # bloqueia a geração: em falha, segue sem parecer (comportamento antigo).
+    from app.services.fisiologia_service import gerar_parecer_fisiologico, bloco_parecer_prompt
+    parecer: dict | None = None
+    try:
+        parecer = await gerar_parecer_fisiologico(user_id, semana_atual)
+    except Exception as e:
+        logger.warning("Parecer fisiológico falhou (%s) — gerando semana sem parecer", e)
+    bloco_parecer = bloco_parecer_prompt(parecer)
+
     # ── Dados do usuário (tolerante a ausências) ──────────────────────────────
     u = await get_por_id(user_id)
     u = u or {}
@@ -638,6 +655,7 @@ COMO USAR ESSES DADOS PARA DECIDIR A PRÓXIMA SEMANA:
 - Pontos fracos recorrentes → escolher tipos de treino que ataquem diretamente essa fraqueza.
 - Treino incompleto ou não realizado → NÃO progredir esse tipo de sessão; manter ou reduzir.
 ═══════════════════════════════════════════
+{bloco_parecer}
 
 RESTRIÇÕES DE AGENDA (OBRIGATÓRIAS):
 {restricao_util}
@@ -717,10 +735,10 @@ REGRAS DO JSON:
     try:
         response = await _client.messages.create(
             model=_MODEL_PLANO,
-            max_tokens=8192,
+            max_tokens=16000,
             messages=[{"role": "user", "content": prompt}],
         )
-        raw = response.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+        raw = _extrair_texto(response).strip().replace("```json", "").replace("```", "").strip()
         data = json.loads(raw)
     except Exception as e:
         if _is_quota_error(e) and settings.GEMINI_API_KEY:
@@ -781,6 +799,7 @@ REGRAS DO JSON:
         "fase":           fase_prova,
         "treinos":        treinos_out,
         "modelo_usado":   modelo_usado,
+        "parecer_fisiologico": parecer,
     }
 
 
@@ -955,10 +974,10 @@ Responda APENAS JSON válido, sem markdown:
     try:
         response = await _client.messages.create(
             model=_MODEL_PLANO,
-            max_tokens=2048,
+            max_tokens=8192,
             messages=[{"role": "user", "content": prompt}],
         )
-        raw = response.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+        raw = _extrair_texto(response).strip().replace("```json", "").replace("```", "").strip()
         data = json.loads(raw)
         desc_por_data = {
             t.get("data"): (t.get("descricao") or "").strip()
