@@ -94,6 +94,9 @@ _CHAT_WIDGET = """
 #cw-input:focus{border-color:#128c7e}
 #cw-send{background:#128c7e;color:#fff;border:none;border-radius:10px;padding:9px 14px;font-size:.88rem;font-weight:700;cursor:pointer;flex-shrink:0}
 #cw-send:disabled{opacity:.5;cursor:default}
+#cw-quota{display:none;font-size:.72rem;color:#666;background:#f7f9f8;padding:5px 12px;border-bottom:1px solid #eee;text-align:center;flex-shrink:0}
+#cw-quota .cw-bar{height:3px;background:#e0e0e0;border-radius:3px;margin-top:4px;overflow:hidden}
+#cw-quota .cw-bar b{display:block;height:100%;background:#128c7e;border-radius:3px;transition:width .3s}
 @media(max-width:600px){#cw-input{font-size:1rem}}
 </style>
 <div id="cw-panel">
@@ -102,6 +105,7 @@ _CHAT_WIDGET = """
     <span id="cw-head-title">Assistente MTB</span>
     <button id="cw-close" onclick="cwToggle()" title="Fechar">✕</button>
   </div>
+  <div id="cw-quota"></div>
   <div id="cw-msgs"></div>
   <div id="cw-foot">
     <textarea id="cw-input" rows="1" placeholder="Pergunte sobre treinos, nutrição..."></textarea>
@@ -128,8 +132,19 @@ _CHAT_WIDGET = """
       const d = await r.json();
       const msgs = d.mensagens || [];
       msgs.forEach(m => cwAddMsg(m.role, m.texto));
+      cwQuota(d);
       cwScroll();
     }catch(e){ cwAddMsg('assistant','Não foi possível carregar o histórico.'); }
+  }
+
+  function cwQuota(d){
+    const el = document.getElementById('cw-quota');
+    if(d.limite == null){ el.style.display = 'none'; return; }
+    const pct = Math.round((d.restantes / d.limite) * 100);
+    el.innerHTML = 'No plano gratuito você ainda pode fazer <b>' + d.restantes +
+      '</b> de ' + d.limite + ' pergunta' + (d.limite > 1 ? 's' : '') + ' esta semana' +
+      '<div class="cw-bar"><b style="width:' + pct + '%"></b></div>';
+    el.style.display = 'block';
   }
 
   function cwAddMsg(role, texto){
@@ -178,6 +193,7 @@ _CHAT_WIDGET = """
       const d = await r.json();
       typing.remove();
       cwAddMsg('assistant', d.resposta || d.erro || 'Erro ao obter resposta.');
+      cwQuota(d);
       if(d.recarregar){ window.dispatchEvent(new CustomEvent('mtb:recarregar')); }
     }catch(e){
       typing.remove();

@@ -68,6 +68,8 @@ _HTML = """<!DOCTYPE html>
     .btn-chat-off  { background:#95a5a6; color:#fff; }
     .btn-chat-off:hover  { background:#7f8c8d; }
     .btn-sm:disabled { opacity:.45; cursor:not-allowed; }
+    .sel-limite { border:1.5px solid var(--border); border-radius:8px; padding:5px 8px; font-size:.78rem; font-weight:600; color:var(--text); background:#fff; cursor:pointer; }
+    .sel-limite:disabled { opacity:.45; cursor:not-allowed; }
 
     .toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:#1a1a2e; color:#fff; padding:10px 22px; border-radius:10px; font-size:.88rem; opacity:0; pointer-events:none; transition:opacity .3s; z-index:9999; white-space:nowrap; }
     .toast.show { opacity:1; }
@@ -134,6 +136,11 @@ function renderCard(u) {
   const btnChat = chat
     ? `<button class="btn-sm btn-chat-off" id="bc-${u.id}" onclick="toggleChat('${u.id}',true)">Desativar</button>`
     : `<button class="btn-sm btn-chat-on"  id="bc-${u.id}" onclick="toggleChat('${u.id}',false)">Ativar</button>`;
+  const lim = (u.features || {}).chat_limite_semana || '';
+  const opcoes = [3,5,10,20,50].map(n =>
+    `<option value="${n}" ${lim === n ? 'selected' : ''}>${n}/semana</option>`).join('');
+  const selLimite = `<select class="sel-limite" onchange="setLimite('${u.id}', this.value, this)">
+    <option value="" ${!lim ? 'selected' : ''}>Ilimitado</option>${opcoes}</select>`;
   return `<div class="user-card" id="row-${u.id}">
     <div class="user-head">
       <div class="user-avatar">${iniciais(u)}</div>
@@ -152,6 +159,10 @@ function renderCard(u) {
       <div class="user-row">
         <span class="user-row-label">Chat</span>
         <div style="display:flex;align-items:center;gap:8px">${badgeChat}${btnChat}</div>
+      </div>
+      <div class="user-row">
+        <span class="user-row-label">Perguntas</span>
+        <div style="display:flex;align-items:center;gap:8px">${selLimite}</div>
       </div>
     </div>
   </div>`;
@@ -204,6 +215,23 @@ async function toggleChat(id, currentAtivo) {
     renderStats();
     showToast(novoAtivo ? 'Chat ativado.' : 'Chat desativado.');
   } else { btn.disabled = false; showToast('Erro ao atualizar chat.'); }
+}
+
+async function setLimite(id, valor, sel) {
+  sel.disabled = true;
+  const limite = valor === '' ? null : parseInt(valor, 10);
+  const res = await fetch('/admin/chat-limite', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({user_id: id, limite})
+  });
+  sel.disabled = false;
+  if (res.ok) {
+    const u = USERS.find(x => x.id === id);
+    u.features = u.features || {};
+    if (limite === null) delete u.features.chat_limite_semana;
+    else u.features.chat_limite_semana = limite;
+    showToast(limite === null ? 'Perguntas ilimitadas.' : `Limite: ${limite} pergunta(s)/semana.`);
+  } else { showToast('Erro ao salvar limite.'); }
 }
 
 function showToast(msg) {
@@ -306,3 +334,29 @@ async def toggle_chat(request: Request):
     db = get_db()
     await db.users.update_one({"_id": oid}, {"$set": {"features.chat": ativo}})
     return JSONResponse({"ok": True, "ativo": ativo})
+
+
+@router.post("/chat-limite")
+async def chat_limite(request: Request):
+    admin = await _require_admin(request)
+    if not admin:
+        return JSONResponse({"erro": "Acesso negado."}, status_code=403)
+
+    body = await request.json()
+    user_id = body.get("user_id")
+    limite = body.get("limite")
+
+    if not user_id or (limite is not None and (not isinstance(limite, int) or limite < 1)):
+        return JSONResponse({"erro": "Parâmetros inválidos."}, status_code=400)
+
+    try:
+        oid = ObjectId(user_id)
+    except Exception:
+        return JSONResponse({"erro": "user_id inválido."}, status_code=400)
+
+    db = get_db()
+    if limite is None:
+        await db.users.update_one({"_id": oid}, {"$unset": {"features.chat_limite_semana": ""}})
+    else:
+        await db.users.update_one({"_id": oid}, {"$set": {"features.chat_limite_semana": limite}})
+    return JSONResponse({"ok": True, "limite": limite})

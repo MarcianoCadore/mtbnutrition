@@ -2,6 +2,8 @@ import anthropic
 import logging
 from datetime import datetime, timezone, timedelta
 
+import pytz
+
 from config.settings import settings
 from app.services.mongo_service import get_db
 
@@ -11,6 +13,7 @@ _client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
 _MODEL = "claude-sonnet-4-6"
 _MAX_MENSAGENS_DB = 100
 _MAX_HISTORICO_IA = 20
+_TZ = pytz.timezone("America/Sao_Paulo")
 
 _TOOLS = [
     {
@@ -117,6 +120,39 @@ async def get_historico(user_id: str, limite: int = _MAX_HISTORICO_IA) -> list[d
     if not doc:
         return []
     return doc.get("mensagens", [])[-limite:]
+
+
+# ── Quota semanal de perguntas ───────────────────────────────────────────────
+# O admin define `features.chat_limite_semana` por usuário; ausente = ilimitado.
+# O uso fica em db.chat_uso, um doc por (user_id, semana) — a virada de segunda
+# zera naturalmente porque a chave da semana muda.
+
+def _semana_atual_iso() -> str:
+    hoje = datetime.now(_TZ).date()
+    return (hoje - timedelta(days=hoje.weekday())).isoformat()
+
+
+async def quota_chat(user_id: str) -> dict:
+    """Status da quota: {limite, usadas, restantes}. limite None = ilimitado."""
+    from app.services.user_service import get_por_id
+    u = await get_por_id(user_id) or {}
+    limite = (u.get("features") or {}).get("chat_limite_semana")
+    if not isinstance(limite, int) or limite <= 0:
+        return {"limite": None, "usadas": 0, "restantes": None}
+    db = get_db()
+    doc = await db.chat_uso.find_one(
+        {"user_id": user_id, "semana_inicio": _semana_atual_iso()})
+    usadas = int((doc or {}).get("perguntas", 0))
+    return {"limite": limite, "usadas": usadas, "restantes": max(limite - usadas, 0)}
+
+
+async def registrar_pergunta_chat(user_id: str) -> None:
+    db = get_db()
+    await db.chat_uso.update_one(
+        {"user_id": user_id, "semana_inicio": _semana_atual_iso()},
+        {"$inc": {"perguntas": 1}},
+        upsert=True,
+    )
 
 
 async def _salvar_mensagem(user_id: str, role: str, texto: str) -> None:
