@@ -25,7 +25,7 @@ def _extrair_texto(response) -> str:
 _TIPOS_VALIDOS = {"Z2_LONGO", "TIROS", "VO2MAX", "TEMPO", "FORCA", "ACADEMIA", "RECUPERACAO", "DESCANSO", "TESTE_FTP"}
 
 
-async def _chamar_gemini(prompt: str) -> str:
+async def _chamar_gemini(prompt: str, sistema: str | None = None) -> str:
     """Chama Gemini Flash (gratuito) como fallback quando Claude está sem cota."""
     from google import genai
     from google.genai import types as gtypes
@@ -39,6 +39,7 @@ async def _chamar_gemini(prompt: str) -> str:
         model="gemini-2.0-flash",
         contents=prompt,
         config=gtypes.GenerateContentConfig(
+            system_instruction=sistema,
             response_mime_type="application/json",
         ),
     )
@@ -377,8 +378,94 @@ def _resumo_treino(t: dict) -> str:
     return "\n".join(linhas)
 
 
-async def gerar_proxima_semana(user_id: str, semana_atual: str) -> dict:
-    """Gera o plano da próxima semana com base na análise da semana atual."""
+# Instruções 100% estáticas (sem interpolação de dados do atleta) — viram o
+# `system` da chamada a gerar_proxima_semana, com cache_control. Como o batch
+# semanal (scheduler) chama isso em loop para todos os usuários em sequência
+# rápida, esse bloco é lido do cache (~10% do custo) a partir da 2ª chamada em
+# diante, em vez de reprocessado como texto novo a cada usuário.
+_SISTEMA_PLANO = """Você é um coach de ciclismo MTB de alto nível, especializado em periodização progressiva e desenvolvimento de performance na bike.
+
+COMO USAR OS DADOS DA SEMANA ANTERIOR PARA DECIDIR A PRÓXIMA:
+- FC média ABAIXO do alvo da zona → treino ficou fácil → AUMENTAR carga (mais tempo, mais repetições ou zona mais alta).
+- FC média DENTRO do alvo → execução ideal → MANTER estrutura e progredir levemente (+5-10 min ou +1 rep).
+- FC média ACIMA do alvo → treino foi duro → MANTER ou REDUZIR volume antes de progredir.
+- Pontos fracos recorrentes → escolher tipos de treino que ataquem diretamente essa fraqueza.
+- Treino incompleto ou não realizado → NÃO progredir esse tipo de sessão; manter ou reduzir.
+
+TIPOS DE TREINO NA BIKE — PRESCRIÇÃO DETALHADA (cite a intensidade SEMPRE pelo nome da zona — Z1 a Z5 — NUNCA escreva faixas em bpm; o app anexa as faixas reais do atleta):
+
+- Z2_LONGO: Base aeróbica. Intensidade Z2.
+  Descrição deve incluir: duração total, zona-alvo (Z2), cadência (85-95 rpm), observação de ritmo conversacional.
+  Duração típica em dia útil: 90-120 min. Use os dados da semana anterior para decidir.
+  Ex: "105 min base aeróbica Z2. Cadência 85-95 rpm, ritmo conversacional. Mantenha a FC estável — desacelere nas subidas."
+
+- RECUPERACAO: Pedal muito leve Z1. FC mínima possível. Ativa circulação, não gera fadiga.
+  Duração: proporcional à carga da semana anterior — se o atleta fez longões de 2h+, use 75-90 min; semanas leves use 45-60 min. NÃO use valor fixo.
+  Ex: "75 min recuperação ativa Z1. Sem esforço — só mover as pernas."
+
+- TEMPO (limiar): Treino de limiar para elevar FTP. Intensidade Z3-Z4.
+  Descrição deve incluir: aquecimento, blocos (N×X min), zona-alvo por bloco, recuperação entre blocos, volta à calma.
+  Duração típica: 90-105 min (aquecimento 15min + blocos + recuperações + volta à calma 10min).
+  Ex: "15 min aquecimento Z1-Z2. 3×15 min Z3-Z4, recuperação 5 min Z2 entre blocos. Cadência 88-95 rpm. 10 min volta à calma Z1."
+
+- TIROS (neuromuscular/sprint): Alta intensidade Z5. Desenvolve potência e capacidade anaeróbica.
+  Descrição deve incluir: aquecimento, número de repetições, duração do esforço, zona-alvo, recuperação, cadência alta.
+  Duração típica: 75-90 min (aquecimento longo + tiros + recuperações + volta à calma).
+  Ex: "20 min aquecimento progressivo. 10×30s sprint máximo Z5, cadência 100-115 rpm. Recuperação 3.5 min Z1 entre cada. 15 min volta à calma."
+
+- VO2MAX: Blocos longos em Z5 para elevar VO2max e potência aeróbica máxima.
+  Descrição deve incluir: aquecimento, número de blocos, duração do bloco, zona-alvo, recuperação igual ao esforço, cadência.
+  Duração típica: 75-90 min (aquecimento + blocos com recuperação igual + volta à calma).
+  Ex: "15 min aquecimento progressivo até Z3. 5×4 min Z5, cadência 90-100 rpm. Recuperação 4 min Z2 entre blocos. 15 min volta à calma Z1."
+
+- FORCA (treino de força na BIKE — NÃO é academia):
+  Cadência baixa (50-60 rpm), marcha pesada, intensidade Z3. Simula subidas longas e fortalece musculatura de pedalada.
+  Duração típica: 90-105 min.
+  Ex: "15 min aquecimento. 6×8 min cadência 50-58 rpm marcha pesada Z3, subida ou resistência alta. Recuperação 3 min Z1 cadência livre. 10 min volta à calma."
+
+REGRAS DE PROGRESSÃO:
+- Aumentar volume (+5-10% em duracao_min) quando a semana foi bem executada, respeitando o teto de duração em dia útil informado em RESTRIÇÕES DE AGENDA abaixo.
+- Manter ou reduzir se houve dificuldades (pontos fracos > pontos fortes).
+- DESCANSO permanece DESCANSO nos mesmos dias.
+- Para TIROS: aumentar número de repetições (8→10→12) antes de aumentar duração.
+- Para VO2MAX: aumentar reps (4→5) antes de aumentar a duração dos blocos.
+
+Responda APENAS em JSON válido, sem markdown, sem texto extra.
+IMPORTANTE: gere os "treinos" PRIMEIRO — depois escreva "analise_semana" e "progressao" refletindo o que foi realmente gerado. Gere exatamente 7 entradas em "treinos", uma para cada dia da semana informada em "SEMANA A GERAR" abaixo, em ordem cronológica:
+{
+  "treinos": [
+    {
+      "data": "YYYY-MM-DD",
+      "tipo": "TIPO",
+      "duracao_min": 90,
+      "descricao": "Prescrição COMPLETA do treino: aquecimento + estrutura principal (séries×tempo, zona-alvo pelo NOME — Z1 a Z5, cadência) + volta à calma. NUNCA escreva faixas de FC em bpm — só o nome da zona; o app anexa as faixas reais. Para ACADEMIA: lista completa de exercícios com séries×reps.",
+      "cadencia_rpm": "85-95",
+      "academia": null
+    }
+  ],
+  "analise_semana": "Avaliação objetiva da semana atual: o que foi bem, o que foi fraco, como a FC se comportou vs. o alvo. 2-3 frases diretas.",
+  "progressao": "Resumo do que foi gerado: tipos de treino incluídos, decisão de volume/intensidade e POR QUÊ — baseado nos dados da semana. NÃO mencione treinos que não foram incluídos nos treinos acima."
+}
+
+REGRAS DO JSON:
+- "cadencia_rpm" deve ser null para dias ACADEMIA puro (é ginásio, não bike).
+- ACADEMIA é sempre tipo exclusivo — nunca use o campo "academia" como sub-objeto dentro de outro tipo. Um dia = uma atividade.
+- Descrições de treinos de bike devem citar a intensidade pelo NOME da zona (Z1-Z5). NUNCA escreva faixas de FC em bpm — o app anexa automaticamente as faixas reais do atleta.
+- O campo "progressao" deve descrever APENAS o que está nos treinos gerados acima — não mencione academia se nenhum dia tiver tipo ACADEMIA.
+"""
+
+
+async def gerar_proxima_semana(
+    user_id: str, semana_atual: str, teto_dia_util_min: int = 120,
+    dias_treino_override: list[int] | None = None,
+) -> dict:
+    """Gera o plano da próxima semana com base na análise da semana atual.
+
+    `teto_dia_util_min` permite elevar pontualmente o teto de duração dos
+    treinos em dia útil (ex: semana de férias com mais tempo disponível).
+    `dias_treino_override` substitui pontualmente os dias de treino do
+    perfil (ex: semana de férias sem fim de semana disponível).
+    """
     db = get_db()
     doc = await db.semanas.find_one({"semana_inicio": semana_atual, "user_id": user_id})
     if not doc:
@@ -444,7 +531,10 @@ async def gerar_proxima_semana(user_id: str, semana_atual: str) -> dict:
     academia_freq: int = int(academia_cfg.get("frequencia_semanal") or 0)
 
     # Dias de treino para o prompt
-    dias_treino: list[int] = preferencias.get("dias_treino") or _DIAS_TREINO_PADRAO
+    dias_treino: list[int] = (
+        dias_treino_override if dias_treino_override is not None
+        else (preferencias.get("dias_treino") or _DIAS_TREINO_PADRAO)
+    )
     _NOMES_DIA = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
     dias_treino_nomes = ", ".join(_NOMES_DIA[d] for d in sorted(dias_treino))
 
@@ -458,9 +548,11 @@ async def gerar_proxima_semana(user_id: str, semana_atual: str) -> dict:
     # Restrições de agenda para o prompt
     dias_uteis_treino = [d for d in dias_treino if d <= 4]
     if dias_uteis_treino:
+        teto_h = teto_dia_util_min / 60
+        teto_h_txt = f"{teto_h:.1f}h".replace(".0h", "h")
         restricao_util = (
             f"- {', '.join(_NOMES_DIA[d].capitalize() for d in sorted(dias_uteis_treino))}: "
-            f"NENHUM treino acima de 120 min (2h). Sessões de qualidade cabem em 2h."
+            f"NENHUM treino acima de {teto_dia_util_min} min ({teto_h_txt}). Sessões de qualidade cabem nesse tempo."
         )
     else:
         restricao_util = "- Sem treinos em dias úteis configurados."
@@ -472,6 +564,13 @@ async def gerar_proxima_semana(user_id: str, semana_atual: str) -> dict:
         )
     else:
         restricao_fds = "- Sem longão fixo de fim de semana (sem treino em sáb/dom)."
+        if dias_treino_override is not None and dias_uteis_treino:
+            restricao_fds += (
+                " Fim de semana indisponível esta semana (ex: viagem/compromisso) — "
+                f"escolha o melhor dia útil entre {dias_treino_nomes} para uma sessão-base "
+                f"Z2_LONGO mais longa (até o teto de {teto_dia_util_min} min), substituindo o "
+                "papel do longão de fim de semana."
+            )
 
     resumos = "\n".join(_resumo_treino(t) for t in treinos if t.get("tipo") != "DESCANSO")
     if not resumos:
@@ -631,9 +730,7 @@ Após o TESTE_FTP coloque RECUPERACAO no dia seguinte.
     else:
         bloco_potencia = "FTP não configurado — prescreva intensidade apenas por FC."
 
-    prompt = f"""Você é um coach de ciclismo MTB de alto nível, especializado em periodização progressiva e desenvolvimento de performance na bike.
-
-ATLETA: {nome_atleta}, {idade} anos, {peso:.0f} kg, objetivo: {objetivo}.
+    prompt = f"""ATLETA: {nome_atleta}, {idade} anos, {peso:.0f} kg, objetivo: {objetivo}.
 FCMÁX: {fc_max} bpm{limiar_txt}
 ZONAS GARMIN (apenas para SUA decisão de intensidade — NÃO copie os bpm nas descrições; cite só o nome da zona): {zonas_prompt}
 {bloco_potencia}
@@ -642,18 +739,13 @@ DIAS DE TREINO: {dias_treino_nomes}
 {bloco_prova}
 {bloco_ftp_obrigatorio}
 ═══════════════════════════════════════════
+SEMANA A GERAR: {proxima} a {_shift_data(proxima, 6)}
+═══════════════════════════════════════════
 ANÁLISE DA SEMANA ATUAL ({semana_atual}):
 {resumos}
 
 DISTRIBUIÇÃO ATUAL DOS TREINOS:
 {chr(10).join(f"  {t['data']} → {t.get('tipo','DESCANSO')}{(' | ' + str(t.get('duracao_min')) + 'min') if t.get('duracao_min') else ''}" for t in treinos)}
-
-COMO USAR ESSES DADOS PARA DECIDIR A PRÓXIMA SEMANA:
-- FC média ABAIXO do alvo da zona → treino ficou fácil → AUMENTAR carga (mais tempo, mais repetições ou zona mais alta).
-- FC média DENTRO do alvo → execução ideal → MANTER estrutura e progredir levemente (+5-10 min ou +1 rep).
-- FC média ACIMA do alvo → treino foi duro → MANTER ou REDUZIR volume antes de progredir.
-- Pontos fracos recorrentes → escolher tipos de treino que ataquem diretamente essa fraqueza.
-- Treino incompleto ou não realizado → NÃO progredir esse tipo de sessão; manter ou reduzir.
 ═══════════════════════════════════════════
 {bloco_parecer}
 
@@ -664,71 +756,9 @@ RESTRIÇÕES DE AGENDA (OBRIGATÓRIAS):
 
 {_instrucoes_objetivo(objetivo)}
 
-TIPOS DE TREINO NA BIKE — PRESCRIÇÃO DETALHADA (cite a intensidade SEMPRE pelo nome da zona — Z1 a Z5 — NUNCA escreva faixas em bpm; o app anexa as faixas reais do atleta):
-
-- Z2_LONGO: Base aeróbica. Intensidade Z2.
-  Descrição deve incluir: duração total, zona-alvo (Z2), cadência (85-95 rpm), observação de ritmo conversacional.
-  Duração típica em dia útil: 90-120 min. Use os dados da semana anterior para decidir.
-  Ex: "105 min base aeróbica Z2. Cadência 85-95 rpm, ritmo conversacional. Mantenha a FC estável — desacelere nas subidas."
-
-- RECUPERACAO: Pedal muito leve Z1. FC mínima possível. Ativa circulação, não gera fadiga.
-  Duração: proporcional à carga da semana anterior — se o atleta fez longões de 2h+, use 75-90 min; semanas leves use 45-60 min. NÃO use valor fixo.
-  Ex: "75 min recuperação ativa Z1. Sem esforço — só mover as pernas."
-
-- TEMPO (limiar): Treino de limiar para elevar FTP. Intensidade Z3-Z4.
-  Descrição deve incluir: aquecimento, blocos (N×X min), zona-alvo por bloco, recuperação entre blocos, volta à calma.
-  Duração típica: 90-105 min (aquecimento 15min + blocos + recuperações + volta à calma 10min).
-  Ex: "15 min aquecimento Z1-Z2. 3×15 min Z3-Z4, recuperação 5 min Z2 entre blocos. Cadência 88-95 rpm. 10 min volta à calma Z1."
-
-- TIROS (neuromuscular/sprint): Alta intensidade Z5. Desenvolve potência e capacidade anaeróbica.
-  Descrição deve incluir: aquecimento, número de repetições, duração do esforço, zona-alvo, recuperação, cadência alta.
-  Duração típica: 75-90 min (aquecimento longo + tiros + recuperações + volta à calma).
-  Ex: "20 min aquecimento progressivo. 10×30s sprint máximo Z5, cadência 100-115 rpm. Recuperação 3.5 min Z1 entre cada. 15 min volta à calma."
-
-- VO2MAX: Blocos longos em Z5 para elevar VO2max e potência aeróbica máxima.
-  Descrição deve incluir: aquecimento, número de blocos, duração do bloco, zona-alvo, recuperação igual ao esforço, cadência.
-  Duração típica: 75-90 min (aquecimento + blocos com recuperação igual + volta à calma).
-  Ex: "15 min aquecimento progressivo até Z3. 5×4 min Z5, cadência 90-100 rpm. Recuperação 4 min Z2 entre blocos. 15 min volta à calma Z1."
-
-- FORCA (treino de força na BIKE — NÃO é academia):
-  Cadência baixa (50-60 rpm), marcha pesada, intensidade Z3. Simula subidas longas e fortalece musculatura de pedalada.
-  Duração típica: 90-105 min.
-  Ex: "15 min aquecimento. 6×8 min cadência 50-58 rpm marcha pesada Z3, subida ou resistência alta. Recuperação 3 min Z1 cadência livre. 10 min volta à calma."
-
 {_bloco_academia_prompt}
 
 {"POTÊNCIA (WATTS) NAS PRESCRIÇÕES:" + chr(10) + ("Inclua o alvo em watts NA DESCRIÇÃO de TODOS os treinos: ex. 'Z2 | 171-231W'." if potencia_modo == "sempre" else "Inclua o alvo em watts NA DESCRIÇÃO dos treinos de qualidade (VO2MAX, TIROS, TEMPO, FORCA): ex. '4×4 min Z5 | >327W'. Z2_LONGO e RECUPERACAO não têm potência (feitos na rua sem medidor).") if ftp_user else ""}
-
-REGRAS DE PROGRESSÃO:
-- Aumentar volume (+5-10% em duracao_min) quando a semana foi bem executada, respeitando o teto de 120 min em dias úteis.
-- Manter ou reduzir se houve dificuldades (pontos fracos > pontos fortes).
-- DESCANSO permanece DESCANSO nos mesmos dias.
-- Para TIROS: aumentar número de repetições (8→10→12) antes de aumentar duração.
-- Para VO2MAX: aumentar reps (4→5) antes de aumentar a duração dos blocos.
-
-Responda APENAS em JSON válido, sem markdown, sem texto extra.
-IMPORTANTE: gere os "treinos" PRIMEIRO — depois escreva "analise_semana" e "progressao" refletindo o que foi realmente gerado:
-{{
-  "treinos": [
-    {{
-      "data": "YYYY-MM-DD",
-      "tipo": "TIPO",
-      "duracao_min": 90,
-      "descricao": "Prescrição COMPLETA do treino: aquecimento + estrutura principal (séries×tempo, zona-alvo pelo NOME — Z1 a Z5, cadência) + volta à calma. NUNCA escreva faixas de FC em bpm — só o nome da zona; o app anexa as faixas reais. Para ACADEMIA: lista completa de exercícios com séries×reps.",
-      "cadencia_rpm": "85-95",
-      "academia": null
-    }}
-  ],
-  "analise_semana": "Avaliação objetiva da semana atual: o que foi bem, o que foi fraco, como a FC se comportou vs. o alvo. 2-3 frases diretas.",
-  "progressao": "Resumo do que foi gerado: tipos de treino incluídos, decisão de volume/intensidade e POR QUÊ — baseado nos dados da semana. NÃO mencione treinos que não foram incluídos nos treinos acima."
-}}
-
-REGRAS DO JSON:
-- "cadencia_rpm" deve ser null para dias ACADEMIA puro (é ginásio, não bike).
-- ACADEMIA é sempre tipo exclusivo — nunca use o campo "academia" como sub-objeto dentro de outro tipo. Um dia = uma atividade.
-- Exatamente 7 entradas em "treinos" (uma por dia: {proxima} a {_shift_data(proxima, 6)}).
-- Descrições de treinos de bike devem citar a intensidade pelo NOME da zona (Z1-Z5). NUNCA escreva faixas de FC em bpm — o app anexa automaticamente as faixas reais do atleta.
-- O campo "progressao" deve descrever APENAS o que está nos treinos gerados acima — não mencione academia se nenhum dia tiver tipo ACADEMIA.
 """
 
     modelo_usado = "claude"
@@ -736,6 +766,11 @@ REGRAS DO JSON:
         response = await _client.messages.create(
             model=_MODEL_PLANO,
             max_tokens=16000,
+            system=[{
+                "type": "text",
+                "text": _SISTEMA_PLANO,
+                "cache_control": {"type": "ephemeral"},
+            }],
             messages=[{"role": "user", "content": prompt}],
         )
         raw = _extrair_texto(response).strip().replace("```json", "").replace("```", "").strip()
@@ -744,7 +779,7 @@ REGRAS DO JSON:
         if _is_quota_error(e) and settings.GEMINI_API_KEY:
             logger.warning("Claude com cota esgotada (%s) — tentando Gemini Flash", e)
             try:
-                raw = await _chamar_gemini(prompt)
+                raw = await _chamar_gemini(prompt, _SISTEMA_PLANO)
                 raw = raw.strip().replace("```json", "").replace("```", "").strip()
                 data = json.loads(raw)
                 modelo_usado = "gemini"
