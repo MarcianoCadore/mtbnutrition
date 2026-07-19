@@ -28,6 +28,7 @@ from datetime import date, datetime
 from bson import ObjectId
 
 from app.services.mongo_service import get_db
+from app.utils import hoje_local
 
 # Limiares de periodização (em semanas até a prova).
 _SEMANAS_TAPER = 1      # ≤ 1 semana: polimento/taper (a semana da prova)
@@ -42,7 +43,7 @@ _CAMPOS_EDITAVEIS = {
 
 
 def _hoje_iso() -> str:
-    return date.today().isoformat()
+    return hoje_local().isoformat()
 
 
 def _limpar(dados: dict) -> dict:
@@ -146,7 +147,7 @@ async def salvar_focos(prova_id: str, itens: list[str]) -> None:
 
 def dias_ate(data_prova: str, ref: str | None = None) -> int:
     """Dias entre ref (hoje por padrão) e a data da prova. Pode ser negativo."""
-    ref_d = date.fromisoformat(ref) if ref else date.today()
+    ref_d = date.fromisoformat(ref) if ref else hoje_local()
     return (date.fromisoformat(data_prova) - ref_d).days
 
 

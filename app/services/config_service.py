@@ -8,6 +8,7 @@ import re
 
 from app.services.mongo_service import get_db
 from app.services.nutricao_service import DEFAULT_HORARIOS
+from app.utils import hoje_local
 
 _RE_HORA = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
@@ -233,7 +234,7 @@ async def dias_desde_ultimo_ftp(user_id: str) -> int | None:
         return None
     try:
         ultimo = date.fromisoformat(data_str)
-        return (date.today() - ultimo).days
+        return (hoje_local() - ultimo).days
     except ValueError:
         return None
 

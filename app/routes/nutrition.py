@@ -18,6 +18,7 @@ from app.services.config_service import (
     historico_chat_nutricao, adicionar_mensagem_chat,
 )
 from app.services.mongo_service import get_db
+from app.utils import agora_local, hoje_local
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -247,8 +248,8 @@ async def registrar_fuga_rollover(user_id: str, data: str, extra: dict, agora=No
 
     # 2) obtém config de horários e instante atual
     cfg = await get_horarios(user_id)
-    hoje_iso = dt_date.today().isoformat()
-    hora_atual = agora if agora is not None else datetime.now().time()
+    hoje_iso = hoje_local().isoformat()
+    hora_atual = agora if agora is not None else agora_local().time()
 
     # 3) capacidade do dia da fuga
     tipo_dia, periodo_dia = await _tipo_periodo_do_dia(user_id, data)
@@ -468,7 +469,7 @@ async def plano_hoje(request: Request):
     if not await _nutricao_habilitada(user_id):
         raise HTTPException(status_code=403, detail=_MSG_NUTRICAO_DESABILITADA)
     db = get_db()
-    hoje = datetime.now().date()
+    hoje = hoje_local()
     doc = await db.planos.find_one(
         {"user_id": user_id,
          "data": {"$gte": datetime(hoje.year, hoje.month, hoje.day)}},

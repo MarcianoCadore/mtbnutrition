@@ -8,6 +8,7 @@ from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 from datetime import datetime
 from app.services.whatsapp_service import send_message, send_plano_diario
+from app.utils import hoje_local
 from app.services.mongo_service import get_db
 from app.models.models import PlanoAlimentar
 from config.settings import settings
@@ -37,7 +38,7 @@ def _resolver_datas_texto(texto: str) -> list[str]:
     from datetime import date, timedelta
 
     t_lower = " " + texto.lower() + " "
-    hoje = date.today()
+    hoje = hoje_local()
     seg_semana = hoje - timedelta(days=hoje.weekday())
 
     # Mapa de tokens de data fixa e dias da semana com posição no texto original
@@ -106,7 +107,7 @@ def _ref_datas() -> str:
     para a IA resolver expressões como 'quinta' ou 'amanhã'."""
     from datetime import date, timedelta
     nomes = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
-    hoje = date.today()
+    hoje = hoje_local()
     seg = hoje - timedelta(days=hoje.weekday())
     linhas = [f"hoje = {hoje.isoformat()} ({nomes[hoje.weekday()]}-feira)",
               f"amanhã = {(hoje + timedelta(days=1)).isoformat()}",
@@ -440,7 +441,7 @@ async def whatsapp_webhook(request: Request):
         num_media = int(form.get("NumMedia") or 0)
     except ValueError:
         num_media = 0
-    hoje = datetime.now().date().isoformat()
+    hoje = hoje_local().isoformat()
 
     # ── RESOLUÇÃO DO USUÁRIO PELO TELEFONE ────────────────────────────────────
     from app.services.user_service import get_por_telefone
@@ -812,7 +813,7 @@ async def testar_whatsapp():
 @router.post("/send-plano")
 async def enviar_plano_hoje():
     db = get_db()
-    hoje = datetime.now().date()
+    hoje = hoje_local()
     doc = await db.planos.find_one(
         {"data": {"$gte": datetime(hoje.year, hoje.month, hoje.day)}},
         {"_id": 0}

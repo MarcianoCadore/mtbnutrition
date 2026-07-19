@@ -10,6 +10,7 @@ from app.models.models import Treino, TipoTreino
 from app.services.mongo_service import get_db
 from app.services.fit_service import analisar_fit
 from app.services.ai_service import classificar_tipo_treino
+from app.utils import hoje_local
 from config.settings import settings
 
 UPLOADS_DIR = settings.UPLOADS_DIR or os.path.join(
@@ -62,7 +63,7 @@ async def listar_treinos(request: Request):
 @router.get("/hoje")
 async def treino_hoje(request: Request):
     db = get_db()
-    hoje = datetime.now().date()
+    hoje = hoje_local()
     doc = await db.treinos.find_one(
         {"user_id": request.state.user_id,
          "data": {"$gte": datetime(hoje.year, hoje.month, hoje.day)}},

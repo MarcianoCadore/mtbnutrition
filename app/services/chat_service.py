@@ -224,8 +224,8 @@ async def _build_sistema(user_id: str) -> str:
     try:
         from app.services.treino_semana_service import get_treinos_semana
 
-        hoje_str = datetime.now().date().isoformat()
-        hoje_dt = datetime.now().date()
+        hoje_dt = datetime.now(_TZ).date()
+        hoje_str = hoje_dt.isoformat()
         seg_atual = hoje_dt - timedelta(days=hoje_dt.weekday())
 
         linhas.append(f"\n== TREINOS (semana anterior, atual, próxima) ==")
