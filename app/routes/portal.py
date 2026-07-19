@@ -1602,7 +1602,14 @@ function renderFTPBtn() {
   }
 }
 
-load();
+(async function loadInicial() {
+  try {
+    const r = await fetch(`/workout/semana/${iso(monday)}`);
+    const d = await r.json();
+    if (d.proxima_semana_gerada) monday = addDays(monday, 7);
+  } catch {}
+  await load();
+})();
 carregarProva();
 renderFTPBtn();
 window.addEventListener('mtb:recarregar', load);
