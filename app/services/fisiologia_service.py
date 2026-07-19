@@ -15,6 +15,7 @@ import logging
 from datetime import datetime, timezone
 
 import anthropic
+import pytz
 
 from config.settings import settings
 from app.services.mongo_service import get_db
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 _client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
 _MODEL_PARECER = "claude-opus-4-8"       # análise fisiológica (inteligência importa)
 _MODEL_PARECER_FALLBACK = "claude-sonnet-5"
+_TZ = pytz.timezone("America/Sao_Paulo")
 
 _N_SEMANAS_HISTORICO = 4
 
@@ -287,8 +289,8 @@ async def _chamar_parecer_ia(prompt: str) -> tuple[dict, str]:
     try:
         response = await _client.messages.create(
             model=_MODEL_PARECER,
-            max_tokens=16000,
-            thinking={"type": "adaptive"},
+            max_tokens=6000,
+            thinking={"type": "enabled", "budget_tokens": 4096},
             messages=[{"role": "user", "content": prompt}],
         )
         modelo = "claude-opus"
@@ -298,7 +300,7 @@ async def _chamar_parecer_ia(prompt: str) -> tuple[dict, str]:
         logger.warning("Opus sem cota para parecer (%s) — tentando Sonnet", e)
         response = await _client.messages.create(
             model=_MODEL_PARECER_FALLBACK,
-            max_tokens=16000,
+            max_tokens=6000,
             messages=[{"role": "user", "content": prompt}],
         )
         modelo = "claude-sonnet"
@@ -310,7 +312,21 @@ async def _chamar_parecer_ia(prompt: str) -> tuple[dict, str]:
 # ── Entrada principal ────────────────────────────────────────────────────────
 
 async def gerar_parecer_fisiologico(user_id: str, semana_atual: str) -> dict:
-    """Gera (e persiste) o parecer fisiológico das últimas semanas do atleta."""
+    """Gera (e persiste) o parecer fisiológico das últimas semanas do atleta.
+
+    Reaproveita o parecer já salvo para a mesma semana se foi gerado hoje —
+    evita repetir a chamada cara ao Opus quando o usuário pré-visualiza a
+    mesma semana mais de uma vez no mesmo dia.
+    """
+    db = get_db()
+    existente = await db.pareceres_fisiologicos.find_one(
+        {"user_id": user_id, "semana_ref": semana_atual})
+    if existente and existente.get("modelo") in ("claude-opus", "claude-sonnet"):
+        gerado_em = datetime.fromisoformat(existente["gerado_em"])
+        if gerado_em.astimezone(_TZ).date() == datetime.now(_TZ).date():
+            existente.pop("_id", None)
+            return existente
+
     historico = await _coletar_historico(user_id, semana_atual)
     metricas = calcular_metricas(historico)
 
@@ -350,7 +366,6 @@ async def gerar_parecer_fisiologico(user_id: str, semana_atual: str) -> dict:
            ("estado_forma", "nivel_fadiga", "ajuste_carga", "pontos_atencao", "recomendacoes")},
     }
 
-    db = get_db()
     await db.pareceres_fisiologicos.replace_one(
         {"user_id": user_id, "semana_ref": semana_atual}, parecer, upsert=True)
     parecer.pop("_id", None)
