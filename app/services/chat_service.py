@@ -104,6 +104,9 @@ _TOOLS = [
             },
             "required": ["origem", "destino", "modo"],
         },
+        # Marca o fim do bloco cacheável: a lista de ferramentas nunca muda,
+        # então fica cacheada (leitura ~10% do preço) em toda chamada seguinte.
+        "cache_control": {"type": "ephemeral"},
     },
 ]
 
@@ -341,6 +344,19 @@ async def responder(user_id: str, mensagem: str) -> tuple[str, bool]:
         {"role": m["role"], "content": m["texto"]}
         for m in historico
     ]
+    if messages:
+        # Marca o fim do histórico já salvo como bloco cacheável: ele se repete
+        # inteiro a cada mensagem nova (e a cada iteração do loop de ferramentas
+        # abaixo), então cachear evita reprocessar esse prefixo como input "cru".
+        ultima = messages[-1]
+        messages[-1] = {
+            "role": ultima["role"],
+            "content": [{
+                "type": "text",
+                "text": ultima["content"],
+                "cache_control": {"type": "ephemeral"},
+            }],
+        }
     messages.append({"role": "user", "content": mensagem})
 
     resposta = None
@@ -350,7 +366,11 @@ async def responder(user_id: str, mensagem: str) -> tuple[str, bool]:
             resp = await _client.messages.create(
                 model=_MODEL,
                 max_tokens=2000,
-                system=sistema,
+                system=[{
+                    "type": "text",
+                    "text": sistema,
+                    "cache_control": {"type": "ephemeral"},
+                }],
                 messages=messages,
                 tools=_TOOLS,
             )
