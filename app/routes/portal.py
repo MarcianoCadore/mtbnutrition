@@ -1525,9 +1525,9 @@ async function enviarParaGarmin() {
     const d = await r.json();
     fecharGenModal();
     toast(`✅ ${d.enviados} treino(s) enviado(s) ao Garmin!`, 'ok');
-    // se o usuário estiver visualizando a próxima semana, recarrega
-    const proxData = new Date(_genData.semana_proxima + 'T12:00:00');
-    if (iso(monday) === _genData.semana_proxima) await load();
+    // navega para a semana recém-gerada e recarrega a grade com os treinos novos
+    monday = new Date(_genData.semana_proxima + 'T12:00:00');
+    await load();
   } catch(e) {
     btn.disabled = false;
     btn.innerHTML = '📡 Salvar + Enviar pro Garmin';
