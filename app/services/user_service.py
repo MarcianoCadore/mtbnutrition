@@ -206,6 +206,7 @@ async def criar_usuario(dados: dict) -> dict:
         "whatsapp": {
             "ativo": bool(dados.get("whatsapp", {}).get("ativo", False)),
         },
+        "pagamento_confirmado": bool(dados.get("pagamento_confirmado", False)),
         "criado_em": datetime.now(timezone.utc),
     }
 

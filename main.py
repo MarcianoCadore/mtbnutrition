@@ -16,6 +16,7 @@ from app.routes import workout, nutrition, whatsapp, portal, landing, chat as ch
 from app.services import user_service
 from app.services.whatsapp_service import send_message
 from app.services.mongo_service import get_db
+from app import pix
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -552,45 +553,80 @@ VERIFICAR_HTML = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MTB Nutrition — Verificar Telefone</title>
+  <title>MTB Nutrition — Pagamento</title>
   <style>
-    :root { --green:#128c7e; --bg:#f0f2f5; --card:#fff; --text:#1a1a2e; --muted:#888; --border:#e0e0e0; }
+    :root { --green:#128c7e; --whats:#25d366; --bg:#f0f2f5; --card:#fff; --text:#1a1a2e; --muted:#888; --border:#e0e0e0; }
     * { box-sizing:border-box; margin:0; padding:0; }
     body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px; }
-    .card { background:var(--card); border-radius:16px; box-shadow:0 6px 30px rgba(0,0,0,.12); width:100%; max-width:360px; overflow:hidden; }
+    .card { background:var(--card); border-radius:16px; box-shadow:0 6px 30px rgba(0,0,0,.12); width:100%; max-width:420px; overflow:hidden; }
     .card-head { background:var(--green); color:#fff; padding:24px; text-align:center; }
     .card-head .logo { font-size:1.3rem; font-weight:700; }
     .card-head .sub { font-size:.82rem; opacity:.85; margin-top:4px; }
     .card-body { padding:24px; }
-    .info { font-size:.9rem; color:var(--muted); margin-bottom:16px; text-align:center; }
-    label { display:block; font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); margin-bottom:6px; }
-    input[type=text] { width:100%; border:1.5px solid var(--border); border-radius:8px; padding:12px 14px; font-size:1.4rem; letter-spacing:6px; text-align:center; font-family:monospace; outline:none; transition:border-color .2s; margin-bottom:16px; }
-    input:focus { border-color:var(--green); }
-    .btn { width:100%; background:var(--green); color:#fff; border:none; border-radius:10px; padding:14px; font-size:1rem; font-weight:700; cursor:pointer; transition:background .2s; }
-    .btn:hover { background:#0e7166; }
-    .err { background:#fdecea; color:#c62828; border-radius:9px; padding:10px 12px; font-size:.85rem; font-weight:600; margin-bottom:14px; text-align:center; }
-    .reenviar { margin-top:14px; text-align:center; font-size:.85rem; color:var(--muted); }
-    .reenviar form { display:inline; }
-    .reenviar button { background:none; border:none; color:var(--green); font-weight:600; cursor:pointer; font-size:.85rem; text-decoration:underline; }
+    .step { display:flex; align-items:flex-start; gap:10px; margin-bottom:14px; }
+    .step-num { display:flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:50%; background:var(--green); color:#fff; font-size:.75rem; font-weight:700; flex-shrink:0; }
+    .step p { font-size:.9rem; color:#333; line-height:1.5; }
+    .qr-wrap { text-align:center; margin:4px 0 18px; }
+    .qr-wrap svg { max-width:220px; width:100%; height:auto; border:1px solid var(--border); border-radius:10px; padding:10px; background:#fff; }
+    .qr-valor { font-weight:700; color:var(--text); margin-top:8px; font-size:.95rem; }
+    .pix-row { display:flex; gap:8px; margin-bottom:18px; }
+    .pix-code { flex:1; border:1.5px solid var(--border); border-radius:8px; padding:10px 12px; font-size:.72rem; font-family:monospace; color:var(--muted); background:#fafafa; resize:none; }
+    .copy-btn { border:1.5px solid var(--green); background:#fff; color:var(--green); border-radius:8px; padding:0 14px; font-size:.82rem; font-weight:700; cursor:pointer; white-space:nowrap; }
+    .copy-btn:hover { background:var(--green); color:#fff; }
+    .whats-btn { display:flex; align-items:center; justify-content:center; gap:8px; width:100%; background:var(--whats); color:#fff; border:none; border-radius:10px; padding:14px; font-size:.95rem; font-weight:700; text-decoration:none; margin-bottom:14px; }
+    .whats-btn:hover { background:#1ebc59; }
+    .final-note { font-size:.82rem; color:var(--muted); text-align:center; line-height:1.5; }
   </style>
 </head>
 <body>
 <div class="card">
   <div class="card-head">
     <div class="logo">✅ Cadastro Realizado</div>
-    <div class="sub">Aguardando liberação</div>
+    <div class="sub">Falta só o pagamento para liberar seu acesso</div>
   </div>
   <div class="card-body">
-    <p class="info" style="text-align:center; font-size:1rem; color:#333; line-height:1.6;">
-      Cadastro realizado com sucesso!
-    </p>
-    <p class="info" style="text-align:center; font-size:.95rem; color:#555; line-height:1.6;">
-      Favor entrar em contato com o administrador da plataforma informando que já realizou o cadastro para que seu acesso seja liberado.
-    </p>
+    <div class="step">
+      <span class="step-num">1</span>
+      <p>Escaneie o QR code Pix abaixo (ou use o código copia-e-cola) e pague sua assinatura.</p>
+    </div>
+    <div class="qr-wrap">
+      {{QRCODE_SVG}}
+      <div class="qr-valor">R$ 24,99 · Plano Atleta</div>
+    </div>
+    <div class="pix-row">
+      <textarea class="pix-code" id="pixCode" readonly rows="3">{{PIX_PAYLOAD}}</textarea>
+      <button class="copy-btn" type="button" onclick="copiarPix()">Copiar</button>
+    </div>
+    <div class="step">
+      <span class="step-num">2</span>
+      <p>Depois de pagar, envie o comprovante pelo WhatsApp abaixo.</p>
+    </div>
+    <a class="whats-btn" href="https://wa.me/5554999441016?text=Ola!+Segue+o+comprovante+de+pagamento+-+MTB+Nutrition" target="_blank" rel="noopener">
+      💬 Enviar comprovante no WhatsApp
+    </a>
+    <p class="final-note">Em breve retornaremos com a liberação do seu acesso à plataforma.</p>
   </div>
 </div>
+<script>
+function copiarPix(){
+  var el = document.getElementById('pixCode');
+  el.select();
+  el.setSelectionRange(0, 99999);
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(el.value).catch(function(){ document.execCommand('copy'); });
+  } else {
+    document.execCommand('copy');
+  }
+}
+</script>
 </body>
 </html>"""
+
+VERIFICAR_HTML = (
+    VERIFICAR_HTML
+    .replace("{{QRCODE_SVG}}", pix.get_qrcode_svg())
+    .replace("{{PIX_PAYLOAD}}", pix.PIX_PAYLOAD)
+)
 
 
 def _render_verificar(tel: str, erro: str = "") -> str:

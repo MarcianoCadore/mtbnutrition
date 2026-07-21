@@ -14,7 +14,7 @@ class TestPublicasEAuth:
         r = client.get("/", follow_redirects=False)
         assert r.status_code == 200
         assert "text/html" in r.headers["content-type"]
-        assert "19,99" in r.text
+        assert "24,99" in r.text
 
     def test_raiz_logado_redireciona_portal(self, client):
         import main
@@ -117,6 +117,17 @@ class TestAdmin:
         assert r.status_code == 200
         doc = run(fake_db.users.find_one({"_id": ObjectId(alvo)}))
         assert doc["features"]["chat"] is False
+
+    def test_toggle_pagamento(self, client, fake_db, run):
+        import main
+        uid, alvo = str(ObjectId()), str(ObjectId())
+        client.cookies.set(main._COOKIE, main._gerar_token(uid))
+        run(fake_db.users.insert_one({"_id": ObjectId(uid), "login": "marciano"}))
+        run(fake_db.users.insert_one({"_id": ObjectId(alvo), "login": "x", "pagamento_confirmado": False}))
+        r = client.post("/admin/toggle-pagamento", json={"user_id": alvo, "pago": True})
+        assert r.status_code == 200
+        doc = run(fake_db.users.find_one({"_id": ObjectId(alvo)}))
+        assert doc["pagamento_confirmado"] is True
 
 
 class TestPerfil:

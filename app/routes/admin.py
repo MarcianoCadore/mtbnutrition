@@ -31,7 +31,7 @@ _HTML = """<!DOCTYPE html>
     .sub-title { color:var(--muted); font-size:.85rem; margin-bottom:20px; }
 
     /* Stats */
-    .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:20px; }
+    .stats { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:20px; }
     .stat { background:var(--card); border-radius:10px; padding:12px 14px; box-shadow:0 1px 4px rgba(0,0,0,.08); }
     .stat .val { font-size:1.6rem; font-weight:800; color:var(--green); }
     .stat .lbl { font-size:.7rem; color:var(--muted); margin-top:1px; }
@@ -63,6 +63,10 @@ _HTML = """<!DOCTYPE html>
     .btn-habilitar:hover { background:#219a52; }
     .btn-bloquear  { background:#e74c3c; color:#fff; }
     .btn-bloquear:hover  { background:#c0392b; }
+    .btn-pago-on   { background:#e74c3c; color:#fff; }
+    .btn-pago-on:hover   { background:#c0392b; }
+    .btn-pago-off  { background:#27ae60; color:#fff; }
+    .btn-pago-off:hover  { background:#219a52; }
     .btn-chat-on   { background:var(--green2); color:#fff; }
     .btn-chat-on:hover   { background:#1db954; }
     .btn-chat-off  { background:#95a5a6; color:#fff; }
@@ -90,7 +94,7 @@ _HTML = """<!DOCTYPE html>
 </nav>
 <main>
   <h1>Administração</h1>
-  <p class="sub-title">Gerencie acesso e chat por usuário.</p>
+  <p class="sub-title">Gerencie pagamento, acesso e chat por usuário.</p>
 
   <div id="pending-banner" class="pending-banner"></div>
   <div class="stats" id="stats"></div>
@@ -103,6 +107,7 @@ const USERS = __USERS_JSON__;
 
 function acessoAtivo(u) { return u.telefone_verificado === true; }
 function chatAtivo(u)   { return (u.features || {}).chat !== false; }
+function pagamentoOk(u) { return u.pagamento_confirmado === true; }
 
 function iniciais(u) {
   const n = (u.nome || u.login || '?');
@@ -110,32 +115,42 @@ function iniciais(u) {
 }
 
 function renderStats() {
-  const total   = USERS.length;
-  const ativos  = USERS.filter(acessoAtivo).length;
-  const pend    = total - ativos;
-  const comChat = USERS.filter(chatAtivo).length;
+  const total    = USERS.length;
+  const ativos   = USERS.filter(acessoAtivo).length;
+  const pend     = total - ativos;
+  const comChat  = USERS.filter(chatAtivo).length;
+  const pagos    = USERS.filter(pagamentoOk).length;
+  const pendPag  = total - pagos;
   document.getElementById('stats').innerHTML = `
     <div class="stat"><div class="val">${total}</div><div class="lbl">Usuários</div></div>
+    <div class="stat"><div class="val">${pagos}</div><div class="lbl">Pagamento OK</div></div>
+    <div class="stat"><div class="val">${pendPag}</div><div class="lbl">Pagto. pendente</div></div>
     <div class="stat"><div class="val">${ativos}</div><div class="lbl">Com acesso</div></div>
-    <div class="stat"><div class="val">${pend}</div><div class="lbl">Aguardando</div></div>
     <div class="stat"><div class="val">${comChat}</div><div class="lbl">Chat ativo</div></div>`;
 }
 
 function renderCard(u) {
-  const acesso = acessoAtivo(u);
-  const chat   = chatAtivo(u);
+  const acesso  = acessoAtivo(u);
+  const chat    = chatAtivo(u);
+  const pago    = pagamentoOk(u);
   const badgeAcesso = acesso
     ? '<span class="badge on">✓ Habilitado</span>'
     : '<span class="badge pend">⏳ Aguardando</span>';
   const badgeChat = chat
     ? '<span class="badge on">✓ Ativo</span>'
     : '<span class="badge off">✗ Inativo</span>';
+  const badgePagamento = pago
+    ? '<span class="badge on">✓ Pago</span>'
+    : '<span class="badge pend">⏳ Pendente</span>';
   const btnAcesso = acesso
     ? `<button class="btn-sm btn-bloquear"  id="ba-${u.id}" onclick="toggleAcesso('${u.id}',true)">Bloquear</button>`
     : `<button class="btn-sm btn-habilitar" id="ba-${u.id}" onclick="toggleAcesso('${u.id}',false)">Habilitar</button>`;
   const btnChat = chat
     ? `<button class="btn-sm btn-chat-off" id="bc-${u.id}" onclick="toggleChat('${u.id}',true)">Desativar</button>`
     : `<button class="btn-sm btn-chat-on"  id="bc-${u.id}" onclick="toggleChat('${u.id}',false)">Ativar</button>`;
+  const btnPagamento = pago
+    ? `<button class="btn-sm btn-pago-on"  id="bp-${u.id}" onclick="togglePagamento('${u.id}',true)">Marcar pendente</button>`
+    : `<button class="btn-sm btn-pago-off" id="bp-${u.id}" onclick="togglePagamento('${u.id}',false)">Marcar pago</button>`;
   const lim = (u.features || {}).chat_limite_semana || '';
   const opcoes = [3,5,10,20,50].map(n =>
     `<option value="${n}" ${lim === n ? 'selected' : ''}>${n}/semana</option>`).join('');
@@ -152,6 +167,10 @@ function renderCard(u) {
       </div>
     </div>
     <div class="user-rows">
+      <div class="user-row">
+        <span class="user-row-label">Pagamento</span>
+        <div style="display:flex;align-items:center;gap:8px">${badgePagamento}${btnPagamento}</div>
+      </div>
       <div class="user-row">
         <span class="user-row-label">Acesso</span>
         <div style="display:flex;align-items:center;gap:8px">${badgeAcesso}${btnAcesso}</div>
@@ -171,12 +190,12 @@ function renderCard(u) {
 function renderAll() {
   renderStats();
   document.getElementById('user-list').innerHTML = USERS.map(renderCard).join('');
-  const pend = USERS.filter(u => !acessoAtivo(u));
+  const pendPag = USERS.filter(u => !pagamentoOk(u));
   const banner = document.getElementById('pending-banner');
-  if (pend.length > 0) {
+  if (pendPag.length > 0) {
     banner.style.display = 'block';
-    const nomes = pend.map(u => u.nome || u.login).join(', ');
-    banner.innerHTML = `<b>⏳ ${pend.length} usuário${pend.length > 1 ? 's' : ''} aguardando acesso:</b> ${nomes}<br><span style="font-size:.8rem">Clique em <b>Habilitar</b> no cartão do usuário para liberar o acesso.</span>`;
+    const nomes = pendPag.map(u => u.nome || u.login).join(', ');
+    banner.innerHTML = `<b>⏳ ${pendPag.length} usuário${pendPag.length > 1 ? 's' : ''} com pagamento pendente:</b> ${nomes}<br><span style="font-size:.8rem">Confira o comprovante no WhatsApp e clique em <b>Marcar pago</b> no cartão do usuário.</span>`;
   } else {
     banner.style.display = 'none';
   }
@@ -197,6 +216,23 @@ async function toggleAcesso(id, currentAtivo) {
     renderStats();
     showToast(novoAtivo ? 'Usuário habilitado.' : 'Usuário bloqueado.');
   } else { btn.disabled = false; showToast('Erro ao atualizar acesso.'); }
+}
+
+async function togglePagamento(id, currentPago) {
+  const btn = document.getElementById('bp-' + id);
+  btn.disabled = true;
+  const novoPago = !currentPago;
+  const res = await fetch('/admin/toggle-pagamento', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({user_id: id, pago: novoPago})
+  });
+  if (res.ok) {
+    const u = USERS.find(x => x.id === id);
+    u.pagamento_confirmado = novoPago;
+    document.getElementById('row-' + id).outerHTML = renderCard(u);
+    renderStats();
+    showToast(novoPago ? 'Pagamento confirmado.' : 'Pagamento marcado como pendente.');
+  } else { btn.disabled = false; showToast('Erro ao atualizar pagamento.'); }
 }
 
 async function toggleChat(id, currentAtivo) {
@@ -266,7 +302,11 @@ async def admin_page(request: Request):
 
     db = get_db()
     cursor = db.users.find(
-        {}, {"login": 1, "nome": 1, "telefone": 1, "telefone_verificado": 1, "features": 1, "criado_em": 1}
+        {},
+        {
+            "login": 1, "nome": 1, "telefone": 1, "telefone_verificado": 1,
+            "features": 1, "criado_em": 1, "pagamento_confirmado": 1,
+        },
     )
     usuarios = await cursor.to_list(length=None)
 
@@ -278,13 +318,14 @@ async def admin_page(request: Request):
             "nome": u.get("nome", ""),
             "tel": u.get("telefone", ""),
             "telefone_verificado": bool(u.get("telefone_verificado", False)),
+            "pagamento_confirmado": bool(u.get("pagamento_confirmado", False)),
             "features": u.get("features", {}),
             "criado_em": u["criado_em"].strftime("%d/%m/%Y %H:%M") if u.get("criado_em") else "",
         }
         for u in usuarios
     ]
-    # Pendentes primeiro, depois por data de cadastro (mais recentes primeiro)
-    dados.sort(key=lambda x: (x["telefone_verificado"], x["criado_em"]))
+    # Pagamento pendente primeiro, depois acesso pendente, depois por data de cadastro
+    dados.sort(key=lambda x: (x["pagamento_confirmado"], x["telefone_verificado"], x["criado_em"]))
     users_json = json.dumps(dados, ensure_ascii=False)
     html = _HTML.replace("__USERS_JSON__", users_json)
     return HTMLResponse(html)
@@ -311,6 +352,29 @@ async def toggle_acesso(request: Request):
     db = get_db()
     await db.users.update_one({"_id": oid}, {"$set": {"telefone_verificado": ativo}})
     return JSONResponse({"ok": True, "ativo": ativo})
+
+
+@router.post("/toggle-pagamento")
+async def toggle_pagamento(request: Request):
+    admin = await _require_admin(request)
+    if not admin:
+        return JSONResponse({"erro": "Acesso negado."}, status_code=403)
+
+    body = await request.json()
+    user_id = body.get("user_id")
+    pago = body.get("pago")
+
+    if not user_id or not isinstance(pago, bool):
+        return JSONResponse({"erro": "Parâmetros inválidos."}, status_code=400)
+
+    try:
+        oid = ObjectId(user_id)
+    except Exception:
+        return JSONResponse({"erro": "user_id inválido."}, status_code=400)
+
+    db = get_db()
+    await db.users.update_one({"_id": oid}, {"$set": {"pagamento_confirmado": pago}})
+    return JSONResponse({"ok": True, "pago": pago})
 
 
 @router.post("/toggle-chat")
