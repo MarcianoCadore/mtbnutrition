@@ -9,10 +9,10 @@ LANDING_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MTB Nutrition — Treino de MTB gerado por IA, no piloto automático</title>
-<meta name="description" content="Sua semana de treino de MTB gerada por IA, sincronizada com o Garmin e com análise pós-treino automática, tudo no seu WhatsApp. Assine por R$ 24,99/mês.">
-<meta property="og:title" content="MTB Nutrition — Treino de MTB gerado por IA, no piloto automático">
-<meta property="og:description" content="Garmin + IA + WhatsApp: a IA monta sua semana de treino, sincroniza com o relógio e analisa cada pedalada. R$ 24,99/mês.">
+<title>MTB Nutrition — Treino de ciclismo gerado por IA, no piloto automático</title>
+<meta name="description" content="Sua semana de treino gerada por IA — MTB, estrada, gravel ou no rolo, indoor ou outdoor — sincronizada com o Garmin e com análise pós-treino automática. Assine por R$ 24,99/mês.">
+<meta property="og:title" content="MTB Nutrition — Treino de ciclismo gerado por IA, no piloto automático">
+<meta property="og:description" content="Garmin + IA: a IA monta sua semana de treino — MTB, estrada, gravel ou no rolo — e analisa cada pedalada. R$ 24,99/mês.">
 <meta property="og:type" content="website">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -128,14 +128,6 @@ h1{font-size:clamp(2.2rem,4.6vw,3.4rem);font-weight:800;margin-bottom:20px}
 .mock-metric b{display:block;font-size:1.02rem;color:var(--text);font-family:'Sora',sans-serif}
 .mock-ai{font-size:.8rem;color:var(--muted);font-style:italic}
 .mock-ai b{color:var(--text)}
-.mock-whats{
-  position:absolute;right:-14px;bottom:-88px;max-width:270px;
-  background:#0f2b22;border:1px solid rgba(37,211,102,.35);border-radius:16px 16px 4px 16px;
-  padding:13px 16px;font-size:.8rem;color:#d7f5e6;
-  box-shadow:0 18px 44px -14px rgba(0,0,0,.65);
-  animation:float 5s ease-in-out infinite;
-}
-.mock-whats .w-head{display:flex;align-items:center;gap:7px;font-weight:700;color:var(--whats);margin-bottom:5px;font-size:.78rem}
 @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
 .mock-sync{
   position:absolute;left:-16px;top:-18px;
@@ -237,7 +229,7 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
 .reveal.on{opacity:1;transform:none}
 @media (prefers-reduced-motion:reduce){
   .reveal{opacity:1;transform:none;transition:none}
-  .mock-whats,.mock-sync,.badge .dot{animation:none}
+  .mock-sync,.badge .dot{animation:none}
   html{scroll-behavior:auto}
 }
 
@@ -257,7 +249,6 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
   .hero{padding-top:110px}
   .features,.steps{grid-template-columns:1fr}
   section{padding:66px 0}
-  .mock-whats{right:0;bottom:-92px}
   .mock-sync{left:0}
   .price-inner{padding:34px 24px}
 }
@@ -284,9 +275,9 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
 <header class="hero">
   <div class="wrap hero-grid">
     <div>
-      <span class="badge"><span class="dot"></span> Garmin + IA + WhatsApp</span>
-      <h1>Treino de MTB gerado por <span class="grad">IA</span>, no piloto automático</h1>
-      <p class="lead">A IA monta sua semana de treino, manda direto pro Garmin e analisa cada pedalada no seu WhatsApp. Você só precisa pedalar.</p>
+      <span class="badge"><span class="dot"></span> Garmin + Inteligência Artificial</span>
+      <h1>Sua semana de treino, <span class="grad">pensada por IA</span> enquanto você descansa</h1>
+      <p class="lead">MTB, estrada, gravel ou rolo. Indoor ou outdoor. A inteligência artificial desenha cada sessão do zero, joga direto no seu Garmin e disseca sua pedalada assim que você termina. A sua parte é só uma: pedalar.</p>
       <div class="hero-cta">
         <a class="btn btn-primary btn-lg" href="/signup">Assinar por R$ 24,99/mês</a>
         <a class="btn btn-ghost btn-lg" href="#recursos">Ver recursos</a>
@@ -318,10 +309,6 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
           <p class="mock-ai"><b>Ponto forte:</b> tiros consistentes, potência estável do 1º ao 6º. Amanhã é regenerativo: capriche no carboidrato hoje à noite.</p>
         </div>
       </div>
-      <div class="mock-whats">
-        <div class="w-head">💬 WhatsApp · MTB Nutrition</div>
-        📅 Sua semana está pronta! A IA gerou 5 treinos personalizados e já mandei pro seu Garmin. Bora pedalar? 🚵
-      </div>
     </div>
   </div>
 </header>
@@ -330,7 +317,6 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
   <div class="strip-inner">
     <div class="strip-item"><span>⌚</span> Integrado ao Garmin Connect</div>
     <div class="strip-item"><span>🤖</span> Treino semanal gerado por IA</div>
-    <div class="strip-item"><span>💬</span> Alertas no WhatsApp</div>
     <div class="strip-item"><span>🏁</span> Periodização por prova</div>
   </div>
 </div>
@@ -338,38 +324,43 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
 <section id="recursos">
   <div class="wrap">
     <span class="sec-tag">Recursos</span>
-    <h2>Tudo que o seu treino de MTB precisa, <span class="grad">num lugar só</span></h2>
-    <p class="sec-sub">Chega de planilha no Excel, cardápio genérico e treino perdido no meio do grupo do zap.</p>
+    <h2>Tudo o que a sua bike pede, <span class="grad">num lugar só</span></h2>
+    <p class="sec-sub">Chega de planilha no Excel, treino copiado da internet e semana montada no escuro.</p>
     <div class="features">
       <div class="feature reveal">
         <div class="f-icon">🗓️</div>
-        <h3>Sua semana de treino, gerada por IA</h3>
-        <p>Toda semana a IA monta sua planilha de treino personalizada, considerando seu histórico, objetivo e as provas do seu calendário. Você só recebe e pedala.</p>
+        <h3>A semana montada por IA</h3>
+        <p>A cada semana, a IA olha seu histórico, seu objetivo e as provas no horizonte — e desenha os próximos sete dias sob medida. Você começa a segunda com tudo pronto.</p>
+      </div>
+      <div class="feature reveal">
+        <div class="f-icon">🚴</div>
+        <h3>Do rolo à trilha, você escolhe</h3>
+        <p>MTB, speed ou gravel; na rua ou no rolo interativo. Cada dia, você decide onde pedalar — e a IA molda a sessão para a modalidade e o ambiente. A mesma cabeça, seja no asfalto ou na sala de casa.</p>
       </div>
       <div class="feature reveal">
         <div class="f-icon">⌚</div>
-        <h3>Sincronização Garmin automática</h3>
-        <p>Os treinos da semana são enviados direto para o seu Garmin, com zonas, cadência e etapas estruturadas. Terminou de pedalar? A atividade volta sozinha para o portal.</p>
+        <h3>O treino já está no relógio</h3>
+        <p>A semana cai direto no Garmin, com zonas, blocos e cadência estruturados. Terminou de pedalar? A atividade volta sozinha para o portal — sem exportar nada.</p>
       </div>
       <div class="feature reveal">
         <div class="f-icon">🤖</div>
-        <h3>Análise pós-treino com IA</h3>
-        <p>Cada pedalada é analisada: FC, potência, cadência e execução. Você recebe pontos fortes, pontos a melhorar e o que ajustar no próximo treino.</p>
+        <h3>A IA lê cada pedalada</h3>
+        <p>FC, potência, cadência, execução — nada passa batido. Depois de cada treino, você recebe o que foi bem, o que ajustar e o próximo passo, em português de gente.</p>
       </div>
       <div class="feature reveal">
-        <div class="f-icon">💬</div>
-        <h3>Tudo no seu WhatsApp</h3>
-        <p>Plano de treino, análise pós-pedalada e alertas de prova chegam direto no seu zap. Sem precisar abrir mais um app.</p>
+        <div class="f-icon">📊</div>
+        <h3>Seu quartel-general</h3>
+        <p>Plano da semana, análises, calendário de provas e sua evolução — tudo num painel limpo, aberto de qualquer tela, a qualquer hora.</p>
       </div>
       <div class="feature reveal">
         <div class="f-icon">🏁</div>
-        <h3>Calendário de provas</h3>
-        <p>Cadastre suas provas e a periodização se organiza sozinha: base, build, pico e polimento — com foco semanal e estratégia de nutrição para o dia da prova.</p>
+        <h3>A prova no comando</h3>
+        <p>Cadastre suas provas e a periodização se vira sozinha: base, build, pico e polimento na hora certa — com a estratégia de nutrição pronta para o dia D.</p>
       </div>
       <div class="feature reveal">
         <div class="f-icon">🧠</div>
-        <h3>Assistente 24/7</h3>
-        <p>Um assistente com IA que conhece o seu histórico: pergunte sobre treino, peça para remarcar a semana ou tire dúvidas a qualquer hora.</p>
+        <h3>Um assistente que te conhece</h3>
+        <p>Ele sabe seu histórico de cor. Peça para remexer a semana, tire uma dúvida de treino ou pergunte o que quiser — resposta na hora, 24/7.</p>
       </div>
     </div>
   </div>
@@ -382,16 +373,16 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
     <p class="sec-sub">Configuração única de 5 minutos. Depois disso, o sistema trabalha por você.</p>
     <div class="steps">
       <div class="step reveal">
-        <h3>Crie sua conta e conecte o Garmin</h3>
-        <p>Informe seu perfil (idade, peso, FTP, zonas de FC) e conecte sua conta Garmin Connect. Pronto — a integração é automática dali em diante.</p>
+        <h3>Conta criada, Garmin conectado</h3>
+        <p>Conte quem você é — idade, peso, FTP, zonas — e ligue seu Garmin Connect. A partir daqui, a integração roda no automático.</p>
       </div>
       <div class="step reveal">
-        <h3>Receba sua semana de treino, gerada por IA</h3>
-        <p>A planilha da semana é montada pela IA e vai direto para o seu relógio. O cardápio do dia também chega no WhatsApp, ajustado ao treino.</p>
+        <h3>Sua semana aparece pronta</h3>
+        <p>A IA desenha os sete dias e joga tudo no relógio — para MTB, estrada, gravel ou rolo, indoor ou outdoor. Você só escolhe onde pedalar.</p>
       </div>
       <div class="step reveal">
         <h3>Pedale — o resto é com a gente</h3>
-        <p>Terminou o treino, a IA analisa a atividade, aponta evolução e ajusta a carga. Antes da prova, você recebe a estratégia completa de nutrição.</p>
+        <p>Fechou o treino, a IA disseca a atividade, aponta a evolução e recalibra a carga. Chegando a prova, a estratégia de nutrição chega junto.</p>
       </div>
     </div>
   </div>
@@ -400,8 +391,8 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
 <section id="preco">
   <div class="wrap">
     <span class="sec-tag">Preço</span>
-    <h2>Um plano único, <span class="grad">tudo incluso</span></h2>
-    <p class="sec-sub">Menos que um tubo de gel por semana. Sem taxa de adesão, sem surpresa.</p>
+    <h2>Um plano, <span class="grad">tudo dentro</span></h2>
+    <p class="sec-sub">Menos que um tubo de gel por semana. Sem taxa de adesão, sem letra miúda.</p>
     <div class="price-card reveal">
       <div class="price-inner">
         <div class="price-plan">Plano Atleta</div>
@@ -416,7 +407,7 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
           <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Envio automático dos treinos para o Garmin</li>
           <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Análise pós-treino com IA ilimitada</li>
           <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Nutrição periodizada + guia de prova</li>
-          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Notificações e lembretes no WhatsApp</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Treinos para MTB, estrada, gravel e rolo — indoor ou outdoor</li>
           <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Assistente IA 24/7 com o seu histórico</li>
         </ul>
         <a class="btn btn-primary btn-lg" href="/signup" style="width:100%">Começar agora</a>
@@ -437,8 +428,12 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
         <div class="faq-body">O Garmin deixa tudo automático (treino vai para o relógio, atividade volta sozinha), mas não é obrigatório: você pode acompanhar a planilha pelo portal e enviar seus arquivos .fit manualmente para receber a análise da IA.</div>
       </details>
       <details class="reveal">
-        <summary>Como recebo os treinos e o cardápio?</summary>
-        <div class="faq-body">A semana de treinos fica no portal e é enviada ao seu Garmin com um clique. O plano alimentar do dia e os lembretes chegam no seu WhatsApp, sempre ajustados ao treino daquele dia.</div>
+        <summary>Posso treinar indoor e outdoor?</summary>
+        <div class="faq-body">Sim. Os treinos funcionam para MTB, estrada e gravel, e você escolhe onde pedalar em cada dia: na rua (outdoor) ou no rolo interativo (indoor). A IA ajusta a sessão para o ambiente e a modalidade do dia.</div>
+      </details>
+      <details class="reveal">
+        <summary>Como recebo os treinos?</summary>
+        <div class="faq-body">A semana de treinos fica no portal e é enviada ao seu Garmin com um clique, com zonas, cadência e etapas estruturadas. É só sincronizar o relógio e pedalar.</div>
       </details>
       <details class="reveal">
         <summary>A análise por IA funciona como?</summary>
@@ -449,7 +444,7 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
         <div class="faq-body">Sim. A assinatura é mensal, sem fidelidade e sem multa. Cancelou, não é mais cobrado no mês seguinte.</div>
       </details>
       <details class="reveal">
-        <summary>Serve para quem está começando no MTB?</summary>
+        <summary>Serve para quem está começando?</summary>
         <div class="faq-body">Sim. O plano é montado a partir do seu perfil e evolui com você: iniciantes recebem mais base e técnica; quem já compete recebe periodização focada nas provas do calendário.</div>
       </details>
     </div>
@@ -459,8 +454,8 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
 <section>
   <div class="wrap">
     <div class="final reveal">
-      <h2>Pronto para evoluir no <span class="grad">MTB</span>?</h2>
-      <p>Sua semana de treino gerada por IA, sincronizada com o relógio e analisada no zap — por menos de R$ 0,85 por dia.</p>
+      <h2>A sua melhor temporada começa numa <span class="grad">segunda-feira</span></h2>
+      <p>Semana de treino gerada por IA, sincronizada com o relógio e analisada sozinha — por menos de R$ 0,85 por dia.</p>
       <a class="btn btn-primary btn-lg" href="/signup">Assinar por R$ 24,99/mês</a>
     </div>
   </div>
@@ -469,7 +464,7 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
 <footer>
   <div class="wrap foot">
     <a class="brand" href="/"><span class="bike">🚵</span> MTB Nutrition</a>
-    <div>Treino inteligente gerado por IA para ciclistas de MTB.</div>
+    <div>Treino inteligente gerado por IA para ciclistas — MTB, estrada e gravel.</div>
     <div><a href="/login" style="color:var(--green-hi)">Entrar</a> · <a href="/signup" style="color:var(--green-hi)">Criar conta</a></div>
   </div>
 </footer>
