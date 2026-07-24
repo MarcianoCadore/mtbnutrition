@@ -250,18 +250,22 @@ HTML = """<!DOCTYPE html>
     .tipo-RECUPERACAO { background: #00695c; }
     .tipo-DESCANSO    { background: #607d8b; }
     .tipo-TESTE_FTP   { background: #7c3aed; }
-    .academia-bloco { background: #e8f5e9; border-radius: var(--radius-sm); padding: 10px 12px; border: 1px solid #2e7d32; box-shadow: var(--shadow-sm); }
+    .academia-bloco { background: #e8f5e9; border-radius: var(--radius-sm); padding: 8px 12px; border: 1px solid #2e7d32; box-shadow: var(--shadow-sm); }
     .academia-bloco.clickable { cursor: pointer; transition: transform .15s, box-shadow .15s; }
     .academia-bloco.clickable:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
-    .academia-bloco .ac-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+    .academia-bloco .ac-header { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
     .academia-bloco .ac-titulo { font-size: .78rem; font-weight: 700; color: #2e7d32; }
-    .academia-bloco .ac-dur { font-size: .7rem; color: #555; }
-    .academia-bloco .ac-foco { font-size: .7rem; color: #388e3c; font-style: italic; margin-bottom: 6px; }
+    .academia-bloco .ac-dur { font-size: .7rem; color: #555; margin-left: auto; }
+    .academia-bloco .ac-arrow { font-size: .62rem; color: #2e7d32; transition: transform .15s; }
+    .academia-bloco.expanded .ac-arrow { transform: rotate(90deg); }
+    .academia-bloco .ac-foco { font-size: .7rem; color: #388e3c; font-style: italic; margin-top: 4px; }
+    .academia-bloco .ac-detalhes { display: none; margin-top: 8px; }
+    .academia-bloco.expanded .ac-detalhes { display: block; }
+    .academia-bloco .ac-porque { font-size: .75rem; color: #444; line-height: 1.4; margin-bottom: 6px; background: #fff; border-radius: 4px; padding: 5px 8px; }
     .academia-bloco .ac-exercicios { list-style: none; padding: 0; margin: 0; }
     .academia-bloco .ac-exercicios li { font-size: .75rem; color: var(--text); line-height: 1.5; padding: 2px 0; border-bottom: 1px solid #c8e6c9; }
     .academia-bloco .ac-exercicios li:last-child { border-bottom: none; }
-    .academia-bloco .ac-obs { font-size: .72rem; color: #666; line-height: 1.4; }
-    .academia-bloco .ac-hint { font-size: .68rem; color: #2e7d32; opacity: .8; text-align: right; margin-top: 6px; }
+    .academia-bloco .ac-obs { font-size: .72rem; color: #666; line-height: 1.4; margin-top: 4px; }
 
     .actions { display: flex; gap: 12px; flex-wrap: wrap; }
     .btn { padding: 13px 22px; border: none; border-radius: 12px; font-size: .95rem; font-weight: 700; cursor: pointer; transition: transform .15s, box-shadow .15s, background .2s, border-color .2s, color .2s; display: flex; align-items: center; gap: 6px; }
@@ -335,7 +339,8 @@ HTML = """<!DOCTYPE html>
     [data-theme="dark"] .nutri-ref { border-bottom-color: var(--border); }
     [data-theme="dark"] .academia-bloco { background: #0d2020; border-color: #1a5e40; }
     [data-theme="dark"] .academia-bloco .ac-titulo { color: #6ee7b7; }
-    [data-theme="dark"] .academia-bloco .ac-hint { color: #6ee7b7; }
+    [data-theme="dark"] .academia-bloco .ac-arrow { color: #6ee7b7; }
+    [data-theme="dark"] .academia-bloco .ac-porque { background: #1f2937; color: var(--text); }
     [data-theme="dark"] .academia-bloco .ac-exercicios li { border-bottom-color: #1a5e40; }
     [data-theme="dark"] .extra-form select,
     [data-theme="dark"] .extra-form input[type=number],
@@ -661,53 +666,31 @@ function _parseAcademiaTexto(descricao) {
 function renderAcademiaBloco(ac, key) {
   const ad = ac.duracao_min || 0;
   const adStr = ad ? ((Math.floor(ad/60)>0?Math.floor(ad/60)+'h':'')+(ad%60>0?ad%60+'min':'')) : '';
-  const {raw, foco, exItens} = _parseAcademiaTexto(ac.descricao);
+  const {raw, foco, porqueText, obsText, exItens} = _parseAcademiaTexto(ac.descricao);
   const clickable = !!key;
 
-  let html = `<div class="academia-bloco${clickable ? ' clickable' : ''}"${clickable ? ` onclick="abrirAcademiaModal('${key}')"` : ''}>`;
+  let detalhes = '';
+  if (porqueText) detalhes += '<div class="ac-porque">' + porqueText + '</div>';
+  if (exItens.length) {
+    detalhes += '<ul class="ac-exercicios">';
+    for (let i = 0; i < exItens.length; i++) detalhes += '<li>' + exItens[i] + '</li>';
+    detalhes += '</ul>';
+  } else {
+    detalhes += '<div class="ac-obs">' + (raw.replace(/\\n/g, '<br>')) + '</div>';
+  }
+  if (obsText) detalhes += '<div class="ac-obs">&#128204; ' + obsText + '</div>';
+
+  const classes = 'academia-bloco' + (clickable ? ' clickable' : ' expanded');
+  const onclick = clickable ? ` onclick="this.classList.toggle('expanded')"` : '';
+  let html = `<div class="${classes}"${onclick}>`;
   html += '<div class="ac-header"><span class="ac-titulo">🏋️ Academia</span>';
   if (adStr) html += '<span class="ac-dur">&#8987; ' + adStr + '</span>';
+  if (clickable) html += '<span class="ac-arrow">&#9656;</span>';
   html += '</div>';
   if (foco) html += '<div class="ac-foco">Foco: ' + foco + '</div>';
-  if (exItens.length) {
-    html += '<ul class="ac-exercicios">';
-    for (let i = 0; i < exItens.length; i++) html += '<li>' + exItens[i] + '</li>';
-    html += '</ul>';
-  } else {
-    html += '<div class="ac-obs">' + (raw.split('\\n')[0] || raw) + '</div>';
-  }
-  if (clickable) html += '<div class="ac-hint">Toque para ver detalhes &rsaquo;</div>';
+  html += '<div class="ac-detalhes">' + detalhes + '</div>';
   html += '</div>';
   return html;
-}
-
-function abrirAcademiaModal(key) {
-  const p = _planejado[key] || {};
-  const ac = p.academia;
-  if (!ac || !ac.descricao) return;
-  const {raw, foco, porqueText, obsText, exItens} = _parseAcademiaTexto(ac.descricao);
-  const adStr = ac.duracao_min ? ((Math.floor(ac.duracao_min/60)>0?Math.floor(ac.duracao_min/60)+'h':'')+(ac.duracao_min%60>0?ac.duracao_min%60+'min':'')) : '';
-
-  const dt = new Date(key + 'T00:00');
-  const diaLabel = `${DIAS[(dt.getDay()+6)%7]} ${key.slice(8,10)}/${key.slice(5,7)}`;
-  const meta = [diaLabel];
-  if (adStr) meta.push(`⏱ ${adStr}`);
-
-  let corpo = '';
-  if (foco) corpo += `<div class="esp-obj">Foco: ${foco}</div>`;
-  if (porqueText) corpo += `<div class="esp-dica">💡 ${porqueText}</div>`;
-  if (exItens.length) {
-    corpo += `<div class="esp-bloco" style="margin-top:14px"><div class="esp-titulo">Exercícios</div>`
-           + `<ul class="esp-lista">${exItens.map(x => `<li>${x}</li>`).join('')}</ul></div>`;
-  }
-  if (obsText) corpo += `<div class="esp-notas" style="margin-top:10px">&#128204; ${obsText}</div>`;
-  if (!foco && !porqueText && !exItens.length && !obsText) {
-    corpo = `<div class="esp-notas">${raw.replace(/\\n/g,'<br>')}</div>`;
-  }
-
-  document.getElementById('treinoModalHead').innerHTML = `<h3>🏋️ Academia</h3><div class="modal-sub">${meta.join('  ·  ')}</div>`;
-  document.getElementById('treinoModalBody').innerHTML = corpo;
-  document.getElementById('treinoModal').classList.add('show');
 }
 
 function iso(d) { return d.toISOString().split('T')[0]; }
@@ -1157,7 +1140,7 @@ function abrirTreinoInfo(key) {
              + `<div class="esp-notas">${notas.replace(/</g,'&lt;').replace(/\\n/g,'<br>')}</div></div>`;
     }
     // O treino de academia do dia (se houver) tem seu próprio bloco/card no
-    // calendário com clique para ver os exercícios — ver abrirAcademiaModal().
+    // calendário, que expande com clique — ver renderAcademiaBloco().
   }
 
   if (!corpo) corpo = `<div class="esp-obj">Sem especificação detalhada para este treino.</div>`;
