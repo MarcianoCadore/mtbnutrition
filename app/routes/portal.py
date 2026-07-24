@@ -99,8 +99,6 @@ HTML = """<!DOCTYPE html>
     .extra-check { font-size: .75rem; color: var(--muted); display: flex; align-items: center; gap: 5px; cursor: pointer; }
     .extra-edit-toggle { background: none; border: none; color: var(--muted); font-size: .72rem; cursor: pointer; text-decoration: underline; padding: 2px 0; text-align: left; }
     .extra-edit-toggle:hover { color: var(--text); }
-    .add-extra-btn { background: none; border: 1.5px dashed var(--border); color: var(--muted); border-radius: var(--radius-sm); padding: 10px; font-size: .78rem; font-weight: 700; cursor: pointer; width: 100%; }
-    .add-extra-btn:hover { border-color: var(--green); color: var(--green); }
     .extra-form { background: var(--card); border-radius: var(--radius-sm); border: 1px solid var(--border); padding: 10px; display: flex; flex-direction: column; gap: 8px; box-shadow: var(--shadow-sm); }
     .extra-form select, .extra-form input[type=number], .extra-form textarea {
       width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
@@ -123,9 +121,7 @@ HTML = """<!DOCTYPE html>
     .day-card.futuro .day-body select,
     .day-card.futuro .day-body textarea,
     .day-card.futuro .day-body input[type=file] { pointer-events: none; opacity: .6; }
-    .day-card.futuro .rest-toggle,
-    .day-card.futuro .fit-label,
-    .day-card.futuro .fit-remove { pointer-events: none; opacity: .4; }
+    .day-card.futuro .rest-toggle { pointer-events: none; opacity: .4; }
     .lock-badge { font-size: .7rem; color: var(--muted); text-align: center; padding: 4px 0 2px; letter-spacing: .02em; }
     .day-head { padding: 10px 12px; color: #fff; }
     .day-name { font-weight: 700; font-size: .88rem; }
@@ -140,14 +136,6 @@ HTML = """<!DOCTYPE html>
     .day-body textarea { resize: vertical; min-height: 46px; font-size: .82rem; }
     .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 
-    .fit-area { border: 1.5px dashed var(--border); border-radius: 6px; padding: 8px; text-align: center; transition: border-color .2s; }
-    .fit-area:hover { border-color: var(--green); }
-    .fit-area input[type=file] { display: none; }
-    .fit-label { font-size: .75rem; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px; }
-    .fit-label:hover { color: var(--green); }
-    .fit-info { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-top: 4px; }
-    .fit-filename { font-size: .72rem; color: var(--green); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100px; }
-    .fit-remove { background: none; border: none; cursor: pointer; color: #c62828; font-size: .8rem; padding: 0; }
     .rest-badge { text-align: center; padding: 22px 8px; color: var(--muted); font-size: .85rem; }
     .rest-badge .icon { font-size: 2rem; display: block; margin-bottom: 4px; }
     .tipo-badge { border-radius: 6px; padding: 6px 10px; font-size: .82rem; font-weight: 700; color: #fff; text-align: center; }
@@ -350,7 +338,6 @@ HTML = """<!DOCTYPE html>
     [data-theme="dark"] .extra-form select,
     [data-theme="dark"] .extra-form input[type=number],
     [data-theme="dark"] .extra-form textarea { background: #111827; color: var(--text); border-color: var(--border); }
-    [data-theme="dark"] .add-extra-btn:hover { background: #0d2020; }
 
     /* Ajustes para celular */
     @media(max-width:640px) {
@@ -749,13 +736,6 @@ function buildCards(treinos) {
       ? `<button class="aval-btn" onclick="abrirAvaliacao('${key}')">📊 Ver avaliação do treino</button>`
       : '';
 
-    const fitInfoHTML = fitFile
-      ? `<div class="fit-info">
-           <a class="fit-filename" href="/workout/fit/${iso(monday)}/${key}" title="${fitFile}" download>${fitFile}</a>
-           <button class="fit-remove" onclick="removerFit('${key}')" title="Remover">✕</button>
-         </div>`
-      : '';
-
     const isAcademia = t.tipo === 'ACADEMIA';
     const cadReal    = (res && res.cadencia_media_rpm) ? res.cadencia_media_rpm : '';
     const avgPowReal = (res && res.avg_power) ? res.avg_power : null;
@@ -813,11 +793,6 @@ function buildCards(treinos) {
           ${resumoHTML}
           ${metricsHTML}
 
-          ${!isFuturo ? `<div class="fit-area">
-            <label class="fit-label" for="fit-${key}">📎 Enviar arquivo .fit</label>
-            <input type="file" id="fit-${key}" accept=".fit" onchange="uploadFit('${key}', this)">
-            <div id="fitinfo-${key}">${fitInfoHTML}</div>
-          </div>` : ''}
           <div>
             <div class="notas-head">
               <label>${isAcademia ? 'Exercícios' : 'Notas'}</label>
@@ -864,10 +839,6 @@ function buildCards(treinos) {
       wrap.innerHTML = renderExtraCard(ex, key);
       dayCol.appendChild(wrap.firstElementChild);
     });
-    const addWrap = document.createElement('div');
-    addWrap.innerHTML = renderAddExtraArea(key);
-    dayCol.appendChild(addWrap.firstElementChild);
-    dayCol.appendChild(addWrap.lastElementChild);
     grid.appendChild(dayCol);
   }
 }
@@ -917,45 +888,9 @@ function renderExtraCard(t, key) {
   </div>`;
 }
 
-function renderAddExtraArea(key) {
-  return `<button class="add-extra-btn" id="add-extra-btn-${key}" onclick="toggleAddExtraForm('${key}')">+ Adicionar treino</button>
-  <div class="extra-form" id="add-extra-form-${key}" style="display:none">
-    <select id="ae-tipo-${key}">${extraTipoOpts('ACADEMIA')}</select>
-    <input type="number" id="ae-dur-${key}" placeholder="Duração (min)">
-    <textarea id="ae-desc-${key}" placeholder="Notas..."></textarea>
-    <div class="extra-form-actions">
-      <button class="ef-save" onclick="criarExtra('${key}')">Adicionar</button>
-      <button class="ef-cancel" onclick="toggleAddExtraForm('${key}')">Cancelar</button>
-    </div>
-  </div>`;
-}
-
-function toggleAddExtraForm(key) {
-  const f = document.getElementById(`add-extra-form-${key}`);
-  if (f) f.style.display = f.style.display === 'none' ? '' : 'none';
-}
-
 function toggleExtraEditForm(extraId) {
   const f = document.getElementById(`extra-edit-form-${extraId}`);
   if (f) f.style.display = f.style.display === 'none' ? '' : 'none';
-}
-
-async function criarExtra(key) {
-  const tipo   = document.getElementById(`ae-tipo-${key}`).value;
-  const durRaw = document.getElementById(`ae-dur-${key}`).value;
-  const desc   = document.getElementById(`ae-desc-${key}`).value.trim();
-  try {
-    const r = await fetch(`/workout/treino/${iso(monday)}/${key}/extra`, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({tipo, duracao_min: durRaw ? parseInt(durRaw) : null, descricao: desc || null}),
-    });
-    if (!r.ok) throw new Error(await r.text());
-    toast('✅ Treino adicionado', 'ok');
-    await load();
-  } catch(e) {
-    toast('❌ Erro: ' + e.message, 'err');
-  }
 }
 
 async function salvarEdicaoExtra(key, extraId) {
@@ -1505,127 +1440,6 @@ async function testar() {
   } finally {
     btn.disabled = false;
     btn.innerHTML = '📲 Testar WhatsApp';
-  }
-}
-
-async function uploadFit(key, input) {
-  if (!input.files || !input.files[0]) return;
-  const file = input.files[0];
-  if (!file.name.toLowerCase().endsWith('.fit')) {
-    toast('❌ Apenas arquivos .fit são permitidos', 'err');
-    input.value = '';
-    return;
-  }
-  const semana = iso(monday);
-  const form = new FormData();
-  form.append('arquivo', file);
-  toast('⏳ Analisando treino...', 'info');
-  try {
-    const r = await fetch(`/workout/fit/${semana}/${key}`, {method: 'POST', body: form});
-    if (!r.ok) throw new Error(await r.text());
-    const d = await r.json();
-
-    // atualiza select oculto, cabeçalho e badge
-    const tipo = d.tipo || 'Z2_LONGO';
-    const sel = document.getElementById(`tp-${key}`);
-    if (sel) { sel.value = tipo; onTipo(key); }
-
-    // salva referência do arquivo nos hiddens
-    const ffEl = document.getElementById(`fitfile-${key}`);
-    if (ffEl && d.fit_file) ffEl.value = d.fit_file;
-    if (d.duracao_min)   { const el = document.getElementById(`dur-${key}`);  if (el) el.value = d.duracao_min; }
-    if (d.distancia_km)  { const el = document.getElementById(`dist-${key}`); if (el) el.value = d.distancia_km; }
-    if (d.elevacao_m)    { const el = document.getElementById(`elev-${key}`); if (el) el.value = d.elevacao_m; }
-    if (d.cadencia_rpm)  { const el = document.getElementById(`cad-${key}`);  if (el) { el.value = d.cadencia_rpm; atualizarResumo(key); } }
-
-    // link do arquivo
-    document.getElementById(`fitinfo-${key}`).innerHTML =
-      `<div class="fit-info">
-         <a class="fit-filename" href="/workout/fit/${semana}/${key}" title="${d.fit_file}" download>${d.fit_file}</a>
-         <button class="fit-remove" onclick="removerFit('${key}')" title="Remover">✕</button>
-       </div>`;
-
-    // métricas em cards
-    const metrics = document.getElementById(`metrics-${key}`);
-    if (metrics) {
-      const items = [];
-      if (d.duracao_min)  items.push(`<div class="metric"><div class="mv">${d.duracao_min} min</div><div class="ml">Duração</div></div>`);
-      if (d.distancia_km) items.push(`<div class="metric"><div class="mv">${d.distancia_km} km</div><div class="ml">Distância</div></div>`);
-      if (d.elevacao_m)   items.push(`<div class="metric"><div class="mv">${d.elevacao_m} m</div><div class="ml">Elevação</div></div>`);
-      if (d.avg_hr)       items.push(`<div class="metric"><div class="mv">${d.avg_hr} bpm</div><div class="ml">FC média</div></div>`);
-      if (d.max_hr)       items.push(`<div class="metric"><div class="mv">${d.max_hr} bpm</div><div class="ml">FC máx</div></div>`);
-      if (d.avg_power)    items.push(`<div class="metric"><div class="mv">${d.avg_power}W</div><div class="ml">Potência média</div></div>`);
-      if (d.norm_power)   items.push(`<div class="metric"><div class="mv">${d.norm_power}W</div><div class="ml">NP</div></div>`);
-      if (d.calorias)     items.push(`<div class="metric"><div class="mv">${d.calorias}</div><div class="ml">Calorias</div></div>`);
-      metrics.className = items.length ? 'metrics' : '';
-      metrics.innerHTML = items.join('');
-    }
-
-    // preenche descrição automática se o campo estiver vazio
-    const descEl = document.getElementById(`desc-${key}`);
-    if (descEl && !descEl.value.trim()) {
-      // usa notas do workout do Garmin se disponível
-      if (d.workout_notes) {
-        descEl.value = d.workout_notes;
-      } else {
-      const TIPO_LABELS = {
-        Z2_LONGO: 'Z2 Longo', TIROS: 'Tiros', VO2MAX: 'VO2Max',
-        TEMPO: 'Tempo', FORCA: 'Força Bike', ACADEMIA: 'Academia', RECUPERACAO: 'Recuperação', DESCANSO: 'Descanso',
-      };
-      const linhas = [];
-      linhas.push(TIPO_LABELS[tipo] || tipo);
-      if (d.duracao_min) {
-        const h = Math.floor(d.duracao_min / 60);
-        const m = d.duracao_min % 60;
-        linhas.push(`Tempo: ${h > 0 ? h + 'h' : ''}${m > 0 ? m + 'min' : ''}`);
-      }
-      if (d.distancia_km) linhas.push(`Distância: ${d.distancia_km} km`);
-      if (d.elevacao_m)   linhas.push(`Elevação: ${d.elevacao_m} m`);
-      if (d.avg_hr)       linhas.push(`FC média: ${d.avg_hr} bpm`);
-      if (d.calorias)     linhas.push(`Calorias: ${d.calorias}`);
-      descEl.value = linhas.join('\\n');
-      } // fim else workout_notes
-    }
-
-    const lbl = (TIPOS.find(tp => tp.v === tipo) || {l: tipo}).l;
-    toast(`✅ ${lbl} detectado`, 'ok');
-  } catch(e) {
-    toast('❌ Erro ao enviar: ' + e.message, 'err');
-  } finally {
-    input.value = '';
-  }
-}
-
-async function removerFit(key) {
-  const semana = iso(monday);
-  try {
-    const r = await fetch(`/workout/fit/${semana}/${key}`, {method: 'DELETE'});
-    if (!r.ok) throw new Error(await r.text());
-
-    // limpa arquivo e hidden inputs de métricas
-    document.getElementById(`fitinfo-${key}`).innerHTML = '';
-    ['dur','dist','elev','fitfile'].forEach(f => {
-      const el = document.getElementById(`${f}-${key}`);
-      if (el) el.value = '';
-    });
-
-    // limpa cadência e notas
-    const cadEl = document.getElementById(`cad-${key}`);
-    if (cadEl) cadEl.value = '';
-    const descEl = document.getElementById(`desc-${key}`);
-    if (descEl) descEl.value = '';
-
-    // reseta o card para DESCANSO
-    const sel = document.getElementById(`tp-${key}`);
-    if (sel) { sel.value = 'DESCANSO'; onTipo(key); }
-
-    // limpa métricas
-    const metrics = document.getElementById(`metrics-${key}`);
-    if (metrics) { metrics.className = ''; metrics.innerHTML = ''; }
-
-    toast('🗑️ Arquivo removido', 'info');
-  } catch(e) {
-    toast('❌ Erro ao remover: ' + e.message, 'err');
   }
 }
 
