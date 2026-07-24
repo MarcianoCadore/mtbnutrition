@@ -291,6 +291,65 @@ def build_cycling_workout(
     )
 
 
+def preview_estrutura(
+    tipo: str,
+    duracao_min: int,
+    zonas_bpm: dict | None = None,
+    zonas_watts: dict | None = None,
+) -> dict | None:
+    """Monta a lista plana de segmentos (aquecimento/intervalo/recuperação/volta à
+    calma) do treino, para exibir como gráfico no portal — mesma fonte (_BUILDERS)
+    usada para montar o workout real enviado ao Garmin, então o gráfico nunca diverge
+    do que o atleta recebe no relógio. Repeat groups são expandidos (cada repetição
+    vira segmentos separados).
+
+    Se 'zonas_bpm'/'zonas_watts' forem passadas, cada segmento leva a faixa real
+    (min/max) do atleta; caso contrário só a zona (1-5) é informada.
+    """
+    builder = _BUILDERS.get(tipo)
+    if not builder:
+        return None
+    steps, total_s = builder(duracao_min)
+
+    def _faixa(zona: int) -> tuple[float | None, float | None, str | None]:
+        if zonas_watts:
+            rng = zonas_watts.get(_pw(zona))
+            if rng:
+                mx = rng["max"] if rng["max"] < 9000 else rng["min"] * 2
+                return round(rng["min"]), round(mx), "W"
+        if zonas_bpm:
+            rng = zonas_bpm.get(zona)
+            if rng:
+                return rng["min"], rng["max"], "bpm"
+        return None, None, None
+
+    segmentos: list[dict] = []
+
+    def _walk(lst: list) -> None:
+        for step in lst:
+            filhos = getattr(step, "workoutSteps", None)
+            if filhos:
+                iteracoes = getattr(step, "numberOfIterations", 1) or 1
+                for _ in range(iteracoes):
+                    _walk(filhos)
+                continue
+            fase = ((getattr(step, "stepType", None) or {}).get("stepTypeKey")) or "interval"
+            zona = (getattr(step, "targetType", None) or {}).get("targetValue")
+            duracao_s = int(getattr(step, "endConditionValue", 0) or 0)
+            mn, mx, unidade = _faixa(zona) if zona else (None, None, None)
+            segmentos.append({
+                "fase": fase,
+                "zona": zona,
+                "duracao_s": duracao_s,
+                "min": mn,
+                "max": mx,
+                "unidade": unidade,
+            })
+
+    _walk(steps)
+    return {"segments": segmentos, "total_s": total_s}
+
+
 async def upload_e_agendar(
     user_id: str,
     tipo: str,
