@@ -250,16 +250,18 @@ HTML = """<!DOCTYPE html>
     .tipo-RECUPERACAO { background: #00695c; }
     .tipo-DESCANSO    { background: #607d8b; }
     .tipo-TESTE_FTP   { background: #7c3aed; }
-    .academia-bloco { background: #e8f5e9; border-radius: 8px; padding: 10px 12px; margin-top: 8px; border-left: 3px solid #2e7d32; }
+    .academia-bloco { background: #e8f5e9; border-radius: var(--radius-sm); padding: 10px 12px; border: 1px solid #2e7d32; box-shadow: var(--shadow-sm); }
+    .academia-bloco.clickable { cursor: pointer; transition: transform .15s, box-shadow .15s; }
+    .academia-bloco.clickable:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
     .academia-bloco .ac-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-    .academia-bloco .ac-titulo { font-size: .72rem; font-weight: 700; color: #2e7d32; }
+    .academia-bloco .ac-titulo { font-size: .78rem; font-weight: 700; color: #2e7d32; }
     .academia-bloco .ac-dur { font-size: .7rem; color: #555; }
     .academia-bloco .ac-foco { font-size: .7rem; color: #388e3c; font-style: italic; margin-bottom: 6px; }
-    .academia-bloco .ac-porque { font-size: .75rem; color: #444; line-height: 1.4; margin-bottom: 6px; background: #fff; border-radius: 4px; padding: 5px 8px; }
-    .academia-bloco .ac-exercicios { list-style: none; padding: 0; margin: 0 0 6px 0; }
+    .academia-bloco .ac-exercicios { list-style: none; padding: 0; margin: 0; }
     .academia-bloco .ac-exercicios li { font-size: .75rem; color: var(--text); line-height: 1.5; padding: 2px 0; border-bottom: 1px solid #c8e6c9; }
     .academia-bloco .ac-exercicios li:last-child { border-bottom: none; }
     .academia-bloco .ac-obs { font-size: .72rem; color: #666; line-height: 1.4; }
+    .academia-bloco .ac-hint { font-size: .68rem; color: #2e7d32; opacity: .8; text-align: right; margin-top: 6px; }
 
     .actions { display: flex; gap: 12px; flex-wrap: wrap; }
     .btn { padding: 13px 22px; border: none; border-radius: 12px; font-size: .95rem; font-weight: 700; cursor: pointer; transition: transform .15s, box-shadow .15s, background .2s, border-color .2s, color .2s; display: flex; align-items: center; gap: 6px; }
@@ -333,7 +335,7 @@ HTML = """<!DOCTYPE html>
     [data-theme="dark"] .nutri-ref { border-bottom-color: var(--border); }
     [data-theme="dark"] .academia-bloco { background: #0d2020; border-color: #1a5e40; }
     [data-theme="dark"] .academia-bloco .ac-titulo { color: #6ee7b7; }
-    [data-theme="dark"] .academia-bloco .ac-porque { background: #1f2937; color: var(--text); }
+    [data-theme="dark"] .academia-bloco .ac-hint { color: #6ee7b7; }
     [data-theme="dark"] .academia-bloco .ac-exercicios li { border-bottom-color: #1a5e40; }
     [data-theme="dark"] .extra-form select,
     [data-theme="dark"] .extra-form input[type=number],
@@ -632,17 +634,15 @@ function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); retu
 
 function fmt(d) { return d.toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit'}); }
 
-function renderAcademiaBloco(ac) {
-  const ad = ac.duracao_min || 0;
-  const adStr = ad ? ((Math.floor(ad/60)>0?Math.floor(ad/60)+'h':'')+(ad%60>0?ad%60+'min':'')) : '';
-  const raw = (ac.descricao || '').replace(/</g, '&lt;');
+function _parseAcademiaTexto(descricao) {
+  const raw = (descricao || '').replace(/</g, '&lt;');
   const lines = raw.split('\\n');
 
   const focoM = lines[0] ? lines[0].match(/\\(foco:\\s*([^)]+)\\)/i) : null;
   const foco = focoM ? focoM[1] : '';
 
   let porqueText = '', obsText = '', section = '';
-  const exItems = [];
+  const exItens = [];
 
   for (let i = 1; i < lines.length; i++) {
     const l = lines[i].trim();
@@ -651,27 +651,63 @@ function renderAcademiaBloco(ac) {
     if (l.indexOf('EXERC') === 0 && l.indexOf(':') > 0) { section = 'ex'; continue; }
     if (l.indexOf('OBSERVA') === 0 && l.indexOf(':') > 0) { section = 'obs'; continue; }
     if (section === 'porque') porqueText += ' ' + l;
-    else if (section === 'ex') exItems.push(l);
+    else if (section === 'ex') exItens.push(l);
     else if (section === 'obs') obsText += (obsText ? ' · ' : '') + l.replace(/^-\\s*/, '');
   }
 
-  let html = '<div class="academia-bloco">';
+  return {raw, foco, porqueText: porqueText.trim(), obsText, exItens};
+}
+
+function renderAcademiaBloco(ac, key) {
+  const ad = ac.duracao_min || 0;
+  const adStr = ad ? ((Math.floor(ad/60)>0?Math.floor(ad/60)+'h':'')+(ad%60>0?ad%60+'min':'')) : '';
+  const {raw, foco, exItens} = _parseAcademiaTexto(ac.descricao);
+  const clickable = !!key;
+
+  let html = `<div class="academia-bloco${clickable ? ' clickable' : ''}"${clickable ? ` onclick="abrirAcademiaModal('${key}')"` : ''}>`;
   html += '<div class="ac-header"><span class="ac-titulo">🏋️ Academia</span>';
   if (adStr) html += '<span class="ac-dur">&#8987; ' + adStr + '</span>';
   html += '</div>';
-  if (foco)       html += '<div class="ac-foco">Foco: ' + foco + '</div>';
-  if (porqueText) html += '<div class="ac-porque">' + porqueText + '</div>';
-  if (exItems.length) {
+  if (foco) html += '<div class="ac-foco">Foco: ' + foco + '</div>';
+  if (exItens.length) {
     html += '<ul class="ac-exercicios">';
-    for (let i = 0; i < exItems.length; i++) html += '<li>' + exItems[i] + '</li>';
+    for (let i = 0; i < exItens.length; i++) html += '<li>' + exItens[i] + '</li>';
     html += '</ul>';
+  } else {
+    html += '<div class="ac-obs">' + (raw.split('\\n')[0] || raw) + '</div>';
   }
-  if (obsText) html += '<div class="ac-obs">&#128204; ' + obsText + '</div>';
-  if (!foco && !porqueText && !exItems.length && !obsText) {
-    html += '<div class="ac-obs">' + raw + '</div>';
-  }
+  if (clickable) html += '<div class="ac-hint">Toque para ver detalhes &rsaquo;</div>';
   html += '</div>';
   return html;
+}
+
+function abrirAcademiaModal(key) {
+  const p = _planejado[key] || {};
+  const ac = p.academia;
+  if (!ac || !ac.descricao) return;
+  const {raw, foco, porqueText, obsText, exItens} = _parseAcademiaTexto(ac.descricao);
+  const adStr = ac.duracao_min ? ((Math.floor(ac.duracao_min/60)>0?Math.floor(ac.duracao_min/60)+'h':'')+(ac.duracao_min%60>0?ac.duracao_min%60+'min':'')) : '';
+
+  const dt = new Date(key + 'T00:00');
+  const diaLabel = `${DIAS[(dt.getDay()+6)%7]} ${key.slice(8,10)}/${key.slice(5,7)}`;
+  const meta = [diaLabel];
+  if (adStr) meta.push(`⏱ ${adStr}`);
+
+  let corpo = '';
+  if (foco) corpo += `<div class="esp-obj">Foco: ${foco}</div>`;
+  if (porqueText) corpo += `<div class="esp-dica">💡 ${porqueText}</div>`;
+  if (exItens.length) {
+    corpo += `<div class="esp-bloco" style="margin-top:14px"><div class="esp-titulo">Exercícios</div>`
+           + `<ul class="esp-lista">${exItens.map(x => `<li>${x}</li>`).join('')}</ul></div>`;
+  }
+  if (obsText) corpo += `<div class="esp-notas" style="margin-top:10px">&#128204; ${obsText}</div>`;
+  if (!foco && !porqueText && !exItens.length && !obsText) {
+    corpo = `<div class="esp-notas">${raw.replace(/\\n/g,'<br>')}</div>`;
+  }
+
+  document.getElementById('treinoModalHead').innerHTML = `<h3>🏋️ Academia</h3><div class="modal-sub">${meta.join('  ·  ')}</div>`;
+  document.getElementById('treinoModalBody').innerHTML = corpo;
+  document.getElementById('treinoModal').classList.add('show');
 }
 
 function iso(d) { return d.toISOString().split('T')[0]; }
@@ -764,7 +800,7 @@ function buildCards(treinos) {
       </ul>` : '';
 
     const acSub = t.academia;
-    const academiaSubHTML = acSub && acSub.descricao ? renderAcademiaBloco(acSub) : '';
+    const academiaSubHTML = acSub && acSub.descricao ? renderAcademiaBloco(acSub, key) : '';
 
     c.innerHTML = `
       <div class="day-head tipo-${t.tipo}" id="h-${key}">
@@ -800,7 +836,6 @@ function buildCards(treinos) {
             </div>
             <textarea id="desc-${key}" placeholder="${isAcademia ? 'Lista de exercícios...' : 'Detalhes...'}" ${lockAttr}>${desc}</textarea>
           </div>
-          ${academiaSubHTML}
         </div>
 
         <div id="rest-${key}" style="${hide ? '' : 'display:none'}">
@@ -834,6 +869,11 @@ function buildCards(treinos) {
     const dayCol = document.createElement('div');
     dayCol.className = 'day-col';
     dayCol.appendChild(c);
+    if (academiaSubHTML) {
+      const acWrap = document.createElement('div');
+      acWrap.innerHTML = academiaSubHTML;
+      dayCol.appendChild(acWrap.firstElementChild);
+    }
     extras.forEach(ex => {
       const wrap = document.createElement('div');
       wrap.innerHTML = renderExtraCard(ex, key);
@@ -1080,7 +1120,6 @@ function abrirTreinoInfo(key) {
 
   const cad   = document.getElementById(`cad-${key}`)?.value || p.cadencia_rpm || '';
   const notas = document.getElementById(`desc-${key}`)?.value || p.descricao || '';
-  const acSub = p.academia;
   const isIndoor = p.indoor || false;
 
   const dt = new Date(key + 'T00:00');
@@ -1117,13 +1156,8 @@ function abrirTreinoInfo(key) {
       corpo += `<div class="esp-bloco" style="margin-top:14px"><div class="esp-titulo">Notas do treino${modoLabel}</div>`
              + `<div class="esp-notas">${notas.replace(/</g,'&lt;').replace(/\\n/g,'<br>')}</div></div>`;
     }
-    // Sub-objeto academia (bike + gym no mesmo dia): seção separada
-    if (acSub && acSub.descricao) {
-      const adStr = acSub.duracao_min ? ((Math.floor(acSub.duracao_min/60)>0?Math.floor(acSub.duracao_min/60)+'h':'')+(acSub.duracao_min%60>0?acSub.duracao_min%60+'min':'')) : '';
-      corpo += `<div class="esp-bloco" style="margin-top:18px;border-top:1.5px solid #c8e6c9;padding-top:14px">`
-             + `<div class="esp-titulo" style="color:#2e7d32">🏋️ Academia${adStr?' · ⏱ '+adStr:''}</div>`
-             + `<div class="esp-notas" style="background:#e8f5e9">${acSub.descricao.replace(/</g,'&lt;').replace(/\\n/g,'<br>')}</div></div>`;
-    }
+    // O treino de academia do dia (se houver) tem seu próprio bloco/card no
+    // calendário com clique para ver os exercícios — ver abrirAcademiaModal().
   }
 
   if (!corpo) corpo = `<div class="esp-obj">Sem especificação detalhada para este treino.</div>`;

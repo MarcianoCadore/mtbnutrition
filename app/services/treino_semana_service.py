@@ -137,7 +137,7 @@ async def mover_treino(user_id: str, origem_iso: str, destino_iso: str, modo: st
 
     # Campos que compõem o "conteúdo" do treino (excluindo a data e campos de resultado)
     _CAMPOS_TREINO = ["tipo", "periodo", "duracao_min", "distancia_km",
-                      "elevacao_m", "cadencia_rpm", "descricao"]
+                      "elevacao_m", "cadencia_rpm", "descricao", "academia"]
 
     if modo == "swap":
         # Extrai conteúdo de cada lado
