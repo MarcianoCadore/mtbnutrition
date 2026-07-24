@@ -81,10 +81,36 @@ HTML = """<!DOCTYPE html>
     .bike-progress-wrap { width: 260px; background: #e0e0e0; border-radius: 99px; height: 8px; overflow: hidden; }
     .bike-progress-bar { height: 100%; background: #2e7d32; border-radius: 99px; width: 0%; transition: width 0.4s ease; }
     .bike-progress-pct { font-size: .75rem; color: #555; margin-top: 2px; }
-    .days-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; margin-bottom: 24px; }
+    .days-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; margin-bottom: 24px; align-items: start; }
     @media(max-width:1000px){ .days-grid { grid-template-columns: repeat(4,1fr); } }
     @media(max-width:760px) { .days-grid { grid-template-columns: repeat(2,1fr); } }
     @media(max-width:560px) { .days-grid { grid-template-columns: 1fr; } }
+
+    .day-col { display: flex; flex-direction: column; gap: 10px; }
+
+    .extra-card { background: var(--card); border-radius: var(--radius-sm); overflow: hidden; box-shadow: var(--shadow-sm); border: 1px dashed var(--border); }
+    .extra-head { padding: 8px 10px; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+    .extra-chip { color: #fff; padding: 3px 9px; border-radius: 999px; font-size: .7rem; font-weight: 700; white-space: nowrap; }
+    .extra-remove { background: none; border: none; color: var(--muted); cursor: pointer; font-size: .85rem; padding: 2px 4px; }
+    .extra-remove:hover { color: #c62828; }
+    .extra-body { padding: 0 10px 10px; display: flex; flex-direction: column; gap: 6px; }
+    .extra-meta { font-size: .72rem; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
+    .extra-desc { font-size: .8rem; color: var(--text); white-space: pre-wrap; line-height: 1.4; }
+    .extra-check { font-size: .75rem; color: var(--muted); display: flex; align-items: center; gap: 5px; cursor: pointer; }
+    .extra-edit-toggle { background: none; border: none; color: var(--muted); font-size: .72rem; cursor: pointer; text-decoration: underline; padding: 2px 0; text-align: left; }
+    .extra-edit-toggle:hover { color: var(--text); }
+    .add-extra-btn { background: none; border: 1.5px dashed var(--border); color: var(--muted); border-radius: var(--radius-sm); padding: 10px; font-size: .78rem; font-weight: 700; cursor: pointer; width: 100%; }
+    .add-extra-btn:hover { border-color: var(--green); color: var(--green); }
+    .extra-form { background: var(--card); border-radius: var(--radius-sm); border: 1px solid var(--border); padding: 10px; display: flex; flex-direction: column; gap: 8px; box-shadow: var(--shadow-sm); }
+    .extra-form select, .extra-form input[type=number], .extra-form textarea {
+      width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+      font-size: .82rem; font-family: inherit; outline: none; background: #fff; color: inherit;
+    }
+    .extra-form textarea { min-height: 44px; resize: vertical; }
+    .extra-form-actions { display: flex; gap: 6px; }
+    .extra-form-actions button { flex: 1; padding: 7px; border-radius: 6px; border: none; font-size: .76rem; font-weight: 700; cursor: pointer; }
+    .extra-form-actions .ef-save { background: var(--green); color: #fff; }
+    .extra-form-actions .ef-cancel { background: none; border: 1px solid var(--border); color: var(--muted); }
 
     .day-card { background: var(--card); border-radius: var(--radius-sm); overflow: hidden; box-shadow: var(--shadow-sm); border: 1px solid var(--border); transition: transform .18s, box-shadow .18s; }
     .day-card:hover { box-shadow: var(--shadow-lg); transform: translateY(-3px); }
@@ -203,6 +229,18 @@ HTML = """<!DOCTYPE html>
     .esp-dica { font-size: .82rem; color: #8a5a00; background: #fff7e6; border-radius: 8px; padding: 10px 12px; line-height: 1.4; }
     .esp-notas { font-size: .82rem; color: var(--text); line-height: 1.45; background: #f7f9fc; border-radius: 8px; padding: 10px 12px; }
 
+    .treino-chart { margin-bottom: 16px; }
+    .tc-bars { display: flex; align-items: flex-end; height: 96px; gap: 2px; }
+    .tc-bar { border-radius: 4px 4px 0 0; min-width: 3px; position: relative; cursor: pointer; filter: brightness(1); transition: filter .15s; }
+    .tc-bar:hover, .tc-bar:focus-visible { filter: brightness(1.12); outline: none; }
+    .tc-tip { position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translate(-50%, 2px); background: #0b0b0b; color: #fff; font-size: .7rem; line-height: 1.4; white-space: nowrap; padding: 6px 9px; border-radius: 7px; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .12s, transform .12s; z-index: 5; box-shadow: 0 4px 12px rgba(0,0,0,.25); }
+    .tc-tip b { font-weight: 700; }
+    .tc-bar:hover .tc-tip, .tc-bar:focus-visible .tc-tip { opacity: 1; visibility: visible; transform: translate(-50%, 0); }
+    .tc-axis { display: flex; justify-content: space-between; font-size: .68rem; color: var(--muted); font-weight: 600; margin-top: 5px; }
+    .tc-legend { display: flex; align-items: center; gap: 5px; margin-top: 9px; font-size: .68rem; color: var(--muted); }
+    .tc-legend .tc-sw { width: 20px; height: 8px; border-radius: 2px; display: inline-block; }
+    .tc-loading, .tc-empty { font-size: .78rem; color: var(--muted); padding: 10px 0; text-align: center; }
+
     .gen-modal-treino { background: #f7f9fc; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
     .gen-modal-treino .gmt-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 4px; }
     .gen-modal-treino .gmt-data { font-size: .72rem; color: var(--muted); font-weight: 600; }
@@ -309,6 +347,10 @@ HTML = """<!DOCTYPE html>
     [data-theme="dark"] .academia-bloco .ac-titulo { color: #6ee7b7; }
     [data-theme="dark"] .academia-bloco .ac-porque { background: #1f2937; color: var(--text); }
     [data-theme="dark"] .academia-bloco .ac-exercicios li { border-bottom-color: #1a5e40; }
+    [data-theme="dark"] .extra-form select,
+    [data-theme="dark"] .extra-form input[type=number],
+    [data-theme="dark"] .extra-form textarea { background: #111827; color: var(--text); border-color: var(--border); }
+    [data-theme="dark"] .add-extra-btn:hover { background: #0d2020; }
 
     /* Ajustes para celular */
     @media(max-width:640px) {
@@ -540,6 +582,56 @@ const ESPEC_TREINO = {
   },
 };
 
+// Gráfico de estrutura do treino (estilo TrainingPeaks): rampa sequencial de uma
+// só cor (leve → intenso) por zona 1-5, validada p/ contraste e distinção CVD.
+const TC_ZONA_CORES = ['#8fe0d0', '#5fc3b0', '#37ab97', '#1f8e7d', '#0f7365'];
+const TC_FASE_LABEL = {warmup: 'Aquecimento', interval: 'Intervalo', recovery: 'Recuperação', cooldown: 'Volta à calma', rest: 'Descanso'};
+
+function _tcFormatDur(s) {
+  const m = Math.floor(s / 60), r = s % 60;
+  return r ? `${m}min${r}s` : `${m}min`;
+}
+
+function renderGraficoTreino(containerId, dados) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  const segs = (dados && dados.segments) || [];
+  if (!segs.length) { el.innerHTML = '<div class="tc-empty">Sem estrutura detalhada para este treino.</div>'; return; }
+
+  const barsHtml = segs.map(s => {
+    const zona = Math.min(Math.max(s.zona || 1, 1), 5);
+    const cor = TC_ZONA_CORES[zona - 1];
+    const alturaPct = 24 + (zona - 1) * 19;
+    const faseLabel = TC_FASE_LABEL[s.fase] || s.fase;
+    const faixa = (s.min != null && s.max != null) ? `${s.min}–${s.max} ${s.unidade}` : `Zona ${zona}`;
+    return `<div class="tc-bar" style="height:${alturaPct}%;flex:${s.duracao_s} 0 0;background:${cor}" tabindex="0">`
+         + `<div class="tc-tip"><b>${faseLabel}</b> · ${_tcFormatDur(s.duracao_s)}<br>${faixa}</div>`
+         + `</div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="tc-bars">${barsHtml}</div>
+    <div class="tc-axis"><span>0:00</span><span>${_tcFormatDur(dados.total_s || 0)}</span></div>
+    <div class="tc-legend">
+      <span>Leve</span>
+      ${TC_ZONA_CORES.map(c => `<span class="tc-sw" style="background:${c}"></span>`).join('')}
+      <span>Intenso</span>
+    </div>`;
+}
+
+async function carregarGraficoTreino(key, tipo, duracaoMin, indoor) {
+  const containerId = `tc-${key}`;
+  try {
+    const r = await fetch(`/workout/estrutura/${tipo}?duracao_min=${Math.round(duracaoMin)}&indoor=${indoor}`);
+    if (!r.ok) throw new Error('falhou');
+    const dados = await r.json();
+    renderGraficoTreino(containerId, dados);
+  } catch (e) {
+    const el = document.getElementById(containerId);
+    if (el) el.innerHTML = '<div class="tc-empty">Não consegui carregar o gráfico.</div>';
+  }
+}
+
 function getMonday(d) {
   const day = d.getDay();
   const diff = day === 0 ? -6 : 1 - day;
@@ -588,6 +680,9 @@ function renderAcademiaBloco(ac) {
     html += '</ul>';
   }
   if (obsText) html += '<div class="ac-obs">&#128204; ' + obsText + '</div>';
+  if (!foco && !porqueText && !exItems.length && !obsText) {
+    html += '<div class="ac-obs">' + raw + '</div>';
+  }
   html += '</div>';
   return html;
 }
@@ -605,14 +700,25 @@ function goToday()     { monday = getMonday(new Date()); load(); }
 function buildCards(treinos) {
   const grid = document.getElementById('daysGrid');
   grid.innerHTML = '';
+  // Agrupa por data — pode haver mais de um treino no mesmo dia (o principal
+  // + "extras" adicionados manualmente, origem="extra"). O principal é a
+  // primeira entrada não-extra da data; extras nunca substituem o principal.
   const map = {};
-  (treinos||[]).forEach(t => { map[t.data] = t; });
+  const extrasMap = {};
+  (treinos||[]).forEach(t => {
+    if (t.origem === 'extra') {
+      (extrasMap[t.data] = extrasMap[t.data] || []).push(t);
+    } else if (!map[t.data]) {
+      map[t.data] = t;
+    }
+  });
   const todayISO = localIso(new Date());
 
   for (let i = 0; i < 7; i++) {
     const d   = addDays(monday, i);
     const key = iso(d);
     const t   = map[key] || {data: key, tipo:'DESCANSO'};
+    const extras = extrasMap[key] || [];
     const isToday = key === todayISO;
     const isRealizado = !!t.resultado;
     const isPerdido = !isRealizado && key < todayISO && t.tipo !== 'DESCANSO';
@@ -653,9 +759,13 @@ function buildCards(treinos) {
     const isAcademia = t.tipo === 'ACADEMIA';
     const cadReal    = (res && res.cadencia_media_rpm) ? res.cadencia_media_rpm : '';
     const avgPowReal = (res && res.avg_power) ? res.avg_power : null;
-    const metricsHTML = (dur || dist || elev || cadReal || avgPowReal)
+    const tssObtido    = res ? res.tss_obtido : null;
+    const tssPlanejado = t.tss_planejado || null;
+    const tssMetric  = tssObtido || tssPlanejado;
+    const metricsHTML = (dur || dist || elev || cadReal || avgPowReal || tssMetric)
       ? `<div class="metrics" id="metrics-${key}">
            ${dur  ? `<div class="metric"><div class="mv">${dur} min</div><div class="ml">Duração</div></div>` : ''}
+           ${tssMetric ? `<div class="metric"><div class="mv">${tssMetric} TSS</div><div class="ml">${tssObtido ? 'TSS' : 'TSS previsto'}</div></div>` : ''}
            ${!isAcademia && cadReal ? `<div class="metric"><div class="mv">${cadReal} rpm</div><div class="ml">Cad. real</div></div>` : ''}
            ${!isAcademia && avgPowReal ? `<div class="metric"><div class="mv">${avgPowReal}W</div><div class="ml">Potência</div></div>` : ''}
            ${dist ? `<div class="metric"><div class="mv">${dist} km</div><div class="ml">Distância</div></div>` : ''}
@@ -670,6 +780,7 @@ function buildCards(treinos) {
         <li><span class="ri">⏱</span><span class="rk">Tempo</span><span class="rv" id="resumo-dur-${key}">${durStr || '—'}</span></li>
         ${!isAcademia ? `<li><span class="ri">🦵</span><span class="rk">Cad. alvo</span><span class="rv rv-cad" id="resumo-cad-${key}">${cad ? cad+' rpm' : '—'}</span></li>` : ''}
         ${potAlvo ? `<li id="resumo-alvo-${key}" style="${!t.indoor ? 'display:none' : ''}"><span class="ri">⚡</span><span class="rk">Alvo indoor</span><span class="rv">${potAlvo}</span></li>` : ''}
+        ${tssPlanejado ? `<li><span class="ri">📊</span><span class="rk">P: TSS</span><span class="rv">${tssPlanejado}${tssObtido ? ` · real ${tssObtido}` : ''}</span></li>` : ''}
       </ul>` : '';
 
     const acSub = t.academia;
@@ -744,7 +855,149 @@ function buildCards(treinos) {
         </div>` : ''}
         ${resHTML}
       </div>`;
-    grid.appendChild(c);
+
+    const dayCol = document.createElement('div');
+    dayCol.className = 'day-col';
+    dayCol.appendChild(c);
+    extras.forEach(ex => {
+      const wrap = document.createElement('div');
+      wrap.innerHTML = renderExtraCard(ex, key);
+      dayCol.appendChild(wrap.firstElementChild);
+    });
+    const addWrap = document.createElement('div');
+    addWrap.innerHTML = renderAddExtraArea(key);
+    dayCol.appendChild(addWrap.firstElementChild);
+    dayCol.appendChild(addWrap.lastElementChild);
+    grid.appendChild(dayCol);
+  }
+}
+
+function extraTipoLabel(tipo) {
+  return (TIPOS.find(tp => tp.v === tipo) || {l: tipo}).l;
+}
+
+function extraTipoOpts(selecionado) {
+  return TIPOS.filter(tp => tp.v !== 'DESCANSO').map(tp =>
+    `<option value="${tp.v}" ${tp.v === selecionado ? 'selected' : ''}>${tp.l}</option>`
+  ).join('');
+}
+
+function renderExtraCard(t, key) {
+  const id = t.id;
+  const dur = t.duracao_min || '';
+  const durStr = dur ? ((Math.floor(dur/60)>0?Math.floor(dur/60)+'h':'')+(dur%60>0?dur%60+'min':'')) : '';
+  const tss = t.tss_planejado || '';
+  const desc = (t.descricao || '').replace(/</g, '&lt;');
+  const checked = t.concluido ? 'checked' : '';
+  return `<div class="extra-card" id="extra-${id}">
+    <div class="extra-head">
+      <span class="extra-chip tipo-${t.tipo}">${extraTipoLabel(t.tipo)}</span>
+      <button class="extra-remove" onclick="removerExtra('${key}','${id}')" title="Remover">✕</button>
+    </div>
+    <div class="extra-body">
+      ${(durStr || tss) ? `<div class="extra-meta">
+        ${durStr ? `<span>⏱ ${durStr}</span>` : ''}
+        ${tss ? `<span>⚡ ${tss} TSS</span>` : ''}
+      </div>` : ''}
+      ${desc ? `<div class="extra-desc">${desc}</div>` : ''}
+      <label class="extra-check">
+        <input type="checkbox" ${checked} onchange="toggleExtraConcluido('${key}','${id}', this.checked)"> Concluído
+      </label>
+      <button class="extra-edit-toggle" onclick="toggleExtraEditForm('${id}')">✏️ Editar</button>
+      <div class="extra-form" id="extra-edit-form-${id}" style="display:none">
+        <select id="ee-tipo-${id}">${extraTipoOpts(t.tipo)}</select>
+        <input type="number" id="ee-dur-${id}" placeholder="Duração (min)" value="${dur}">
+        <textarea id="ee-desc-${id}" placeholder="Notas...">${desc}</textarea>
+        <div class="extra-form-actions">
+          <button class="ef-save" onclick="salvarEdicaoExtra('${key}','${id}')">Salvar</button>
+          <button class="ef-cancel" onclick="toggleExtraEditForm('${id}')">Cancelar</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderAddExtraArea(key) {
+  return `<button class="add-extra-btn" id="add-extra-btn-${key}" onclick="toggleAddExtraForm('${key}')">+ Adicionar treino</button>
+  <div class="extra-form" id="add-extra-form-${key}" style="display:none">
+    <select id="ae-tipo-${key}">${extraTipoOpts('ACADEMIA')}</select>
+    <input type="number" id="ae-dur-${key}" placeholder="Duração (min)">
+    <textarea id="ae-desc-${key}" placeholder="Notas..."></textarea>
+    <div class="extra-form-actions">
+      <button class="ef-save" onclick="criarExtra('${key}')">Adicionar</button>
+      <button class="ef-cancel" onclick="toggleAddExtraForm('${key}')">Cancelar</button>
+    </div>
+  </div>`;
+}
+
+function toggleAddExtraForm(key) {
+  const f = document.getElementById(`add-extra-form-${key}`);
+  if (f) f.style.display = f.style.display === 'none' ? '' : 'none';
+}
+
+function toggleExtraEditForm(extraId) {
+  const f = document.getElementById(`extra-edit-form-${extraId}`);
+  if (f) f.style.display = f.style.display === 'none' ? '' : 'none';
+}
+
+async function criarExtra(key) {
+  const tipo   = document.getElementById(`ae-tipo-${key}`).value;
+  const durRaw = document.getElementById(`ae-dur-${key}`).value;
+  const desc   = document.getElementById(`ae-desc-${key}`).value.trim();
+  try {
+    const r = await fetch(`/workout/treino/${iso(monday)}/${key}/extra`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({tipo, duracao_min: durRaw ? parseInt(durRaw) : null, descricao: desc || null}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    toast('✅ Treino adicionado', 'ok');
+    await load();
+  } catch(e) {
+    toast('❌ Erro: ' + e.message, 'err');
+  }
+}
+
+async function salvarEdicaoExtra(key, extraId) {
+  const tipo   = document.getElementById(`ee-tipo-${extraId}`).value;
+  const durRaw = document.getElementById(`ee-dur-${extraId}`).value;
+  const desc   = document.getElementById(`ee-desc-${extraId}`).value.trim();
+  try {
+    const r = await fetch(`/workout/treino/${iso(monday)}/${key}/extra/${extraId}`, {
+      method: 'PATCH',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({tipo, duracao_min: durRaw ? parseInt(durRaw) : null, descricao: desc || null}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    toast('✅ Treino atualizado', 'ok');
+    await load();
+  } catch(e) {
+    toast('❌ Erro: ' + e.message, 'err');
+  }
+}
+
+async function removerExtra(key, extraId) {
+  if (!confirm('Remover este treino?')) return;
+  try {
+    const r = await fetch(`/workout/treino/${iso(monday)}/${key}/extra/${extraId}`, {method: 'DELETE'});
+    if (!r.ok) throw new Error(await r.text());
+    toast('🗑️ Treino removido', 'info');
+    await load();
+  } catch(e) {
+    toast('❌ Erro: ' + e.message, 'err');
+  }
+}
+
+async function toggleExtraConcluido(key, extraId, checked) {
+  try {
+    const r = await fetch(`/workout/treino/${iso(monday)}/${key}/extra/${extraId}`, {
+      method: 'PATCH',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({concluido: checked}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+  } catch(e) {
+    toast('❌ Erro: ' + e.message, 'err');
   }
 }
 
@@ -893,6 +1146,7 @@ function abrirTreinoInfo(key) {
   const cad   = document.getElementById(`cad-${key}`)?.value || p.cadencia_rpm || '';
   const notas = document.getElementById(`desc-${key}`)?.value || p.descricao || '';
   const acSub = p.academia;
+  const isIndoor = p.indoor || false;
 
   const dt = new Date(key + 'T00:00');
   const diaLabel = `${DIAS[(dt.getDay()+6)%7]} ${key.slice(8,10)}/${key.slice(5,7)}`;
@@ -915,8 +1169,8 @@ function abrirTreinoInfo(key) {
     // Treino de bike: objetivo + dica + a prescrição REAL (notas). Não há mais
     // lista "Como executar" fixa por tipo — ela divergia das notas. As "Notas do
     // treino" são a única fonte da prescrição (séries×tempo, cadência, recup).
-    const isIndoor = p.indoor || false;
     const modoLabel = isIndoor ? ' <span style="font-size:.72rem;background:#e3f2fd;color:#1565c0;border-radius:4px;padding:1px 6px;font-weight:700;vertical-align:middle">🏠 Indoor — Watts</span>' : '';
+    corpo += `<div class="treino-chart" id="tc-${key}"><div class="tc-loading">Carregando gráfico…</div></div>`;
     if (esp) {
       corpo += `<div class="esp-obj">${esp.obj}</div>`;
       // Cadência da dica vem do treino (não fixa) — evita divergir do header/notas.
@@ -942,6 +1196,10 @@ function abrirTreinoInfo(key) {
   document.getElementById('treinoModalHead').innerHTML = `<h3>${tipoInfo.l}</h3><div class="modal-sub">${meta.join('  ·  ')}</div>`;
   document.getElementById('treinoModalBody').innerHTML = corpo;
   document.getElementById('treinoModal').classList.add('show');
+
+  if (tipo !== 'ACADEMIA') {
+    carregarGraficoTreino(key, tipo, p.duracao_min || 60, isIndoor);
+  }
 }
 
 function fecharTreinoModal(e) {
@@ -1602,14 +1860,7 @@ function renderFTPBtn() {
   }
 }
 
-(async function loadInicial() {
-  try {
-    const r = await fetch(`/workout/semana/${iso(monday)}`);
-    const d = await r.json();
-    if (d.proxima_semana_gerada) monday = addDays(monday, 7);
-  } catch {}
-  await load();
-})();
+load();
 carregarProva();
 renderFTPBtn();
 window.addEventListener('mtb:recarregar', load);

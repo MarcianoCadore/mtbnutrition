@@ -60,7 +60,7 @@ async def get_treino(user_id: str, data_iso: str) -> dict | None:
     if not doc:
         return None
     for t in doc.get("treinos", []):
-        if t.get("data") == data_iso:
+        if t.get("data") == data_iso and t.get("origem") != "extra":
             return t if _e_treino_real(t) else None
     return None
 
@@ -81,8 +81,10 @@ async def _garantir_dia(user_id: str, data_iso: str, db) -> None:
             "treinos": [_treino_vazio(data_iso)],
         })
         return
-    # Doc existe: verifica se o dia já tem item
-    tem = any(t.get("data") == data_iso for t in doc.get("treinos", []))
+    # Doc existe: verifica se o dia já tem item (extras não contam — um extra
+    # sozinho na data não substitui o placeholder que o primário precisa).
+    tem = any(t.get("data") == data_iso and t.get("origem") != "extra"
+              for t in doc.get("treinos", []))
     if not tem:
         await db.semanas.update_one(
             {"semana_inicio": sem, "user_id": user_id},
@@ -97,10 +99,16 @@ async def _set_treino_dia(user_id: str, data_iso: str, campos: dict, db) -> None
     campos necessários (tipo, duracao_min, etc.) — faz $set no item existente."""
     sem = _semana_inicio(data_iso)
     await _garantir_dia(user_id, data_iso, db)
-    # Usa o operador posicional para atualizar o item com a data certa
+    # Usa o operador posicional para atualizar o item com a data certa — via
+    # $elemMatch pra garantir que bate no primário mesmo se houver um "extra"
+    # (origem="extra") na mesma data (ver [[project-multiplos-treinos-dia]]).
     update = {f"treinos.$.{k}": v for k, v in campos.items()}
     await db.semanas.update_one(
-        {"semana_inicio": sem, "user_id": user_id, "treinos.data": data_iso},
+        {
+            "semana_inicio": sem,
+            "user_id": user_id,
+            "treinos": {"$elemMatch": {"data": data_iso, "origem": {"$ne": "extra"}}},
+        },
         {"$set": update},
     )
 

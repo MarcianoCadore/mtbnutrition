@@ -318,7 +318,13 @@ async def sync_treinos_planejados(user_id: str, semana_inicio: str) -> int:
                 "treinos": [treino_entry],
             })
         else:
-            existe = any(t.get("data") == date_str for t in doc.get("treinos", []))
+            # "extra" (origem="extra", só gerenciado manualmente) não conta como
+            # o primário da data — senão o sync acharia que o dia já tem treino
+            # e sobrescreveria o extra em vez de criar o primário ao lado dele.
+            existe = any(
+                t.get("data") == date_str and t.get("origem") != "extra"
+                for t in doc.get("treinos", [])
+            )
             if not existe:
                 await db.semanas.update_one(
                     {"semana_inicio": semana, "user_id": user_id},
@@ -335,7 +341,10 @@ async def sync_treinos_planejados(user_id: str, semana_inicio: str) -> int:
                 if cadencia_rpm is not None:
                     set_fields["treinos.$.cadencia_rpm"] = cadencia_rpm
                 await db.semanas.update_one(
-                    {"semana_inicio": semana, "user_id": user_id, "treinos.data": date_str},
+                    {
+                        "semana_inicio": semana, "user_id": user_id,
+                        "treinos": {"$elemMatch": {"data": date_str, "origem": {"$ne": "extra"}}},
+                    },
                     {"$set": set_fields},
                 )
         datas_processadas.add(date_str)
@@ -390,7 +399,10 @@ async def sync_treinos_planejados(user_id: str, semana_inicio: str) -> int:
         for wid, data_treino in removidos_wids:
             try:
                 await db.semanas.update_one(
-                    {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": data_treino},
+                    {
+                        "semana_inicio": semana_inicio, "user_id": user_id,
+                        "treinos": {"$elemMatch": {"data": data_treino, "origem": {"$ne": "extra"}}},
+                    },
                     {"$unset": {"treinos.$.garmin_workout_id": ""}},
                 )
             except Exception as e:
@@ -480,6 +492,13 @@ def _tss_esperado(tipo, duracao_min) -> int | None:
     return round((duracao_min / 60) * fator ** 2 * 100)
 
 
+def tss_planejado(tipo, duracao_min) -> int | None:
+    """Wrapper público de _tss_esperado — TSS estimado de um treino planejado
+    (não depende de resultado sincronizado, só de tipo+duração). Usado pelo
+    card do calendário para mostrar "P: ... TSS" antes do treino acontecer."""
+    return _tss_esperado(tipo, duracao_min)
+
+
 def _metricas_extra(planejado: dict, resultado: dict, limiar, avg_speed_ms=None, fit_path=None, ftp=None) -> dict:
     """Velocidade média e TSS (esperado/obtido) para o modal de avaliação.
     Não são enviadas ao WhatsApp — só ficam salvas no resultado para o portal."""
@@ -561,7 +580,10 @@ async def sync_atividades(user_id: str, semana_inicio: str) -> int:
                     aid, t_data,
                 )
                 await db.semanas.update_one(
-                    {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": t_data},
+                    {
+                        "semana_inicio": semana_inicio, "user_id": user_id,
+                        "treinos": {"$elemMatch": {"data": t_data, "origem": {"$ne": "extra"}}},
+                    },
                     {"$unset": {"treinos.$.resultado": ""}},
                 )
                 ids_para_limpar = list({aid} | ids_do_dia)
@@ -660,11 +682,12 @@ async def sync_atividades(user_id: str, semana_inicio: str) -> int:
             "carga_exercicio": round(act["activityTrainingLoad"]) if act.get("activityTrainingLoad") else None,
         }
 
-        # busca treino planejado para comparação
+        # busca treino planejado para comparação (o primário da data — um
+        # "extra" nunca sincroniza com o Garmin, então nunca é "o" planejado)
         treino_planejado = {}
         if doc:
             for t in doc.get("treinos", []):
-                if t.get("data") == act_date:
+                if t.get("data") == act_date and t.get("origem") != "extra":
                     treino_planejado = t
                     break
 
@@ -713,7 +736,10 @@ async def sync_atividades(user_id: str, semana_inicio: str) -> int:
                 }],
             })
         else:
-            existe = any(t.get("data") == act_date for t in doc.get("treinos", []))
+            existe = any(
+                t.get("data") == act_date and t.get("origem") != "extra"
+                for t in doc.get("treinos", [])
+            )
             if existe:
                 # Preserva o tipo planejado (mais confiável que a classificação do
                 # .fit). Só adota o tipo do .fit quando não havia plano (DESCANSO).
@@ -725,7 +751,10 @@ async def sync_atividades(user_id: str, semana_inicio: str) -> int:
                 if periodo_real:
                     set_fields["treinos.$.periodo"] = periodo_real
                 await db.semanas.update_one(
-                    {"semana_inicio": semana, "user_id": user_id, "treinos.data": act_date},
+                    {
+                        "semana_inicio": semana, "user_id": user_id,
+                        "treinos": {"$elemMatch": {"data": act_date, "origem": {"$ne": "extra"}}},
+                    },
                     {"$set": set_fields},
                 )
             else:

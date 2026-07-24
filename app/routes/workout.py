@@ -1,6 +1,7 @@
 import os
 import shutil
 import logging
+import uuid
 from fastapi import APIRouter, HTTPException, UploadFile, File, Request, Form
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
@@ -96,12 +97,14 @@ async def get_semana(request: Request, semana_inicio: str):
     # VO2máx, o badge não pode ficar "Recuperação".
     from app.services.plano_semana_service import limpar_descricao_planejada
     from app.services.ai_service import tipo_definitivo
+    from app.services.garmin_service import tss_planejado
     for t in base.get("treinos", []):
         if t.get("descricao"):
             t["descricao"] = limpar_descricao_planejada(t["descricao"])
             td = tipo_definitivo(t["descricao"])
             if td and td != t.get("tipo"):
                 t["tipo"] = td
+        t["tss_planejado"] = tss_planejado(t.get("tipo"), t.get("duracao_min"))
     base["proxima_semana_gerada"] = bool(proxima_existe)
     base["tem_historico"] = bool(tem_historico)
     return base
@@ -125,10 +128,17 @@ async def salvar_semana(request: Request, plano: PlanoSemanal):
         # preserva objetivo do banco quando o request traz string vazia
         if not data.get("objetivo") and existing.get("objetivo"):
             data["objetivo"] = existing["objetivo"]
+        # extras (origem="extra") são geridos por endpoints próprios e nunca
+        # passam por este payload — de fora do dict de preservação (senão,
+        # compartilhando data com o primário, um extra poderia "vencer" aqui
+        # e ser confundido com o primário salvo) e reanexados abaixo, senão o
+        # replace_one below os apagaria (collect() só manda os 7 primários).
         existing_map = {
             t["data"]: t
             for t in existing.get("treinos", [])
+            if t.get("origem") != "extra"
         }
+        extras_existentes = [t for t in existing.get("treinos", []) if t.get("origem") == "extra"]
         for i, t in enumerate(data["treinos"]):
             saved = existing_map.get(t["data"], {})
             # preserva resultado, garmin_workout_id e indoor do sync / toggle
@@ -145,6 +155,7 @@ async def salvar_semana(request: Request, plano: PlanoSemanal):
             # bloqueia alteração se data >= hoje E treino ainda não foi realizado
             if t["data"] >= today_iso and not saved.get("resultado") and saved:
                 data["treinos"][i] = saved
+        data["treinos"].extend(extras_existentes)
 
     await db.semanas.replace_one(
         {"semana_inicio": plano.semana_inicio, "user_id": user_id},
@@ -181,13 +192,18 @@ async def _reclassificar_impl(user_id: str, semana_inicio: str) -> dict:
 
     alterados = []
     for t in doc.get("treinos", []):
+        if t.get("origem") == "extra":
+            continue  # reclassificação é fluxo automático só do primário
         descricao = t.get("descricao")
         if not descricao:
             continue
         novo_tipo = classificar_por_texto(descricao)
         if novo_tipo and novo_tipo != t.get("tipo"):
             await db.semanas.update_one(
-                {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": t["data"]},
+                {
+                    "semana_inicio": semana_inicio, "user_id": user_id,
+                    "treinos": {"$elemMatch": {"data": t["data"], "origem": {"$ne": "extra"}}},
+                },
                 {"$set": {"treinos.$.tipo": novo_tipo}},
             )
             alterados.append({"data": t["data"], "de": t.get("tipo"), "para": novo_tipo})
@@ -271,24 +287,29 @@ async def gerar_primeira_semana(request: Request, semana_inicio: str):
     db = get_db()
     user_id = request.state.user_id
 
-    # Não sobrescreve uma semana que já tem treino real registrado.
+    # Não sobrescreve uma semana que já tem treino real registrado (extras não
+    # contam — um extra sozinho não deve bloquear nem ser apagado por isto).
     existing = await db.semanas.find_one(
         {"semana_inicio": semana_inicio, "user_id": user_id})
     if existing and any(
-        (t.get("tipo") != "DESCANSO" and t.get("duracao_min")) or t.get("resultado")
+        ((t.get("tipo") != "DESCANSO" and t.get("duracao_min")) or t.get("resultado"))
+        and t.get("origem") != "extra"
         for t in existing.get("treinos", [])
     ):
         raise HTTPException(
             status_code=409,
             detail="Esta semana já tem treinos. Apague-os antes de gerar de novo.")
 
+    extras_existentes = [
+        t for t in (existing or {}).get("treinos", []) if t.get("origem") == "extra"
+    ]
     plano = await _gerar(user_id, semana_inicio)
     doc = {
         "semana_inicio": semana_inicio,
         "user_id": user_id,
         "objetivo": plano.get("progressao", ""),
         "origem": "auto",
-        "treinos": plano["treinos"],
+        "treinos": plano["treinos"] + extras_existentes,
     }
     await db.semanas.replace_one(
         {"semana_inicio": semana_inicio, "user_id": user_id}, doc, upsert=True)
@@ -309,6 +330,10 @@ async def apagar_primeira_semana(request: Request, semana_inicio: str):
         raise HTTPException(
             status_code=409,
             detail="Já há treino realizado nesta semana — não dá para apagar tudo.")
+    if any(t.get("origem") == "extra" for t in doc.get("treinos", [])):
+        raise HTTPException(
+            status_code=409,
+            detail="Há um treino extra cadastrado nesta semana — remova-o antes de apagar tudo.")
     await db.semanas.delete_one({"semana_inicio": semana_inicio, "user_id": user_id})
     return {"status": "apagado", "semana": semana_inicio}
 
@@ -335,8 +360,12 @@ async def enviar_para_garmin(request: Request, body: EnviarGarminBody):
     existing = await db.semanas.find_one(
         {"semana_inicio": body.semana_inicio, "user_id": user_id})
     existing_gids: dict[str, str] = {}
+    extras_existentes = []
     if existing:
         for t in existing.get("treinos", []):
+            if t.get("origem") == "extra":
+                extras_existentes.append(t)
+                continue
             if t.get("garmin_workout_id"):
                 existing_gids[t["data"]] = t["garmin_workout_id"]
 
@@ -345,7 +374,9 @@ async def enviar_para_garmin(request: Request, body: EnviarGarminBody):
         "semana_inicio": body.semana_inicio,
         "user_id": user_id,
         "objetivo": objetivo,
-        "treinos": [t.model_dump() for t in body.treinos],
+        # body.treinos são sempre primários (o plano da IA); reanexa extras
+        # existentes, senão este replace_one os apagaria.
+        "treinos": [t.model_dump() for t in body.treinos] + extras_existentes,
     }
     await db.semanas.replace_one(
         {"semana_inicio": body.semana_inicio, "user_id": user_id},
@@ -375,7 +406,10 @@ async def enviar_para_garmin(request: Request, body: EnviarGarminBody):
         )
         if gid:
             await db.semanas.update_one(
-                {"semana_inicio": body.semana_inicio, "user_id": user_id, "treinos.data": t.data},
+                {
+                    "semana_inicio": body.semana_inicio, "user_id": user_id,
+                    "treinos": {"$elemMatch": {"data": t.data, "origem": {"$ne": "extra"}}},
+                },
                 {"$set": {"treinos.$.garmin_workout_id": gid}},
             )
         resultados.append({"data": t.data, "tipo": t.tipo, "garmin_id": gid, "status": "ok" if gid else "erro"})
@@ -417,6 +451,8 @@ async def reenviar_para_garmin(request: Request, semana_inicio: str):
 
     resultados = []
     for t in doc.get("treinos", []):
+        if t.get("origem") == "extra":
+            continue  # extra nunca sincroniza com o Garmin
         if t.get("tipo") in ("DESCANSO", "ACADEMIA") or not t.get("duracao_min"):
             # O dia virou descanso/academia. Se ainda houver um workout agendado
             # no Garmin, remove-o — senão o pull seguinte (sync_treinos_planejados)
@@ -425,7 +461,10 @@ async def reenviar_para_garmin(request: Request, semana_inicio: str):
             if gid_orfao:
                 await deletar_workout_garmin(user_id, gid_orfao)
                 await db.semanas.update_one(
-                    {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": t["data"]},
+                    {
+                        "semana_inicio": semana_inicio, "user_id": user_id,
+                        "treinos": {"$elemMatch": {"data": t["data"], "origem": {"$ne": "extra"}}},
+                    },
                     {"$unset": {"treinos.$.garmin_workout_id": ""}},
                 )
                 resultados.append({"data": t.get("data"), "status": "removido_do_garmin"})
@@ -449,7 +488,10 @@ async def reenviar_para_garmin(request: Request, semana_inicio: str):
         )
         if gid:
             await db.semanas.update_one(
-                {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": t["data"]},
+                {
+                    "semana_inicio": semana_inicio, "user_id": user_id,
+                    "treinos": {"$elemMatch": {"data": t["data"], "origem": {"$ne": "extra"}}},
+                },
                 {"$set": {"treinos.$.garmin_workout_id": gid}},
             )
         resultados.append({
@@ -599,6 +641,23 @@ async def ler_zonas_potencia(request: Request):
     return await get_zonas_potencia(request.state.user_id)
 
 
+@router.get("/estrutura/{tipo}")
+async def estrutura_treino(request: Request, tipo: str, duracao_min: int = 60, indoor: bool = False):
+    """Segmentos (aquecimento/intervalo/recuperação/volta à calma) do treino, para
+    desenhar o gráfico de estrutura no portal — mesma fonte usada para montar o
+    workout enviado ao Garmin. `indoor=true` traz a faixa em watts, senão em bpm."""
+    from app.services.garmin_workout_service import preview_estrutura
+    from app.services.config_service import zonas_bpm_map, zonas_watts_map
+
+    user_id = request.state.user_id
+    zonas_bpm = await zonas_bpm_map(user_id)
+    zonas_watts = await zonas_watts_map(user_id) if indoor else None
+    dados = preview_estrutura(tipo, duracao_min, zonas_bpm, zonas_watts)
+    if dados is None:
+        raise HTTPException(status_code=404, detail=f"Tipo de treino sem estrutura: {tipo}")
+    return dados
+
+
 class IndoorBody(BaseModel):
     indoor: bool  # True = indoor (watts), False = outdoor (FC)
 
@@ -621,13 +680,19 @@ async def marcar_indoor(
     if not doc:
         raise HTTPException(status_code=404, detail="Semana não encontrada.")
 
-    treino = next((t for t in doc.get("treinos", []) if t["data"] == data), None)
+    treino = next(
+        (t for t in doc.get("treinos", []) if t["data"] == data and t.get("origem") != "extra"),
+        None,
+    )
     if not treino or treino.get("tipo") == "DESCANSO":
         raise HTTPException(status_code=404, detail="Treino não encontrado para esta data.")
 
     # Atualiza campo indoor no banco
     await db.semanas.update_one(
-        {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": data},
+        {
+            "semana_inicio": semana_inicio, "user_id": user_id,
+            "treinos": {"$elemMatch": {"data": data, "origem": {"$ne": "extra"}}},
+        },
         {"$set": {"treinos.$.indoor": body.indoor}},
     )
 
@@ -652,7 +717,10 @@ async def marcar_indoor(
             )
             if novo_gid:
                 await db.semanas.update_one(
-                    {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": data},
+                    {
+                        "semana_inicio": semana_inicio, "user_id": user_id,
+                        "treinos": {"$elemMatch": {"data": data, "origem": {"$ne": "extra"}}},
+                    },
                     {"$set": {"treinos.$.garmin_workout_id": novo_gid}},
                 )
                 garmin_sync = {"ok": True, "gid": novo_gid}
@@ -730,12 +798,19 @@ async def criar_treino_ftp(request: Request, body: CriarFTPBody):
         "indoor": body.forcar_indoor if body.forcar_indoor is not None else True,
     }
 
-    existing = await db.semanas.find_one(
-        {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": data_iso}
-    )
+    # $elemMatch pra achar só o primário — um "extra" na mesma data não pode
+    # ser confundido com "já existe treino" (o $set treinos.$ abaixo substitui
+    # o elemento inteiro, então bater no extra errado o apagaria por completo).
+    existing = await db.semanas.find_one({
+        "semana_inicio": semana_inicio, "user_id": user_id,
+        "treinos": {"$elemMatch": {"data": data_iso, "origem": {"$ne": "extra"}}},
+    })
     if existing:
         await db.semanas.update_one(
-            {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": data_iso},
+            {
+                "semana_inicio": semana_inicio, "user_id": user_id,
+                "treinos": {"$elemMatch": {"data": data_iso, "origem": {"$ne": "extra"}}},
+            },
             {"$set": {"treinos.$": treino_doc}},
         )
     else:
@@ -763,7 +838,10 @@ async def reanalisar_treino(request: Request, semana_inicio: str, data: str):
     if not doc:
         raise HTTPException(status_code=404, detail="Semana não encontrada.")
 
-    treino = next((t for t in doc.get("treinos", []) if t["data"] == data), None)
+    treino = next(
+        (t for t in doc.get("treinos", []) if t["data"] == data and t.get("origem") != "extra"),
+        None,
+    )
     if not treino:
         raise HTTPException(status_code=404, detail="Treino não encontrado.")
 
@@ -784,7 +862,10 @@ async def reanalisar_treino(request: Request, semana_inicio: str, data: str):
         raise HTTPException(status_code=500, detail=f"Erro na análise IA: {e}")
 
     await db.semanas.update_one(
-        {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": data},
+        {
+            "semana_inicio": semana_inicio, "user_id": user_id,
+            "treinos": {"$elemMatch": {"data": data, "origem": {"$ne": "extra"}}},
+        },
         {"$set": {"treinos.$.resultado.analise_ia": analise_ia}},
     )
     return {"status": "ok", "analise_ia": analise_ia}
@@ -1141,7 +1222,7 @@ async def upload_fit(request: Request, semana_inicio: str, data: str, arquivo: U
     descricao_existente = None
     if doc:
         for t in doc.get("treinos", []):
-            if t.get("data") == data:
+            if t.get("data") == data and t.get("origem") != "extra":
                 descricao_existente = t.get("descricao")
                 break
     if descricao_existente:
@@ -1169,12 +1250,18 @@ async def upload_fit(request: Request, semana_inicio: str, data: str, arquivo: U
             "treinos": [novo_treino],
         })
     else:
-        treino_existe = any(t.get("data") == data for t in doc.get("treinos", []))
+        treino_existe = any(
+            t.get("data") == data and t.get("origem") != "extra"
+            for t in doc.get("treinos", [])
+        )
         if treino_existe:
             # apenas campos com valor — preserva descricao já salva
             fields = {f"treinos.$.{k}": v for k, v in novo_treino.items() if v is not None}
             await db.semanas.update_one(
-                {"semana_inicio": semana_inicio, "user_id": user_id, "treinos.data": data},
+                {
+                    "semana_inicio": semana_inicio, "user_id": user_id,
+                    "treinos": {"$elemMatch": {"data": data, "origem": {"$ne": "extra"}}},
+                },
                 {"$set": fields},
             )
         else:
@@ -1193,7 +1280,10 @@ async def remover_fit(request: Request, semana_inicio: str, data: str):
         os.remove(dest_path)
     db = get_db()
     await db.semanas.update_one(
-        {"semana_inicio": semana_inicio, "user_id": request.state.user_id, "treinos.data": data},
+        {
+            "semana_inicio": semana_inicio, "user_id": request.state.user_id,
+            "treinos": {"$elemMatch": {"data": data, "origem": {"$ne": "extra"}}},
+        },
         {
             "$set":   {"treinos.$.tipo": "DESCANSO"},
             "$unset": {
@@ -1213,6 +1303,77 @@ async def download_fit(semana_inicio: str, data: str):
     if not os.path.exists(dest_path):
         raise HTTPException(status_code=404, detail="Arquivo não encontrado")
     return FileResponse(dest_path, media_type="application/octet-stream", filename=f"{data}.fit")
+
+
+# ── "extra": segundo (ou terceiro...) treino no mesmo dia ────────────────────
+# Espécie totalmente separada do treino principal: gerida só pelo usuário no
+# painel, nunca sincroniza com o Garmin, nunca é tocada pela IA ou pelo botão
+# "Salvar Semana". Identificada por origem="extra" + id próprio (a data deixa
+# de ser única quando há um extra). Ver plano em
+# /Users/marcianocadore/.claude/plans/whimsical-munching-whisper.md.
+
+class ExtraCreateBody(BaseModel):
+    tipo: TipoTreino
+    duracao_min: Optional[int] = None
+    descricao: Optional[str] = None
+
+
+class ExtraUpdateBody(BaseModel):
+    tipo: Optional[TipoTreino] = None
+    duracao_min: Optional[int] = None
+    descricao: Optional[str] = None
+    concluido: Optional[bool] = None
+
+
+@router.post("/treino/{semana_inicio}/{data}/extra")
+async def criar_treino_extra(request: Request, semana_inicio: str, data: str, body: ExtraCreateBody):
+    db = get_db()
+    entry = {
+        "id": uuid.uuid4().hex[:12],
+        "origem": "extra",
+        "data": data,
+        "tipo": body.tipo,
+        "duracao_min": body.duracao_min,
+        "descricao": body.descricao,
+        "concluido": False,
+    }
+    await db.semanas.update_one(
+        {"semana_inicio": semana_inicio, "user_id": request.state.user_id},
+        {"$push": {"treinos": entry}},
+        upsert=True,
+    )
+    return entry
+
+
+@router.patch("/treino/{semana_inicio}/{data}/extra/{extra_id}")
+async def editar_treino_extra(
+    request: Request, semana_inicio: str, data: str, extra_id: str, body: ExtraUpdateBody,
+):
+    db = get_db()
+    campos = body.model_dump(exclude_none=True)
+    if not campos:
+        return {"status": "sem alteracoes"}
+    fields = {f"treinos.$.{k}": v for k, v in campos.items()}
+    # id já é único por si só — não precisa de $elemMatch aqui.
+    result = await db.semanas.update_one(
+        {"semana_inicio": semana_inicio, "user_id": request.state.user_id, "treinos.id": extra_id},
+        {"$set": fields},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Treino extra não encontrado.")
+    return {"status": "ok", **campos}
+
+
+@router.delete("/treino/{semana_inicio}/{data}/extra/{extra_id}")
+async def remover_treino_extra(request: Request, semana_inicio: str, data: str, extra_id: str):
+    db = get_db()
+    result = await db.semanas.update_one(
+        {"semana_inicio": semana_inicio, "user_id": request.state.user_id},
+        {"$pull": {"treinos": {"id": extra_id, "origem": "extra"}}},
+    )
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Treino extra não encontrado.")
+    return {"status": "removido"}
 
 
 _PAGINA_ZONAS = """<!DOCTYPE html>

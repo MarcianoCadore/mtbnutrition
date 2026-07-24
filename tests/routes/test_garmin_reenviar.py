@@ -119,3 +119,29 @@ class TestGetSemanaLimpaBpm:
         assert "bpm" not in desc and "113-132" not in desc
         assert "Zona 2, ritmo" in desc      # frase intacta
         assert "75-85 rpm" in desc          # cadência preservada
+
+
+class TestGetSemanaTssPlanejado:
+    """get_semana anexa tss_planejado (calculado, não gravado no banco) pra
+    alimentar a linha "P: ... TSS" do card antes mesmo do treino sincronizar."""
+
+    def test_treino_com_fator_definido_tem_tss(self, auth_client, fake_db, run):
+        client, uid = auth_client
+        run(fake_db.semanas.insert_one({
+            "semana_inicio": SEG, "user_id": uid, "objetivo": "",
+            "treinos": [{"data": QUA, "tipo": "Z2_LONGO", "duracao_min": 120}],
+        }))
+        r = client.get(f"/workout/semana/{SEG}")
+        assert r.status_code == 200
+        t = r.json()["treinos"][0]
+        assert t["tss_planejado"] == round(2 * 0.65 ** 2 * 100)
+
+    def test_academia_sem_fator_definido_tss_none(self, auth_client, fake_db, run):
+        client, uid = auth_client
+        run(fake_db.semanas.insert_one({
+            "semana_inicio": SEG, "user_id": uid, "objetivo": "",
+            "treinos": [{"data": QUA, "tipo": "ACADEMIA", "duracao_min": 60}],
+        }))
+        r = client.get(f"/workout/semana/{SEG}")
+        assert r.status_code == 200
+        assert r.json()["treinos"][0]["tss_planejado"] is None

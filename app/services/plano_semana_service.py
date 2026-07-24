@@ -471,7 +471,10 @@ async def gerar_proxima_semana(
     if not doc:
         raise ValueError(f"Semana {semana_atual} não encontrada")
 
-    treinos = doc.get("treinos", [])
+    # "extra" (origem="extra") é gerido só manualmente pelo usuário no painel —
+    # a IA fica cega a eles, senão veria mais de 7 entradas para uma semana de
+    # 7 dias e poderia se confundir na análise/prompt.
+    treinos = [t for t in doc.get("treinos", []) if t.get("origem") != "extra"]
     proxima = _proxima_semana(semana_atual)
 
     # ── Parecer fisiológico (passo 1 do pipeline) ────────────────────────────
