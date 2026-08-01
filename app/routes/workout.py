@@ -3,7 +3,7 @@ import shutil
 import logging
 import uuid
 from fastapi import APIRouter, HTTPException, UploadFile, File, Request, Form
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
@@ -656,6 +656,123 @@ async def estrutura_treino(request: Request, tipo: str, duracao_min: int = 60, i
     if dados is None:
         raise HTTPException(status_code=404, detail=f"Tipo de treino sem estrutura: {tipo}")
     return dados
+
+
+def _resposta_download(xml: str, nome: str, ext: str) -> Response:
+    """Empacota o XML como download com a extensão dada (.xml, .zwo)."""
+    import re
+    slug = re.sub(r"[^a-z0-9]+", "_", nome.lower()).strip("_") or "treino"
+    return Response(
+        content=xml,
+        media_type="application/xml",
+        headers={"Content-Disposition": f'attachment; filename="{slug}.{ext}"'},
+    )
+
+
+async def _zonas_watts_ou_erro(user_id: str) -> dict:
+    """Zonas de potência do atleta ou 400 pedindo o FTP (o ERG é em watts)."""
+    from app.services.config_service import zonas_watts_map
+    zonas_watts = await zonas_watts_map(user_id)
+    if not zonas_watts:
+        raise HTTPException(
+            status_code=400,
+            detail="Configure seu FTP para exportar o treino ERG (as potências saem em watts).",
+        )
+    return zonas_watts
+
+
+async def _treino_do_dia(user_id: str, semana_inicio: str, data: str) -> dict:
+    """Treino principal (origem != extra) agendado numa data. 404 se não houver."""
+    db = get_db()
+    doc = await db.semanas.find_one({"semana_inicio": semana_inicio, "user_id": user_id})
+    treino = next(
+        (t for t in (doc or {}).get("treinos", []) if t["data"] == data and t.get("origem") != "extra"),
+        None,
+    ) if doc else None
+    if not treino or treino.get("tipo") == "DESCANSO":
+        raise HTTPException(status_code=404, detail="Treino não encontrado para esta data.")
+    return treino
+
+
+# ── ERG/XML (formato próprio: eventos desacoplados dos blocos; watts absolutos) ──
+
+@router.get("/erg/{tipo}")
+async def erg_treino(request: Request, tipo: str, duracao_min: int = 60, nome: str | None = None):
+    """Exporta o treino `tipo`/`duracao_min` no formato ERG/XML (blocos de potência
+    + eventos de antecipação desacoplados) para software de home trainer. Watts das
+    zonas do atleta — exige FTP configurado."""
+    from app.services.erg_service import build_erg_xml
+    from app.services.config_service import get_ftp
+
+    user_id = request.state.user_id
+    zonas_watts = await _zonas_watts_ou_erro(user_id)
+    ftp, _ = await get_ftp(user_id)
+    xml = build_erg_xml(tipo, duracao_min, zonas_watts=zonas_watts, nome=nome, ftp=ftp)
+    if xml is None:
+        raise HTTPException(status_code=404, detail=f"Tipo de treino sem estrutura: {tipo}")
+    return _resposta_download(xml, nome or tipo, "xml")
+
+
+@router.get("/erg/semana/{semana_inicio}/{data}")
+async def erg_treino_agendado(request: Request, semana_inicio: str, data: str):
+    """ERG/XML do treino agendado numa data (usa tipo/nome/duração/descrição reais
+    do dia). Exige FTP configurado."""
+    from app.services.erg_service import build_erg_xml
+    from app.services.config_service import get_ftp
+
+    user_id = request.state.user_id
+    zonas_watts = await _zonas_watts_ou_erro(user_id)
+    treino = await _treino_do_dia(user_id, semana_inicio, data)
+
+    ftp, _ = await get_ftp(user_id)
+    xml = build_erg_xml(
+        treino["tipo"],
+        treino.get("duracao_min") or 60,
+        zonas_watts=zonas_watts,
+        nome=treino.get("nome") or treino["tipo"],
+        descricao=treino.get("descricao"),
+        ftp=ftp,
+    )
+    if xml is None:
+        raise HTTPException(status_code=404, detail=f"Tipo de treino sem estrutura: {treino['tipo']}")
+    return _resposta_download(xml, treino.get("nome") or treino["tipo"], "xml")
+
+
+# ── .zwo (Zwift Workout): padrão dos apps de trainer. Potência RELATIVA ao FTP,
+#    então NÃO exige FTP salvo — cada usuário baixa o seu próprio arquivo. ────────
+
+def _zwo_do_treino(treino: dict) -> str | None:
+    """Gera o .zwo a partir de um dict de treino (tipo/nome/descrição)."""
+    from app.services.zwo_service import build_zwo_xml
+    return build_zwo_xml(
+        treino["tipo"],
+        treino.get("duracao_min") or 60,
+        nome=treino.get("nome") or treino["tipo"],
+        descricao=treino.get("descricao"),
+    )
+
+
+@router.get("/zwo/{tipo}")
+async def zwo_treino(request: Request, tipo: str, duracao_min: int = 60, nome: str | None = None):
+    """Exporta o treino `tipo`/`duracao_min` em .zwo (Zwift Workout). Potência em
+    fração do FTP — funciona para qualquer atleta, com ou sem FTP configurado."""
+    from app.services.zwo_service import build_zwo_xml
+
+    xml = build_zwo_xml(tipo, duracao_min, nome=nome)
+    if xml is None:
+        raise HTTPException(status_code=404, detail=f"Tipo de treino sem estrutura: {tipo}")
+    return _resposta_download(xml, nome or tipo, "zwo")
+
+
+@router.get("/zwo/semana/{semana_inicio}/{data}")
+async def zwo_treino_agendado(request: Request, semana_inicio: str, data: str):
+    """.zwo do treino agendado numa data (tipo/nome/duração/descrição/cadência reais
+    do dia), escopado ao usuário autenticado — cada um baixa o seu próprio arquivo."""
+    treino = await _treino_do_dia(request.state.user_id, semana_inicio, data)
+    xml = _zwo_do_treino(treino)
+    if xml is None:
+        raise HTTPException(status_code=404, detail=f"Tipo de treino sem estrutura: {treino['tipo']}")
+    return _resposta_download(xml, treino.get("nome") or treino["tipo"], "zwo")
 
 
 class IndoorBody(BaseModel):

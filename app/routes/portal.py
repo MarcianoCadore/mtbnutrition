@@ -178,6 +178,8 @@ HTML = """<!DOCTYPE html>
     .indoor-toggle button.ativo { background: var(--green); color: #fff; }
     .indoor-toggle button:disabled { opacity: .5; cursor: not-allowed; }
     .indoor-sync-msg { font-size: .72rem; margin-top: 4px; text-align: center; min-height: 14px; color: var(--muted); }
+    .erg-dl { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; font-size: .76rem; font-weight: 700; color: var(--green); text-decoration: none; border: 1.5px solid #cfe9e3; background: #f1f8f6; border-radius: 8px; padding: 6px 10px; }
+    .erg-dl:hover { background: #e6f3ef; }
     .nutri-estrat { font-size: .76rem; color: var(--muted); font-style: italic; background: #f7f9fc; border-radius: 8px; padding: 7px 9px; margin-bottom: 8px; line-height: 1.4; }
     .nutri-prova { background: #e8f8ec; border: 1px solid #b6e6c4; border-radius: 10px; padding: 11px 13px; margin-bottom: 10px; }
     .nutri-prova .np-tit { font-size: .85rem; font-weight: 800; color: #1e7a44; margin-bottom: 6px; }
@@ -1128,6 +1130,10 @@ function abrirTreinoInfo(key) {
     // treino" são a única fonte da prescrição (séries×tempo, cadência, recup).
     const modoLabel = isIndoor ? ' <span style="font-size:.72rem;background:#e3f2fd;color:#1565c0;border-radius:4px;padding:1px 6px;font-weight:700;vertical-align:middle">🏠 Indoor — Watts</span>' : '';
     corpo += `<div class="treino-chart" id="tc-${key}"><div class="tc-loading">Carregando gráfico…</div></div>`;
+    // Exporta o treino do dia em .zwo (Zwift Workout) para abrir em Zwift/
+    // TrainerRoad/MyWhoosh/Rouvy etc. Potência relativa ao FTP → todo usuário
+    // baixa o seu próprio arquivo, mesmo sem FTP configurado.
+    corpo += `<a class="erg-dl" href="/workout/zwo/semana/${iso(monday)}/${key}" download title="Baixar treino para rolo/home trainer (Zwift, TrainerRoad…)">⬇ Baixar treino (.zwo)</a>`;
     if (esp) {
       corpo += `<div class="esp-obj">${esp.obj}</div>`;
       // Cadência da dica vem do treino (não fixa) — evita divergir do header/notas.
