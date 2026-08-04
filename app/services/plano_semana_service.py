@@ -360,7 +360,12 @@ def _resumo_treino(t: dict) -> str:
         linhas.append(f"    Duração: {t['duracao_min']} min")
     res = t.get("resultado") or {}
     ia = res.get("analise_ia") or {}
-    if res.get("avg_hr"):
+    # FC marcada como não confiável (sem cinta / cinta sem bateria) não entra na
+    # decisão de progressão — a regra "FC abaixo do alvo → aumentar carga"
+    # aumentaria a carga em cima de um dado que não existiu.
+    if res.get("fc_invalida"):
+        linhas.append("    FC: sem dado confiável nesta sessão (não use FC para decidir a progressão)")
+    elif res.get("avg_hr"):
         linhas.append(f"    FC média: {res['avg_hr']} bpm")
     if res.get("avg_power"):
         pot_txt = f"    Potência média: {res['avg_power']}W"

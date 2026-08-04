@@ -688,6 +688,30 @@ async def whatsapp_webhook(request: Request):
             msg += "\nTambém tirei do Garmin 📲" if not garmin_status.startswith("⚠️") else f"\n{garmin_status}"
         return _twiml(msg)
 
+    # ── FC NÃO CONFIÁVEL (cinta sem bateria / sem cinta) ──────────────────────
+    if intencao == "fc_invalida":
+        from app.services.avaliacao_service import reavaliar_treino
+
+        datas_resolvidas = _resolver_datas_texto(body)
+        data_iso = datas_resolvidas[0] if datas_resolvidas else _validar_ou_hoje(interp.get("data"), hoje)
+        motivo = (interp.get("descricao") or "").strip() or "cinta cardíaca sem dados confiáveis"
+
+        try:
+            r = await reavaliar_treino(user_id, data_iso, True, motivo)
+        except ValueError as e:
+            return _twiml(f"❌ {e}")
+        except Exception as e:
+            logger.error("fc_invalida: %s", e)
+            return _twiml("❌ Não consegui refazer a avaliação agora. Tenta de novo em instantes.")
+
+        ia = r.get("analise_ia") or {}
+        msg = f"✅ Refiz a avaliação de {_fmt_data(data_iso)} *sem considerar a FC* ({motivo})."
+        if r.get("nota") is not None:
+            msg += f"\n⭐ Nova nota: {r['nota']}/10"
+        if ia.get("resumo"):
+            msg += f"\n_{ia['resumo']}_"
+        return _twiml(msg)
+
     # ── INTENÇÕES EXISTENTES ──────────────────────────────────────────────────
 
     # 1) resolução determinística pelo texto (a IA erra dias da semana por 1 dia)

@@ -76,14 +76,16 @@ async def _coletar_historico(user_id: str, semana_atual: str,
             if tipo == "DESCANSO" and not res:
                 continue
             ia = res.get("analise_ia") or {}
+            # FC marcada como não confiável não vira insumo do parecer.
+            fc_ok = not res.get("fc_invalida")
             treinos.append({
                 "data":          t.get("data"),
                 "tipo":          tipo,
                 "planejado_min": t.get("duracao_min"),
                 "executado":     bool(res),
                 "real_min":      res.get("duracao_min"),
-                "avg_hr":        res.get("avg_hr"),
-                "max_hr":        res.get("max_hr"),
+                "avg_hr":        res.get("avg_hr") if fc_ok else None,
+                "max_hr":        res.get("max_hr") if fc_ok else None,
                 "avg_power":     res.get("avg_power"),
                 "norm_power":    res.get("norm_power"),
                 "tss_obtido":    res.get("tss_obtido"),

@@ -988,6 +988,55 @@ async def reanalisar_treino(request: Request, semana_inicio: str, data: str):
     return {"status": "ok", "analise_ia": analise_ia}
 
 
+@router.post("/treino/{semana_inicio}/{data}/fc-invalida")
+async def marcar_fc_invalida(request: Request, semana_inicio: str, data: str):
+    """Marca (ou desmarca) a FC de um treino como não confiável e reavalia.
+
+    É o caminho do portal para o mesmo ajuste que o chat faz: cinta sem
+    bateria, cinta esquecida, FC travada. Body: {"invalida": bool, "motivo": str}."""
+    from app.services.avaliacao_service import reavaliar_treino
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    invalida = bool(body.get("invalida", True))
+    motivo = (body.get("motivo") or "").strip() or None
+
+    try:
+        r = await reavaliar_treino(request.state.user_id, data, invalida, motivo)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao reavaliar: {e}")
+    return {"status": "ok", **r}
+
+
+@router.patch("/cinta-fc")
+async def salvar_uso_cinta(request: Request):
+    """Liga/desliga o uso de cinta cardíaca do atleta. Body: {"usa_cinta": bool,
+    "reavaliar_dias": int}. Sem cinta, todo treino novo é avaliado sem FC."""
+    from app.services.avaliacao_service import definir_uso_cinta, reavaliar_treinos_recentes
+
+    body = await request.json()
+    if "usa_cinta" not in body:
+        raise HTTPException(status_code=400, detail="Informe usa_cinta.")
+    usa_cinta = bool(body["usa_cinta"])
+    await definir_uso_cinta(request.state.user_id, usa_cinta)
+
+    dias = int(body.get("reavaliar_dias") or 0)
+    reavaliados = []
+    if dias > 0:
+        reavaliados = await reavaliar_treinos_recentes(
+            request.state.user_id, dias, not usa_cinta
+        )
+    return {
+        "status": "ok",
+        "usa_cinta": usa_cinta,
+        "reavaliados": [{"data": r["data"], "nota": r.get("nota")} for r in reavaliados],
+    }
+
+
 @router.post("/garmin/conectar")
 async def garmin_conectar(
     request: Request,
@@ -1231,8 +1280,10 @@ async def pagina_perfil(request: Request):
     academia_treina = "1" if academia.get("treina") else "0"
     academia_disp_json = _json.dumps(academia.get("disponibilidade") or {})
     academia_freq = str(int(academia.get("frequencia_semanal") or 0))
+    usa_cinta = "0" if pref.get("sem_cinta_fc") else "1"
     tema = (pref.get("tema")) or "light"
     html = (_PAGINA_PERFIL
+            .replace("{{USA_CINTA}}", usa_cinta)
             .replace("{{IDADE}}", val(p.get("idade")))
             .replace("{{PESO}}", val(p.get("peso_kg")))
             .replace("{{ALTURA}}", val(p.get("altura_cm")))
@@ -2340,6 +2391,24 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
   <div class="section-title">❤️ Zonas de frequência cardíaca</div>
 
   <div class="card">
+    <h2>📿 Você usa cinta cardíaca?</h2>
+    <p class="hint">Sem cinta, a FC gravada pelo relógio é imprecisa (ou nem existe) e a nota do treino sai injusta.
+      Marcando <b>Não uso</b>, todo treino passa a ser avaliado sem FC — a nota vem de potência, volume e cadência.
+      Para um treino isolado em que a cinta falhou (bateria fraca, cinta solta), use o botão
+      <b>“FC não confiável”</b> no modal de avaliação do treino — ou peça no chat.</p>
+    <div class="aca-toggle">
+      <button type="button" id="cinta-sim" class="aca-btn" onclick="setCinta(true)">Uso cinta</button>
+      <button type="button" id="cinta-nao" class="aca-btn" onclick="setCinta(false)">Não uso cinta</button>
+    </div>
+    <label class="aca-check" style="margin-top:12px">
+      <input type="checkbox" id="cinta-reav" checked>
+      <span>Reavaliar também os treinos dos últimos 14 dias</span>
+    </label>
+    <button type="button" id="btn-cinta" onclick="salvarCinta()">Salvar</button>
+    <div id="st-cinta" class="status"></div>
+  </div>
+
+  <div class="card">
     <h2>⚙️ Como calcular suas zonas?</h2>
     <p class="hint">Existem dois métodos. Não sabe qual usar? Comece pelo <b>% FC Máxima</b> — é o mais simples.</p>
     <div class="metodo-tabs">
@@ -2712,8 +2781,38 @@ async function salvarZonas() {
 }
 carregarZonas();
 
+// ── Cinta cardíaca ──
+let _usaCinta = '{{USA_CINTA}}' === '1';
+
+function setCinta(v) {
+  _usaCinta = v;
+  document.getElementById('cinta-sim').classList.toggle('aca-active', v);
+  document.getElementById('cinta-nao').classList.toggle('aca-active', !v);
+}
+
+async function salvarCinta() {
+  const btn = document.getElementById('btn-cinta'), st = document.getElementById('st-cinta');
+  const dias = document.getElementById('cinta-reav').checked ? 14 : 0;
+  btn.disabled = true; btn.textContent = 'Salvando…';
+  st.className = 'status info'; st.textContent = dias ? '🤖 Salvando e reavaliando treinos…' : 'Salvando…';
+  try {
+    const r = await fetch('/workout/cinta-fc', {
+      method: 'PATCH', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({usa_cinta: _usaCinta, reavaliar_dias: dias}),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Erro');
+    const n = (d.reavaliados || []).length;
+    st.className = 'status ok';
+    st.textContent = (_usaCinta ? '✅ FC voltará a contar nas avaliações.' : '✅ Seus treinos serão avaliados sem FC.')
+                   + (n ? ` ${n} treino(s) recente(s) reavaliado(s).` : '');
+  } catch(e) { st.className = 'status err'; st.textContent = '❌ ' + e.message; }
+  finally { btn.disabled = false; btn.textContent = 'Salvar'; }
+}
+setCinta(_usaCinta);
+
 // ── Academia ──
-const _ACA_DIAS_NOMES = ['Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado','Domingo'];
+const _ACA_DIAS_NOMES =['Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado','Domingo'];
 let _academiaTreina = '{{ACADEMIA_TREINA}}' === '1';
 let _academiaDisp = {{ACADEMIA_DISP_JSON}};
 let _academiaFreq = parseInt('{{ACADEMIA_FREQ}}') || 0;

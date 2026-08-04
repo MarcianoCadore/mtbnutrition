@@ -1053,8 +1053,13 @@ function abrirAvaliacao(key) {
   if (res.distancia_km) mItems.push(`<div class="metric"><div class="mv">${res.distancia_km} km</div><div class="ml">Distância</div></div>`);
   if (res.velocidade_media_kmh) mItems.push(`<div class="metric"><div class="mv">${res.velocidade_media_kmh} km/h</div><div class="ml">Vel. média</div></div>`);
   if (res.elevacao_m) mItems.push(`<div class="metric"><div class="mv">${res.elevacao_m} m</div><div class="ml">Altimetria</div></div>`);
-  if (res.avg_hr) mItems.push(`<div class="metric"><div class="mv">${res.avg_hr} bpm</div><div class="ml">FC média</div></div>`);
-  if (res.max_hr) mItems.push(`<div class="metric"><div class="mv">${res.max_hr} bpm</div><div class="ml">FC máx</div></div>`);
+  // FC marcada como não confiável (cinta sem bateria / sem cinta) continua
+  // visível, mas esmaecida e rotulada — o número existe, só não conta na nota.
+  const fcOff = !!res.fc_invalida;
+  const fcStyle = fcOff ? ' style="opacity:.45"' : '';
+  const fcSuf = fcOff ? ' (ignorada)' : '';
+  if (res.avg_hr) mItems.push(`<div class="metric"${fcStyle}><div class="mv">${res.avg_hr} bpm</div><div class="ml">FC média${fcSuf}</div></div>`);
+  if (res.max_hr) mItems.push(`<div class="metric"${fcStyle}><div class="mv">${res.max_hr} bpm</div><div class="ml">FC máx${fcSuf}</div></div>`);
   if (res.avg_power) mItems.push(`<div class="metric"><div class="mv">${res.avg_power}W</div><div class="ml">Potência média</div></div>`);
   if (res.norm_power) mItems.push(`<div class="metric"><div class="mv">${res.norm_power}W</div><div class="ml">NP (normalizada)</div></div>`);
   if (res.cadencia_media_rpm) mItems.push(`<div class="metric"><div class="mv">${res.cadencia_media_rpm} rpm</div><div class="ml">Cad. real</div></div>`);
@@ -1079,8 +1084,21 @@ function abrirAvaliacao(key) {
     </div>`;
   }
 
+  // Cinta cardíaca: quando a FC não vale (sem bateria, cinta solta, sem cinta),
+  // o atleta refaz a avaliação sem FC — a nota deixa de cobrar zona que não foi
+  // medida. O mesmo ajuste que ele pode pedir no chat.
+  const fcBanner = fcOff
+    ? `<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:9px;padding:9px 12px;margin-bottom:10px;font-size:.84rem;color:#9a3412">
+         ⚠️ Avaliado <b>sem os dados de FC</b>${res.fc_invalida_motivo ? ` — ${res.fc_invalida_motivo}` : ''}.
+       </div>`
+    : '';
+  const fcBtn = fcOff
+    ? `<button class="aval-btn" id="btnFC-${key}" onclick="marcarFCInvalida('${key}', false)" style="margin-top:10px">↩️ Voltar a considerar a FC</button>`
+    : `<button class="aval-btn" id="btnFC-${key}" onclick="marcarFCInvalida('${key}', true)" style="margin-top:10px">⚠️ FC não confiável — reavaliar sem FC</button>`;
+
   document.getElementById('avalModalHead').innerHTML = `<h3>📊 Avaliação do treino</h3><div class="modal-sub">${lbl}</div>`;
   document.getElementById('avalModalBody').innerHTML = `
+    ${fcBanner}
     ${mItems.length ? `<div class="metrics">${mItems.join('')}</div>` : ''}
     ${notaHTML}
     <div class="analise-bloco">
@@ -1088,8 +1106,44 @@ function abrirAvaliacao(key) {
       ${fortes ? `<ul class="analise-lista">${fortes}</ul>` : ''}
       ${fracos ? `<ul class="analise-lista" style="margin-top:6px">${fracos}</ul>` : ''}
     </div>
+    ${fcBtn}
+    <div id="fcMsg-${key}" style="font-size:.83rem;margin-top:8px;color:#6b7280"></div>
     `;
   document.getElementById('avalModal').classList.add('show');
+}
+
+async function marcarFCInvalida(key, invalida) {
+  const btn = document.getElementById(`btnFC-${key}`);
+  const msg = document.getElementById(`fcMsg-${key}`);
+  let motivo = '';
+  if (invalida) {
+    const r = prompt('O que houve com a FC? (ex.: cinta sem bateria)', 'cinta sem bateria');
+    if (r === null) return;  // cancelou
+    motivo = r.trim();
+  }
+  btn.disabled = true;
+  msg.textContent = '🤖 Refazendo a avaliação…';
+  try {
+    const r = await fetch(`/workout/treino/${iso(monday)}/${key}/fc-invalida`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({invalida, motivo}),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Erro');
+    const res = Object.assign({}, _resultados[key]);
+    if (d.analise_ia) res.analise_ia = d.analise_ia;
+    res.fc_invalida = d.fc_invalida;
+    res.fc_invalida_motivo = d.motivo;
+    res.tss_obtido = d.tss_obtido;
+    _resultados[key] = res;
+    abrirAvaliacao(key);
+    const m = document.getElementById(`fcMsg-${key}`);
+    if (m) m.textContent = `✅ Avaliação refeita${d.nota != null ? ` — nova nota ${d.nota}` : ''}.`;
+    load();
+  } catch(e) {
+    msg.textContent = '❌ ' + e.message;
+    btn.disabled = false;
+  }
 }
 
 function fecharAvalModal(e) {

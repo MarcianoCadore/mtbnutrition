@@ -499,9 +499,14 @@ def tss_planejado(tipo, duracao_min) -> int | None:
     return _tss_esperado(tipo, duracao_min)
 
 
-def _metricas_extra(planejado: dict, resultado: dict, limiar, avg_speed_ms=None, fit_path=None, ftp=None) -> dict:
+def _metricas_extra(planejado: dict, resultado: dict, limiar, avg_speed_ms=None, fit_path=None,
+                    ftp=None, ignorar_fc: bool = False) -> dict:
     """Velocidade média e TSS (esperado/obtido) para o modal de avaliação.
-    Não são enviadas ao WhatsApp — só ficam salvas no resultado para o portal."""
+    Não são enviadas ao WhatsApp — só ficam salvas no resultado para o portal.
+
+    Com `ignorar_fc` (sem cinta / cinta sem bateria), o hrTSS é descartado: só
+    sobra o pTSS de potência. Sem potência, o TSS obtido fica ausente — melhor
+    nada do que um número calculado sobre FC que não existiu."""
     extra = {}
     vel = None
     if avg_speed_ms:
@@ -517,10 +522,10 @@ def _metricas_extra(planejado: dict, resultado: dict, limiar, avg_speed_ms=None,
     if norm_power and ftp:
         from app.services.fit_service import ptss
         obtido = ptss(norm_power, ftp, resultado.get("duracao_min"))
-    if obtido is None and fit_path and limiar:
+    if obtido is None and fit_path and limiar and not ignorar_fc:
         from app.services.fit_service import hrtss_ponderado
         obtido = hrtss_ponderado(fit_path, limiar)
-    if obtido is None:
+    if obtido is None and not ignorar_fc:
         obtido = _hrtss(resultado.get("duracao_min"), resultado.get("avg_hr"), limiar)
     if obtido is not None:
         extra["tss_obtido"] = obtido
@@ -691,6 +696,20 @@ async def sync_atividades(user_id: str, semana_inicio: str) -> int:
                     treino_planejado = t
                     break
 
+        # FC confiável? Vale a marcação já feita nesta mesma atividade (o atleta
+        # pode ter avisado que a cinta falhou) ou a preferência "não uso cinta".
+        # Sem isso, um re-sync recriaria o resultado com a FC ruim de volta.
+        saved_resultado = treino_planejado.get("resultado") or {}
+        if saved_resultado.get("garmin_activity_id") == act_id and saved_resultado.get("fc_invalida"):
+            resultado["fc_invalida"] = True
+            if saved_resultado.get("fc_invalida_motivo"):
+                resultado["fc_invalida_motivo"] = saved_resultado["fc_invalida_motivo"]
+        from app.services.avaliacao_service import deve_ignorar_fc, MOTIVO_PADRAO
+        ignorar_fc = await deve_ignorar_fc(user_id, resultado)
+        if ignorar_fc:
+            resultado["fc_invalida"] = True
+            resultado.setdefault("fc_invalida_motivo", MOTIVO_PADRAO)
+
         # métricas extras do modal de avaliação (velocidade, TSS) — NÃO vão ao WhatsApp
         try:
             from app.services.config_service import get_zonas, get_ftp
@@ -699,12 +718,13 @@ async def sync_atividades(user_id: str, semana_inicio: str) -> int:
         except Exception:
             limiar = None
             ftp_val = None
-        resultado.update(_metricas_extra(treino_planejado, resultado, limiar, act.get("averageSpeed"), fit_path, ftp_val))
+        resultado.update(_metricas_extra(treino_planejado, resultado, limiar,
+                                         act.get("averageSpeed"), fit_path, ftp_val,
+                                         ignorar_fc))
 
         # análise IA — reutiliza só se a atividade salva é a mesma (mesmo ID).
         # Se o ID diferir, a atividade anterior foi substituída e a avaliação
         # deve ser gerada do zero com os dados corretos.
-        saved_resultado = treino_planejado.get("resultado") or {}
         analise_ia_existente = (
             saved_resultado.get("analise_ia")
             if saved_resultado.get("garmin_activity_id") == act_id
@@ -715,7 +735,8 @@ async def sync_atividades(user_id: str, semana_inicio: str) -> int:
         else:
             try:
                 from app.services.ai_service import analisar_atividade_pos_treino
-                analise_ia = await analisar_atividade_pos_treino(treino_planejado, resultado, user_id, fit_path)
+                analise_ia = await analisar_atividade_pos_treino(
+                    treino_planejado, resultado, user_id, fit_path, ignorar_fc)
                 resultado["analise_ia"] = analise_ia
             except Exception as e:
                 logger.error("IA pós-treino error: %s", e)
@@ -851,10 +872,13 @@ def _formatar_pos_treino(data: str, planejado: dict, resultado: dict) -> str:
         linhas.append(f"⏱ Duração: {h}h{m:02d}min")
     if resultado.get("distancia_km"):
         linhas.append(f"📍 Distância: {resultado['distancia_km']} km")
-    if resultado.get("avg_hr"):
-        linhas.append(f"❤️ FC média: {resultado['avg_hr']} bpm")
-    if resultado.get("max_hr"):
-        linhas.append(f"🔥 FC máx: {resultado['max_hr']} bpm")
+    if resultado.get("fc_invalida"):
+        linhas.append("❤️ FC: ignorada nesta avaliação (cinta sem dados)")
+    else:
+        if resultado.get("avg_hr"):
+            linhas.append(f"❤️ FC média: {resultado['avg_hr']} bpm")
+        if resultado.get("max_hr"):
+            linhas.append(f"🔥 FC máx: {resultado['max_hr']} bpm")
     if resultado.get("cadencia_media_rpm"):
         cad = f"🦵 Cadência: {resultado['cadencia_media_rpm']} rpm"
         if resultado.get("cadencia_max_rpm"):

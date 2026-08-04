@@ -289,11 +289,24 @@ DESCANSO - sem treino efetivo"""
         return analise.get("tipo", "Z2_LONGO")
 
 
-async def analisar_atividade_pos_treino(planejado: dict, resultado: dict, user_id: str | None = None, fit_path: str | None = None) -> dict:
+async def analisar_atividade_pos_treino(planejado: dict, resultado: dict, user_id: str | None = None,
+                                        fit_path: str | None = None,
+                                        ignorar_fc: bool | None = None) -> dict:
     """Compara planejado vs realizado e retorna análise com pontos fortes e fracos.
 
     Se `fit_path` for fornecido, calcula o tempo real em cada zona de FC a partir
-    do .fit — métrica muito mais fiel que a FC média para treinos de tiros."""
+    do .fit — métrica muito mais fiel que a FC média para treinos de tiros.
+
+    `ignorar_fc=True` descarta FC média/máxima e tempo em zonas de FC: é o caso
+    de quem não usa cinta cardíaca ou treinou com a cinta sem bateria. Em None,
+    a decisão vem da marcação do treino / preferência do atleta."""
+    if ignorar_fc is None:
+        try:
+            from app.services.avaliacao_service import deve_ignorar_fc
+            ignorar_fc = await deve_ignorar_fc(user_id, resultado)
+        except Exception:
+            ignorar_fc = False
+
     linhas = []
 
     if planejado:
@@ -312,10 +325,11 @@ async def analisar_atividade_pos_treino(planejado: dict, resultado: dict, user_i
         linhas.append(f"- Duração: {resultado['duracao_min']} min")
     if resultado.get("distancia_km"):
         linhas.append(f"- Distância: {resultado['distancia_km']} km")
-    if resultado.get("avg_hr"):
-        linhas.append(f"- FC média: {resultado['avg_hr']} bpm")
-    if resultado.get("max_hr"):
-        linhas.append(f"- FC máxima: {resultado['max_hr']} bpm")
+    if not ignorar_fc:
+        if resultado.get("avg_hr"):
+            linhas.append(f"- FC média: {resultado['avg_hr']} bpm")
+        if resultado.get("max_hr"):
+            linhas.append(f"- FC máxima: {resultado['max_hr']} bpm")
     if resultado.get("avg_power"):
         linhas.append(f"- Potência média: {resultado['avg_power']}W")
     if resultado.get("norm_power"):
@@ -330,7 +344,7 @@ async def analisar_atividade_pos_treino(planejado: dict, resultado: dict, user_i
         linhas.append(f"- Calorias: {resultado['calorias']} kcal")
 
     if not linhas:
-        return _fallback_pos_treino(planejado, resultado)
+        return _fallback_pos_treino(planejado, resultado, ignorar_fc)
 
     # Zonas reais configuradas (lidas do Garmin/tela), com defaults de segurança.
     try:
@@ -354,7 +368,7 @@ async def analisar_atividade_pos_treino(planejado: dict, resultado: dict, user_i
     # treino inteiro é diluída por aquecimento, recuperações e volta à calma.
     ftp_analise: int | None = None
     zonas_pot_analise: list[dict] | None = None
-    if fit_path:
+    if fit_path and not ignorar_fc:
         try:
             from app.services.fit_service import tempo_em_zonas
             tz = tempo_em_zonas(fit_path, zs)
@@ -433,16 +447,41 @@ async def analisar_atividade_pos_treino(planejado: dict, resultado: dict, user_i
     peso_txt = f", {peso_atleta:.0f} kg" if peso_atleta else ""
     lim_txt = f", limiar de lactato {limiar} bpm" if limiar else ""
     ftp_txt = f", FTP {ftp_analise}W" if ftp_analise else ""
-    prompt = f"""Você é um coach de ciclismo MTB especializado em análise de desempenho.
 
-Atleta: {nome_atleta}{idade_txt}{peso_txt}, FC máxima {fc_max} bpm{lim_txt}{ftp_txt}
-Zonas de FC: {zonas_txt}
-Objetivo: {objetivo_atleta}
+    # Sem FC confiável (sem cinta / cinta sem bateria) o julgamento muda de base:
+    # a IA precisa ser instruída a NÃO cobrar o que não foi medido, senão devolve
+    # "faltou intensidade" para um treino que pode ter sido perfeito.
+    tem_potencia = bool(resultado.get("avg_power") or resultado.get("norm_power"))
+    if ignorar_fc:
+        motivo_fc = resultado.get("fc_invalida_motivo") or "sem cinta cardíaca / cinta sem dados confiáveis"
+        base_txt = (
+            "Julgue a intensidade pela POTÊNCIA (watts, NP e IF) — ela é suficiente e é a "
+            "melhor métrica disponível."
+            if tem_potencia else
+            "Não há potência nem FC: julgue apenas pelo que foi medido (duração realizada vs "
+            "planejada, distância, velocidade, elevação, cadência) e pela execução do que foi "
+            "prescrito. Nesse caso a nota deve refletir o cumprimento do VOLUME e da estrutura "
+            "planejada — se o volume foi cumprido, a nota fica em torno de 7-8."
+        )
+        bloco_fc = f"""
+IMPORTANTE — SEM DADOS DE FC NESTA SESSÃO ({motivo_fc}):
+- Os dados de frequência cardíaca foram DESCARTADOS de propósito e não aparecem acima.
+- NUNCA cite FC, bpm, zonas de FC nem invente valores de batimento.
+- NUNCA escreva que "faltou intensidade", "não atingiu Z4/Z5" ou algo do tipo com base
+  em FC — não há FC para afirmar isso.
+- NÃO penalize a nota pela ausência de FC. A falta de dado não é falha do treino.
+- {base_txt}
+- Se quiser mencionar a limitação, faça isso no máximo uma vez e de forma neutra
+  (ex.: "sem dados de FC nesta sessão"), nunca como ponto fraco do atleta.
+"""
+        zonas_linha = ""
+    else:
+        bloco_fc = ""
+        zonas_linha = f"Zonas de FC: {zonas_txt}\n"
 
-{chr(10).join(linhas)}
-
-DIRETRIZES DE ANÁLISE (fisiologia da FC e potência — leve a sério):
-- A FC tem resposta atrasada (lag): leva ~30-60s para subir até Z4/Z5 no início de
+    # As diretrizes de FC só entram quando há FC para interpretar — senão a IA
+    # é convidada a comentar zona cardíaca que ninguém mediu.
+    _DIR_FC = """- A FC tem resposta atrasada (lag): leva ~30-60s para subir até Z4/Z5 no início de
   um esforço forte e ~10-15s para baixar na recuperação. Os primeiros segundos de
   cada tiro saem de uma zona mais baixa — isso é normal, NÃO é falta de intensidade.
 - Em treinos de TIROS, intervalados ou VO2MAX, NÃO julgue a intensidade pela FC
@@ -450,20 +489,46 @@ DIRETRIZES DE ANÁLISE (fisiologia da FC e potência — leve a sério):
   aquecimento, recuperações entre os tiros e volta à calma. Avalie a intensidade
   pela FC MÁXIMA atingida e pelo TEMPO EM ZONAS ALTAS (Z4/Z5), quando disponível.
 - Nunca conclua que "faltou intensidade" só porque a FC média ficou em Z2 num
-  treino de tiros — isso é esperado e correto.
-- Quando houver dados de POTÊNCIA (watts): prefira potência para julgar intensidade —
+  treino de tiros — isso é esperado e correto."""
+    _DIR_POT = """- Quando houver dados de POTÊNCIA (watts): prefira potência para julgar intensidade —
   é mais imediata que FC e não sofre o lag cardíaco. IF > 0.90 = treino intenso;
   IF 0.75-0.90 = zona de limiar/tempo; IF < 0.75 = Z2/recuperação.
 - Potência Normalizada (NP) representa o "custo fisiológico equivalente" de um
-  treino variado — use-a, não a média bruta, para avaliar a demanda real.
+  treino variado — use-a, não a média bruta, para avaliar a demanda real."""
+    _DIR_VOLUME = """- Em treino intervalado, a média do treino inteiro (velocidade, potência) é
+  diluída por aquecimento e recuperações — não a use como prova de esforço fraco.
+- Sem métrica de intensidade, o que dá para afirmar é o cumprimento do volume e
+  da estrutura prescrita: avalie por aí e não especule sobre esforço."""
+    if not ignorar_fc:
+        diretrizes = f"{_DIR_FC}\n{_DIR_POT}"
+        foco_txt = "intensidade (zonas de FC atingidas)"
+        criterio_nota = "a intensidade prescrita (zonas de FC)"
+    elif tem_potencia:
+        diretrizes = _DIR_POT
+        foco_txt = "intensidade (potência, NP e IF)"
+        criterio_nota = "a intensidade prescrita (potência/IF)"
+    else:
+        diretrizes = _DIR_VOLUME
+        foco_txt = "a execução do que foi prescrito"
+        criterio_nota = "a estrutura prescrita"
 
-Compare o planejado com o realizado. Comente intensidade (zonas de FC atingidas),
+    prompt = f"""Você é um coach de ciclismo MTB especializado em análise de desempenho.
+
+Atleta: {nome_atleta}{idade_txt}{peso_txt}, FC máxima {fc_max} bpm{lim_txt}{ftp_txt}
+{zonas_linha}Objetivo: {objetivo_atleta}
+
+{chr(10).join(linhas)}
+{bloco_fc}
+DIRETRIZES DE ANÁLISE (fisiologia — leve a sério):
+{diretrizes}
+
+Compare o planejado com o realizado. Comente {foco_txt},
 volume (duração realizada vs planejada), cadência e o que ajustar no próximo treino.
 Seja CONCISO: cada ponto deve ter no máximo 1 frase curta (até ~140 caracteres),
 sem markdown (não use **). No máximo 3 pontos fortes e 3 pontos fracos.
 Atribua uma NOTA de 0 a 10 (pode ter 1 casa decimal) para o treino, ponderando os
 pontos fortes e fracos: quão bem o realizado cumpriu o objetivo do planejado
-(intensidade nas zonas certas, volume, cadência). 10 = execução exemplar;
+(cumpriu {criterio_nota}, o volume e a cadência). 10 = execução exemplar;
 abaixo de 5 só quando o treino destoou muito do planejado.
 Responda APENAS em JSON válido, sem markdown, sem texto extra:
 {{
@@ -488,7 +553,7 @@ Responda APENAS em JSON válido, sem markdown, sem texto extra:
             "pontos_fracos": data.get("pontos_fracos", []),
         }
     except Exception:
-        return _fallback_pos_treino(planejado, resultado)
+        return _fallback_pos_treino(planejado, resultado, ignorar_fc)
 
 
 def _nota_valida(valor) -> float | None:
@@ -508,15 +573,19 @@ def _zona_de(bpm: int, zonas: list[dict]) -> int:
     return 5 if bpm > zonas[-1]["max"] else 1
 
 
-def _fallback_pos_treino(planejado: dict, resultado: dict) -> dict:
-    """Análise determinística (sem IA) a partir dos números do treino."""
+def _fallback_pos_treino(planejado: dict, resultado: dict, ignorar_fc: bool = False) -> dict:
+    """Análise determinística (sem IA) a partir dos números do treino.
+
+    Com `ignorar_fc`, a FC some do resumo e da avaliação de intensidade — do
+    contrário o atleta sem cinta levaria "faltou intensidade" por um dado que
+    nunca foi medido."""
     planejado = planejado or {}
     fortes, fracos = [], []
 
     dur = resultado.get("duracao_min")
     dist = resultado.get("distancia_km")
-    avg = resultado.get("avg_hr")
-    mx = resultado.get("max_hr")
+    avg = None if ignorar_fc else resultado.get("avg_hr")
+    mx = None if ignorar_fc else resultado.get("max_hr")
     cad = resultado.get("cadencia_media_rpm")
     plan_dur = planejado.get("duracao_min")
     tipo = planejado.get("tipo")
@@ -529,6 +598,8 @@ def _fallback_pos_treino(planejado: dict, resultado: dict) -> dict:
     if avg:
         partes.append(f"FC média {avg} bpm")
     resumo = ("Treino registrado: " + ", ".join(partes) + ".") if partes else "Treino concluído."
+    if ignorar_fc:
+        resumo += " Avaliado sem os dados de FC."
 
     # volume realizado vs planejado
     if plan_dur and dur:
@@ -831,6 +902,7 @@ Intenções disponíveis:
 - "alterar_treino": quer MOVER/TRANSFERIR/ALTERAR o treino de um dia para outro dia. Ex.: "muda o treino de sábado pra sexta", "altera o treino de quinta para quarta". Extraia o dia de ORIGEM em "data" e o dia de DESTINO em "data_destino" (ambos ISO YYYY-MM-DD).
 - "criar_treino": quer CRIAR/ADICIONAR um treino novo em um dia. Ex.: "cria um treino for fun no sábado de 3 horas", "adiciona um pedal de recuperação na sexta de 1h30". Extraia: "data" (o dia), "duracao_min" (duração em minutos — "três horas"=180, "1h30"=90, "90 min"=90, "2h"=120), "tipo" (um dos valores abaixo inferido da descrição) e "descricao" (texto livre do que o usuário pediu).
 - "remover_treino": quer REMOVER/EXCLUIR/DELETAR/CANCELAR/TIRAR o treino de um dia (deixar o dia de descanso). Ex.: "remove o treino de amanhã", "exclui o treino de sábado", "cancela o pedal de domingo", "tira o treino de quinta". Extraia o dia em "data" (ISO YYYY-MM-DD). NÃO confunda com alterar_treino: aqui NÃO há dia de destino.
+- "fc_invalida": diz que a FREQUÊNCIA CARDÍACA de um treino não vale e pede pra desconsiderar/refazer a avaliação. Ex.: "a cinta estava sem bateria", "esqueci a cinta cardíaca ontem", "bateria fraca da cinta, ignora a FC", "a FC desse treino tá errada, reavalia", "não tenho cinta cardíaca". Extraia o dia em "data" (ISO YYYY-MM-DD; se não disser, use hoje) e o motivo em "descricao".
 - "conversa": saudação, dúvida geral ou qualquer coisa que não se encaixe acima.
 
 Regras para inferir o tipo de treino em "criar_treino":

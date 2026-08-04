@@ -107,6 +107,60 @@ _TOOLS = [
             },
             "required": ["origem", "destino", "modo"],
         },
+    },
+    {
+        "name": "reavaliar_treino",
+        "description": (
+            "Refaz a avaliação de um treino JÁ REALIZADO (nota, pontos fortes/fracos e TSS). "
+            "USE SEMPRE que o atleta disser que os dados de frequência cardíaca daquele treino "
+            "não valem: cinta cardíaca sem bateria, bateria fraca, cinta descarregada, cinta "
+            "solta/mal posicionada, esqueceu a cinta, não usou cinta, FC travada, FC absurda ou "
+            "'ignora a FC desse treino'. Com ignorar_fc=true a nova avaliação descarta FC, tempo "
+            "em zonas de FC e o TSS calculado por FC, julgando por potência, volume, distância e "
+            "cadência — e não penaliza a nota pela falta de FC. Use ignorar_fc=false para desfazer "
+            "e voltar a considerar a FC."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "string",
+                    "description": "Data do treino a reavaliar, formato YYYY-MM-DD.",
+                },
+                "ignorar_fc": {
+                    "type": "boolean",
+                    "description": "true (padrão) descarta a FC da avaliação; false volta a considerá-la.",
+                },
+                "motivo": {
+                    "type": "string",
+                    "description": "Motivo curto, nas palavras do atleta (ex.: 'cinta sem bateria').",
+                },
+            },
+            "required": ["data"],
+        },
+    },
+    {
+        "name": "configurar_cinta_fc",
+        "description": (
+            "Define se o atleta usa cinta cardíaca. USE quando ele disser que NÃO tem/não usa "
+            "cinta cardíaca (ou que voltou a usar). Com usa_cinta=false, todo treino novo passa a "
+            "ser avaliado sem FC automaticamente. Informe reavaliar_ultimos_dias para também "
+            "refazer as avaliações recentes que foram feitas com a FC ruim."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "usa_cinta": {
+                    "type": "boolean",
+                    "description": "false = atleta não usa cinta cardíaca; true = usa.",
+                },
+                "reavaliar_ultimos_dias": {
+                    "type": "integer",
+                    "description": "Opcional: reavalia os treinos dos últimos N dias (ex.: 14). 0 = não reavaliar.",
+                },
+            },
+            "required": ["usa_cinta"],
+        },
         # Marca o fim do bloco cacheável: a lista de ferramentas nunca muda,
         # então fica cacheada (leitura ~10% do preço) em toda chamada seguinte.
         "cache_control": {"type": "ephemeral"},
@@ -179,6 +233,18 @@ async def _build_sistema(user_id: str) -> str:
         "Quando o atleta pedir para adicionar, remover ou alterar treinos, use as ferramentas — não apenas sugira.",
         "Antes de propor alterações, consulte a semana com ver_semana para saber o que já está agendado.",
         "Após cada ação, confirme o que foi feito e explique brevemente a escolha.",
+        "",
+        "== FREQUÊNCIA CARDÍACA NÃO CONFIÁVEL ==",
+        "Se o atleta disser que a FC de um treino não vale (cinta sem bateria, bateria fraca, "
+        "cinta solta, esqueceu/não usou a cinta, FC travada ou absurda), NÃO responda só com "
+        "texto: chame reavaliar_treino com ignorar_fc=true para aquela data — a nota e a análise "
+        "são refeitas ignorando a FC e o TSS por FC.",
+        "Se ele disser que NÃO tem/não usa cinta cardíaca (de modo geral), chame "
+        "configurar_cinta_fc com usa_cinta=false, e use reavaliar_ultimos_dias (ex.: 14) para "
+        "corrigir as avaliações recentes.",
+        "Se ele não disser a data, entenda pelo contexto ('o treino de ontem', 'o de hoje') e "
+        "confirme a data na resposta. Só pergunte se estiver realmente ambíguo.",
+        "Depois de reavaliar, informe a nova nota e o que mudou.",
     ]
 
     try:
@@ -208,6 +274,8 @@ async def _build_sistema(user_id: str) -> str:
             if perfil.get("fc_max"):
                 linhas.append(f"FC máxima: {perfil['fc_max']} bpm")
             linhas.append(f"Objetivo: {obj}")
+            if prefs.get("sem_cinta_fc"):
+                linhas.append("Cinta cardíaca: NÃO usa — os treinos já são avaliados sem FC.")
     except Exception:
         pass
 
@@ -255,6 +323,8 @@ async def _build_sistema(user_id: str) -> str:
                         linha += f" {r_dist}km"
                     if nota is not None:
                         linha += f" (nota {nota})"
+                    if resultado.get("fc_invalida"):
+                        linha += " [FC ignorada]"
                 else:
                     linha = f"  {data} [{tipo}] PLANEJADO"
                     if dur:
@@ -311,6 +381,11 @@ async def _executar_ferramenta(user_id: str, nome: str, args: dict) -> str:
                 resultado = t.get("resultado")
                 if resultado and resultado.get("duracao_min"):
                     linha = f"{data}: [{tipo}] REALIZADO {resultado['duracao_min']}min"
+                    nota = (resultado.get("analise_ia") or {}).get("nota")
+                    if nota is not None:
+                        linha += f" (nota {nota})"
+                    if resultado.get("fc_invalida"):
+                        linha += " [FC ignorada]"
                 elif tipo != "DESCANSO":
                     linha = f"{data}: [{tipo}] {dur}min — {desc}"
                 else:
@@ -346,6 +421,53 @@ async def _executar_ferramenta(user_id: str, nome: str, args: dict) -> str:
                 resultado.get("garmin_id_destino_antigo"),
             ])
             return f"Treino movido de {args['origem']} para {args['destino']} (modo: {args.get('modo', 'sobrescrever')})."
+
+        elif nome == "reavaliar_treino":
+            from app.services.avaliacao_service import reavaliar_treino
+            ignorar = args.get("ignorar_fc", True)
+            r = await reavaliar_treino(
+                user_id, args["data"], bool(ignorar), args.get("motivo")
+            )
+            ia = r.get("analise_ia") or {}
+            base = "sem considerar a FC" if r["fc_invalida"] else "considerando a FC"
+            partes = [
+                f"Treino de {r['data']} ({r.get('tipo') or '—'}) reavaliado {base}.",
+                f"Nova nota: {r['nota']}" if r.get("nota") is not None else "",
+                f"Resumo: {ia.get('resumo')}" if ia.get("resumo") else "",
+            ]
+            if ia.get("pontos_fracos"):
+                partes.append("A melhorar: " + "; ".join(ia["pontos_fracos"]))
+            if r.get("tss_obtido") is not None:
+                partes.append(f"TSS obtido: {r['tss_obtido']}")
+            elif r["fc_invalida"]:
+                partes.append("TSS obtido: indisponível (dependia da FC).")
+            return "\n".join(p for p in partes if p)
+
+        elif nome == "configurar_cinta_fc":
+            from app.services.avaliacao_service import (
+                definir_uso_cinta, reavaliar_treinos_recentes,
+            )
+            usa = bool(args.get("usa_cinta"))
+            await definir_uso_cinta(user_id, usa)
+            msg = (
+                "Perfil atualizado: o atleta USA cinta cardíaca — a FC volta a contar nas avaliações."
+                if usa else
+                "Perfil atualizado: o atleta NÃO usa cinta cardíaca — todo treino novo será "
+                "avaliado sem FC."
+            )
+            dias = int(args.get("reavaliar_ultimos_dias") or 0)
+            if dias > 0:
+                feitos = await reavaliar_treinos_recentes(user_id, dias, not usa)
+                if feitos:
+                    notas = ", ".join(
+                        f"{f['data']}: {f['nota']}" for f in feitos if f.get("nota") is not None
+                    )
+                    msg += f"\n{len(feitos)} treino(s) reavaliado(s) nos últimos {dias} dias."
+                    if notas:
+                        msg += f" Novas notas — {notas}."
+                else:
+                    msg += f"\nNenhum treino com resultado nos últimos {dias} dias para reavaliar."
+            return msg
 
         else:
             return f"Ferramenta '{nome}' não reconhecida."

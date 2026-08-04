@@ -308,14 +308,28 @@ async def sync_atividades_strava(user_id: str, semana_inicio: str) -> int:
                     treino_planejado = t
                     break
 
+        # FC confiável? Herda a marcação já feita nesta atividade (cinta falhou)
+        # e respeita a preferência "não uso cinta cardíaca" do perfil.
+        saved_resultado = treino_planejado.get("resultado") or {}
+        if saved_resultado.get("fc_invalida"):
+            resultado["fc_invalida"] = True
+            if saved_resultado.get("fc_invalida_motivo"):
+                resultado["fc_invalida_motivo"] = saved_resultado["fc_invalida_motivo"]
+        from app.services.avaliacao_service import deve_ignorar_fc, MOTIVO_PADRAO
+        ignorar_fc = await deve_ignorar_fc(user_id, resultado)
+        if ignorar_fc:
+            resultado["fc_invalida"] = True
+            resultado.setdefault("fc_invalida_motivo", MOTIVO_PADRAO)
+
         # Análise IA pós-treino — reutiliza se já existe para não consumir API desnecessariamente
-        analise_ia_existente = (treino_planejado.get("resultado") or {}).get("analise_ia")
+        analise_ia_existente = saved_resultado.get("analise_ia")
         if analise_ia_existente:
             resultado["analise_ia"] = analise_ia_existente
         else:
             try:
                 from app.services.ai_service import analisar_atividade_pos_treino
-                analise_ia = await analisar_atividade_pos_treino(treino_planejado, resultado, user_id)
+                analise_ia = await analisar_atividade_pos_treino(
+                    treino_planejado, resultado, user_id, ignorar_fc=ignorar_fc)
                 resultado["analise_ia"] = analise_ia
             except Exception as exc:
                 logger.warning("strava sync_atividades: IA pós-treino falhou (user_id=%s) — %s", user_id, exc)
@@ -447,10 +461,13 @@ def _formatar_pos_treino_strava(data: str, planejado: dict, resultado: dict) -> 
         linhas.append(f"📍 Distância: {resultado['distancia_km']} km")
     if resultado.get("elevacao_m"):
         linhas.append(f"⛰ Elevação: {resultado['elevacao_m']} m")
-    if resultado.get("avg_hr"):
-        linhas.append(f"❤️ FC média: {resultado['avg_hr']} bpm")
-    if resultado.get("max_hr"):
-        linhas.append(f"🔥 FC máx: {resultado['max_hr']} bpm")
+    if resultado.get("fc_invalida"):
+        linhas.append("❤️ FC: ignorada nesta avaliação (cinta sem dados)")
+    else:
+        if resultado.get("avg_hr"):
+            linhas.append(f"❤️ FC média: {resultado['avg_hr']} bpm")
+        if resultado.get("max_hr"):
+            linhas.append(f"🔥 FC máx: {resultado['max_hr']} bpm")
     if resultado.get("cadencia_media_rpm"):
         linhas.append(f"🦵 Cadência: {resultado['cadencia_media_rpm']} rpm")
     if resultado.get("calorias"):
