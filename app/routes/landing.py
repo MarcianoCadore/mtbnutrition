@@ -10,9 +10,9 @@ LANDING_HTML = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MTB Nutrition — Treino de ciclismo gerado por IA, no piloto automático</title>
-<meta name="description" content="Sua semana de treino gerada por IA — MTB, estrada, gravel ou no rolo, indoor ou outdoor — sincronizada com o Garmin e com análise pós-treino automática. Assine por R$ 24,99/mês.">
+<meta name="description" content="Sua semana de bike e academia gerada por IA — MTB, estrada, gravel ou rolo. Vai direto para o Garmin, baixa em .zwo para MyWhoosh e Zwift, e a análise pós-treino sai sozinha. Assine por R$ 24,99/mês.">
 <meta property="og:title" content="MTB Nutrition — Treino de ciclismo gerado por IA, no piloto automático">
-<meta property="og:description" content="Garmin + IA: a IA monta sua semana de treino — MTB, estrada, gravel ou no rolo — e analisa cada pedalada. R$ 24,99/mês.">
+<meta property="og:description" content="A IA monta sua semana de bike e academia, manda para o Garmin ou para o rolo em .zwo, e analisa cada pedalada. R$ 24,99/mês.">
 <meta property="og:type" content="website">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -121,6 +121,22 @@ h1{font-size:clamp(2.2rem,4.6vw,3.4rem);font-weight:800;margin-bottom:20px}
 .mock-tags{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 14px}
 .mock-tag{font-size:.74rem;font-weight:600;color:var(--muted);border:1px solid var(--border);border-radius:8px;padding:4px 10px}
 .mock-desc{font-size:.86rem;color:var(--muted);border-left:3px solid var(--green);padding-left:12px;margin-bottom:16px}
+.mock-chart{
+  display:flex;align-items:flex-end;gap:3px;height:62px;margin-bottom:14px;
+  padding:8px 10px;background:rgba(255,255,255,.03);
+  border:1px solid var(--border);border-radius:12px;
+}
+.mock-chart i{flex:1;border-radius:3px 3px 0 0;background:var(--green);opacity:.5}
+.mock-chart i.hi{background:linear-gradient(180deg,var(--green-hi),var(--green));opacity:1}
+.mock-gym{
+  margin-top:12px;background:rgba(37,211,102,.05);
+  border:1px solid rgba(37,211,102,.2);border-radius:14px;padding:13px 15px;
+}
+.mock-gym .mg-head{display:flex;align-items:center;gap:8px;font-weight:700;font-size:.84rem;margin-bottom:9px}
+.mock-gym .mg-head .mg-dur{margin-left:auto;font-weight:500;font-size:.76rem;color:var(--muted)}
+.mock-gym ul{list-style:none;display:grid;gap:5px}
+.mock-gym li{font-size:.78rem;color:var(--muted);display:flex;align-items:center;gap:7px}
+.mock-gym li b{margin-left:auto;color:var(--text);font-family:'Sora',sans-serif;font-size:.76rem}
 .mock-result{background:rgba(45,212,168,.06);border:1px solid rgba(45,212,168,.18);border-radius:14px;padding:14px 16px}
 .mock-result .r-title{display:flex;align-items:center;gap:8px;font-weight:700;font-size:.86rem;margin-bottom:8px;color:var(--green-hi)}
 .mock-metrics{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px}
@@ -135,6 +151,13 @@ h1{font-size:clamp(2.2rem,4.6vw,3.4rem);font-weight:800;margin-bottom:20px}
   padding:9px 14px;font-size:.75rem;font-weight:600;color:#9ecbff;
   box-shadow:0 14px 36px -12px rgba(0,0,0,.6);
   animation:float 6s ease-in-out infinite reverse;
+}
+.mock-zwo{
+  position:absolute;right:-14px;bottom:-16px;z-index:2;
+  background:#0b1f18;border:1px solid rgba(45,212,168,.32);border-radius:12px;
+  padding:9px 14px;font-size:.75rem;font-weight:600;color:var(--green-hi);
+  box-shadow:0 14px 36px -12px rgba(0,0,0,.6);
+  animation:float 7s ease-in-out infinite;
 }
 
 /* ── Faixa de integrações ───────────────────────────── */
@@ -250,6 +273,7 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
   .features,.steps{grid-template-columns:1fr}
   section{padding:66px 0}
   .mock-sync{left:0}
+  .mock-zwo{right:0}
   .price-inner{padding:34px 24px}
 }
 </style>
@@ -277,16 +301,17 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
     <div>
       <span class="badge"><span class="dot"></span> Garmin + Inteligência Artificial</span>
       <h1>Sua semana de treino, <span class="grad">pensada por IA</span> enquanto você descansa</h1>
-      <p class="lead">MTB, estrada, gravel ou rolo. Indoor ou outdoor. A inteligência artificial desenha cada sessão do zero, joga direto no seu Garmin e disseca sua pedalada assim que você termina. A sua parte é só uma: pedalar.</p>
+      <p class="lead">MTB, estrada, gravel ou rolo. Bike e academia. A inteligência artificial desenha cada sessão do zero, joga direto no seu Garmin — ou no seu rolo, via MyWhoosh e Zwift — e disseca o treino assim que você termina. A sua parte é só uma: treinar.</p>
       <div class="hero-cta">
         <a class="btn btn-primary btn-lg" href="/signup">Assinar por R$ 24,99/mês</a>
         <a class="btn btn-ghost btn-lg" href="#recursos">Ver recursos</a>
       </div>
-      <p class="hero-note">Sem fidelidade — <strong>cancele quando quiser</strong>.</p>
+      <p class="hero-note">Pagamento no <strong>Pix</strong>, mês a mês — sem fidelidade e sem cartão salvo.</p>
     </div>
 
     <div class="mock reveal">
       <div class="mock-sync">🔄 Sincronizado do Garmin há 12 min</div>
+      <div class="mock-zwo">⬇ treino.zwo pronto para o rolo</div>
       <div class="mock-card">
         <div class="mock-head">
           <span class="mock-day">Terça · VO2max 🔥</span>
@@ -297,6 +322,17 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
           <span class="mock-tag">📏 32 km</span>
           <span class="mock-tag">⛰ 520 m</span>
           <span class="mock-tag">🔁 90–100 rpm</span>
+          <span class="mock-tag">⚡ 96 TSS</span>
+        </div>
+        <div class="mock-chart" aria-hidden="true">
+          <i style="height:22%"></i><i style="height:30%"></i><i style="height:38%"></i><i style="height:46%"></i>
+          <i class="hi" style="height:92%"></i><i style="height:34%"></i>
+          <i class="hi" style="height:95%"></i><i style="height:34%"></i>
+          <i class="hi" style="height:90%"></i><i style="height:34%"></i>
+          <i class="hi" style="height:94%"></i><i style="height:34%"></i>
+          <i class="hi" style="height:91%"></i><i style="height:34%"></i>
+          <i class="hi" style="height:96%"></i>
+          <i style="height:40%"></i><i style="height:30%"></i><i style="height:22%"></i>
         </div>
         <p class="mock-desc">6x 3min Z5 (recuperação 5min Z2 entre tiros). Aquecimento 15min progressivo.</p>
         <div class="mock-result">
@@ -305,8 +341,17 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
             <div class="mock-metric"><b>158</b> FC média</div>
             <div class="mock-metric"><b>245 W</b> potência</div>
             <div class="mock-metric"><b>94 rpm</b> cadência</div>
+            <div class="mock-metric"><b>98</b> TSS real</div>
           </div>
-          <p class="mock-ai"><b>Ponto forte:</b> tiros consistentes, potência estável do 1º ao 6º. Amanhã é regenerativo: capriche no carboidrato hoje à noite.</p>
+          <p class="mock-ai"><b>Ponto forte:</b> tiros consistentes, potência estável do 1º ao 6º. Amanhã é regenerativo: pega leve.</p>
+        </div>
+        <div class="mock-gym">
+          <div class="mg-head">🏋️ Academia · manhã <span class="mg-dur">45 min</span></div>
+          <ul>
+            <li>✅ Agachamento livre — 3x8 <b>60 kg</b></li>
+            <li>✅ Levantamento terra — 3x6 <b>70 kg</b></li>
+            <li>⬜ Afundo com halteres — 3x10</li>
+          </ul>
         </div>
       </div>
     </div>
@@ -316,7 +361,8 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
 <div class="strip">
   <div class="strip-inner">
     <div class="strip-item"><span>⌚</span> Integrado ao Garmin Connect</div>
-    <div class="strip-item"><span>🤖</span> Treino semanal gerado por IA</div>
+    <div class="strip-item"><span>🏠</span> Rolo: MyWhoosh, Zwift, TrainerRoad</div>
+    <div class="strip-item"><span>🏋️</span> Bike + academia na mesma semana</div>
     <div class="strip-item"><span>🏁</span> Periodização por prova</div>
   </div>
 </div>
@@ -324,18 +370,28 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
 <section id="recursos">
   <div class="wrap">
     <span class="sec-tag">Recursos</span>
-    <h2>Tudo o que a sua bike pede, <span class="grad">num lugar só</span></h2>
+    <h2>Tudo o que a sua temporada pede, <span class="grad">num lugar só</span></h2>
     <p class="sec-sub">Chega de planilha no Excel, treino copiado da internet e semana montada no escuro.</p>
     <div class="features">
       <div class="feature reveal">
         <div class="f-icon">🗓️</div>
         <h3>A semana montada por IA</h3>
-        <p>A cada semana, a IA olha seu histórico, seu objetivo e as provas no horizonte — e desenha os próximos sete dias sob medida. Você começa a segunda com tudo pronto.</p>
+        <p>A cada semana, a IA olha seu histórico, seu objetivo e as provas no horizonte — e desenha os próximos sete dias sob medida, pedal e academia. Se der dia duplo, cada sessão ganha seu próprio card, em períodos diferentes. Você começa a segunda com tudo pronto.</p>
       </div>
       <div class="feature reveal">
         <div class="f-icon">🚴</div>
         <h3>Do rolo à trilha, você escolhe</h3>
         <p>MTB, speed ou gravel; na rua ou no rolo interativo. Cada dia, você decide onde pedalar — e a IA molda a sessão para a modalidade e o ambiente. A mesma cabeça, seja no asfalto ou na sala de casa.</p>
+      </div>
+      <div class="feature reveal">
+        <div class="f-icon">🏋️</div>
+        <h3>A academia entra na conta</h3>
+        <p>Diga quantos dias por semana você levanta peso e a IA encaixa a musculação sem atrapalhar o pedal — nunca na véspera de um treino forte. Cada sessão vem com checklist de exercícios, e o peso que você registra hoje é o ponto de partida da semana que vem.</p>
+      </div>
+      <div class="feature reveal">
+        <div class="f-icon">🏠</div>
+        <h3>Seu rolo, sem depender do relógio</h3>
+        <p>Um clique baixa o treino do dia em .zwo e ele abre no MyWhoosh, Zwift, TrainerRoad ou Rouvy — com os blocos e a potência calculados a partir do <em>seu</em> FTP. Rolo ligado, treino na tela, zero configuração manual.</p>
       </div>
       <div class="feature reveal">
         <div class="f-icon">⌚</div>
@@ -345,7 +401,7 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
       <div class="feature reveal">
         <div class="f-icon">🤖</div>
         <h3>A IA lê cada pedalada</h3>
-        <p>FC, potência, cadência, execução — nada passa batido. Depois de cada treino, você recebe o que foi bem, o que ajustar e o próximo passo, em português de gente.</p>
+        <p>FC, potência, cadência, TSS, execução — nada passa batido. Depois de cada treino, você recebe o que foi bem, o que ajustar e o próximo passo, em português de gente. Cinta cardíaca falhou? O sistema percebe e refaz a avaliação sem ela.</p>
       </div>
       <div class="feature reveal">
         <div class="f-icon">📊</div>
@@ -360,7 +416,7 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
       <div class="feature reveal">
         <div class="f-icon">🧠</div>
         <h3>Um assistente que te conhece</h3>
-        <p>Ele sabe seu histórico de cor. Peça para remexer a semana, tire uma dúvida de treino ou pergunte o que quiser — resposta na hora, 24/7.</p>
+        <p>Ele sabe seu histórico de cor. Peça para remexer a semana, tire uma dúvida de treino ou conte como foi o pedal de ontem — são 5 perguntas por semana, a qualquer hora do dia ou da noite.</p>
       </div>
     </div>
   </div>
@@ -373,16 +429,16 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
     <p class="sec-sub">Configuração única de 5 minutos. Depois disso, o sistema trabalha por você.</p>
     <div class="steps">
       <div class="step reveal">
-        <h3>Conta criada, Garmin conectado</h3>
-        <p>Conte quem você é — idade, peso, FTP, zonas — e ligue seu Garmin Connect. A partir daqui, a integração roda no automático.</p>
+        <h3>Pix pago, acesso liberado</h3>
+        <p>No fim do cadastro aparece o QR code Pix. Pagou, manda o comprovante no WhatsApp e a gente libera seu acesso. Aí é só contar quem você é: idade, peso, FTP, zonas e seus dias de academia.</p>
       </div>
       <div class="step reveal">
         <h3>Sua semana aparece pronta</h3>
-        <p>A IA desenha os sete dias e joga tudo no relógio — para MTB, estrada, gravel ou rolo, indoor ou outdoor. Você só escolhe onde pedalar.</p>
+        <p>A IA desenha os sete dias — pedal e academia — e manda tudo para o seu Garmin. Sem relógio? Baixe o treino em .zwo e abra no rolo. Você só escolhe onde treinar.</p>
       </div>
       <div class="step reveal">
-        <h3>Pedale — o resto é com a gente</h3>
-        <p>Fechou o treino, a IA disseca a atividade, aponta a evolução e recalibra a carga. Chegando a prova, a estratégia de nutrição chega junto.</p>
+        <h3>Treine — o resto é com a gente</h3>
+        <p>Fechou o treino, a IA disseca a atividade, aponta a evolução e recalibra a carga — inclusive o peso que você vai levantar na próxima. Chegando a prova, a estratégia de nutrição chega junto.</p>
       </div>
     </div>
   </div>
@@ -392,7 +448,7 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
   <div class="wrap">
     <span class="sec-tag">Preço</span>
     <h2>Um plano, <span class="grad">tudo dentro</span></h2>
-    <p class="sec-sub">Menos que um tubo de gel por semana. Sem taxa de adesão, sem letra miúda.</p>
+    <p class="sec-sub">Menos que um tubo de gel por semana. Pix, sem taxa de adesão e sem letra miúda.</p>
     <div class="price-card reveal">
       <div class="price-inner">
         <div class="price-plan">Plano Atleta</div>
@@ -401,17 +457,19 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
           <span class="price-num">24,99</span>
           <span class="price-per">/mês</span>
         </div>
-        <p class="price-note">Cobrança mensal · cancele quando quiser</p>
+        <p class="price-note">Pagamento no Pix · mês a mês, sem renovação automática</p>
         <ul class="price-list">
           <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Planilha de treinos semanal personalizada</li>
           <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Envio automático dos treinos para o Garmin</li>
           <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Análise pós-treino com IA ilimitada</li>
           <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Nutrição periodizada + guia de prova</li>
           <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Treinos para MTB, estrada, gravel e rolo — indoor ou outdoor</li>
-          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Assistente IA 24/7 com o seu histórico</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Academia planejada pela IA, com checklist e progressão de carga</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Download em .zwo para MyWhoosh, Zwift e TrainerRoad</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Assistente IA com o seu histórico — 5 perguntas por semana</li>
         </ul>
         <a class="btn btn-primary btn-lg" href="/signup" style="width:100%">Começar agora</a>
-        <p class="price-cancel">Ao assinar você concorda com os termos de uso.</p>
+        <p class="price-cancel">Sem cartão salvo e sem cobrança automática: o QR code Pix aparece no fim do cadastro, você manda o comprovante no WhatsApp e liberamos seu acesso. Ao assinar você concorda com os termos de uso.</p>
       </div>
     </div>
   </div>
@@ -425,27 +483,39 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
     <div class="faq">
       <details class="reveal">
         <summary>Preciso ter um Garmin para usar?</summary>
-        <div class="faq-body">O Garmin deixa tudo automático (treino vai para o relógio, atividade volta sozinha), mas não é obrigatório: você pode acompanhar a planilha pelo portal e enviar seus arquivos .fit manualmente para receber a análise da IA.</div>
+        <div class="faq-body">Para treinar, não. Todo treino tem um botão que baixa o arquivo .zwo — o formato que os apps de rolo entendem. Você importa no MyWhoosh (que é gratuito), Zwift, TrainerRoad ou Rouvy e pedala com os blocos e a potência já calculados a partir do seu FTP.<br><br>Para a análise pós-treino, o sistema precisa receber a atividade de volta. O caminho mais simples é ligar o app do rolo ao Garmin Connect — a conta é gratuita e não exige nenhum aparelho: a pedalada cai lá e o nosso sync analisa igual, sem você mexer em nada. E se você treinou sem nada registrando, é só contar ao assistente que ele anota a sessão no seu histórico.</div>
       </details>
       <details class="reveal">
         <summary>Posso treinar indoor e outdoor?</summary>
-        <div class="faq-body">Sim. Os treinos funcionam para MTB, estrada e gravel, e você escolhe onde pedalar em cada dia: na rua (outdoor) ou no rolo interativo (indoor). A IA ajusta a sessão para o ambiente e a modalidade do dia.</div>
+        <div class="faq-body">Sim. Os treinos funcionam para MTB, estrada e gravel, e você escolhe onde pedalar em cada dia: na rua (outdoor) ou no rolo (indoor). No indoor a prescrição vira watts, e o download em .zwo abre direto no MyWhoosh, Zwift ou TrainerRoad — o rolo controla a carga para você.</div>
       </details>
       <details class="reveal">
         <summary>Como recebo os treinos?</summary>
-        <div class="faq-body">A semana de treinos fica no portal e é enviada ao seu Garmin com um clique, com zonas, cadência e etapas estruturadas. É só sincronizar o relógio e pedalar.</div>
+        <div class="faq-body">A semana fica no portal e vai para o seu Garmin com um clique, com zonas, cadência e etapas estruturadas — é só sincronizar o relógio e pedalar. Para o rolo, o mesmo treino sai em .zwo. Cada sessão ainda mostra o gráfico dos blocos e o TSS previsto, para você saber o tamanho do caldo antes de subir na bike.</div>
       </details>
       <details class="reveal">
         <summary>A análise por IA funciona como?</summary>
         <div class="faq-body">Ao concluir um treino, o sistema baixa a atividade, compara o executado com o planejado (FC, potência, cadência, zonas) e gera uma análise com pontos fortes e pontos a melhorar — em linguagem simples, sem tecniquês.</div>
       </details>
       <details class="reveal">
-        <summary>Posso cancelar quando quiser?</summary>
-        <div class="faq-body">Sim. A assinatura é mensal, sem fidelidade e sem multa. Cancelou, não é mais cobrado no mês seguinte.</div>
+        <summary>Vocês montam treino de academia também?</summary>
+        <div class="faq-body">Sim. Você informa quantos dias por semana treina força e em que períodos, e a IA encaixa a musculação na semana respeitando o pedal — nunca na véspera nem no dia seguinte de um treino forte, e no mesmo dia só junto de pedal leve. Cada sessão vem com a lista de exercícios em formato de checklist: você marca o que fez e anota o peso, e a carga registrada vira o ponto de partida da semana seguinte.</div>
+      </details>
+      <details class="reveal">
+        <summary>E se a cinta cardíaca falhar no meio do treino?</summary>
+        <div class="faq-body">O sistema percebe. Quando os dados de frequência cardíaca vêm inconsistentes, a análise é refeita ignorando a FC e usando o que é confiável — potência, cadência, tempo em cada bloco. Você não recebe um diagnóstico errado por causa de uma cinta sem bateria.</div>
       </details>
       <details class="reveal">
         <summary>Serve para quem está começando?</summary>
-        <div class="faq-body">Sim. O plano é montado a partir do seu perfil e evolui com você: iniciantes recebem mais base e técnica; quem já compete recebe periodização focada nas provas do calendário.</div>
+        <div class="faq-body">Sim. O plano é montado a partir do seu perfil e evolui com você: iniciantes recebem mais base e técnica; quem já compete recebe periodização focada nas provas do calendário. Na academia vale o mesmo — a carga de entrada respeita o seu nível e sobe a partir do que você levantou de verdade.</div>
+      </details>
+      <details class="reveal">
+        <summary>Como funciona o pagamento?</summary>
+        <div class="faq-body">Só por Pix. Ao terminar o cadastro aparece o QR code (e o código copia-e-cola) de R$ 24,99. Você paga, envia o comprovante pelo WhatsApp e a gente libera seu acesso — normalmente no mesmo dia. Não pedimos cartão em momento nenhum.</div>
+      </details>
+      <details class="reveal">
+        <summary>Posso cancelar quando quiser?</summary>
+        <div class="faq-body">Sim, e nem precisa avisar. Como o pagamento é por Pix, não existe cobrança automática nem cartão guardado: cada mês é um Pix novo. Se não quiser continuar, é só não pagar o próximo — sem fidelidade, sem multa e sem ter que cancelar nada com ninguém.</div>
       </details>
     </div>
   </div>
@@ -455,7 +525,7 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
   <div class="wrap">
     <div class="final reveal">
       <h2>A sua melhor temporada começa numa <span class="grad">segunda-feira</span></h2>
-      <p>Semana de treino gerada por IA, sincronizada com o relógio e analisada sozinha — por menos de R$ 0,85 por dia.</p>
+      <p>Bike e academia planejadas por IA, sincronizadas com o relógio ou com o rolo, e analisadas sozinhas — por menos de R$ 0,85 por dia.</p>
       <a class="btn btn-primary btn-lg" href="/signup">Assinar por R$ 24,99/mês</a>
     </div>
   </div>
@@ -464,7 +534,7 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
 <footer>
   <div class="wrap foot">
     <a class="brand" href="/"><span class="bike">🚵</span> MTB Nutrition</a>
-    <div>Treino inteligente gerado por IA para ciclistas — MTB, estrada e gravel.</div>
+    <div>Treino inteligente gerado por IA para ciclistas — bike e academia, do MTB ao rolo.</div>
     <div><a href="/login" style="color:var(--green-hi)">Entrar</a> · <a href="/signup" style="color:var(--green-hi)">Criar conta</a></div>
   </div>
 </footer>
