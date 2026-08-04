@@ -271,38 +271,53 @@ HTML = """<!DOCTYPE html>
 
     /* Checklist de academia: o atleta marca cada exercício conforme executa e
        fecha a sessão dando a nota de sensação. Não há Garmin para musculação —
-       este é o único "sensor" da sessão. */
+       este é o único "sensor" da sessão.
+       ATENÇÃO à especificidade: `.day-body label` impõe uppercase + display:block
+       e `.day-body input[type=number]` impõe width:100%. Sem sobrepor as duas,
+       o item desmonta (nome em caixa alta, quebrado) e o campo de carga vaza
+       para fora do card. Por isso os seletores abaixo são qualificados. */
     .ex-progresso { font-size: .72rem; color: var(--muted); font-weight: 700; margin-bottom: 6px; }
-    .ex-check-list { display: flex; flex-direction: column; gap: 3px; }
-    .ex-check-item { display: flex; align-items: flex-start; gap: 8px; padding: 7px 8px;
+    .ex-check-list { display: flex; flex-direction: column; gap: 4px; }
+    .ex-check-item { display: flex; flex-direction: column; gap: 5px; padding: 7px 8px;
       border: 1px solid var(--border); border-radius: 6px; background: var(--card);
-      font-size: .78rem; line-height: 1.35; color: var(--text);
       transition: background .12s, border-color .12s; }
     .ex-check-item:hover { border-color: #2e7d32; }
-    .ex-check-main { display: flex; align-items: flex-start; gap: 8px; flex: 1; cursor: pointer; }
-    .ex-check-main input[type=checkbox] { flex-shrink: 0; margin: 1px 0 0; width: 15px; height: 15px;
-      accent-color: #2e7d32; cursor: pointer; }
     .ex-check-item.feito { background: #e8f5e9; border-color: #a5d6a7; }
-    .ex-check-item.feito .ex-nome { text-decoration: line-through; opacity: .55; }
-    .ex-carga { display: flex; align-items: center; gap: 3px; flex-shrink: 0;
-      font-size: .68rem; color: var(--muted); }
-    .ex-carga input { width: 46px; padding: 3px 4px; border: 1px solid var(--border);
-      border-radius: 5px; background: var(--card); color: var(--text);
-      font-size: .74rem; text-align: right; -moz-appearance: textfield; }
+
+    .ex-check-item label.ex-check-main { display: flex; align-items: flex-start; gap: 7px;
+      cursor: pointer; margin: 0; font-size: .76rem; font-weight: 500; line-height: 1.35;
+      color: var(--text); text-transform: none; letter-spacing: normal; }
+    .ex-check-item label.ex-check-main input[type=checkbox] { flex: 0 0 auto; width: 15px;
+      height: 15px; margin-top: 1px; accent-color: #2e7d32; cursor: pointer; }
+    .ex-nome { min-width: 0; overflow-wrap: anywhere; }
+    .ex-principal { display: block; }
+    .ex-check-item.feito .ex-principal { text-decoration: line-through; opacity: .5; }
+    /* O "porquê" do exercício some depois de feito: já cumpriu o papel e a
+       coluna do calendário é estreita — 5 exercícios com justificativa viram
+       um card altíssimo. */
+    .ex-detalhe { display: block; margin-top: 2px; font-size: .67rem; font-weight: 400;
+      line-height: 1.3; color: var(--muted); }
+    .ex-check-item.feito .ex-detalhe { display: none; }
+
+    .ex-carga { display: flex; align-items: center; gap: 5px; margin-left: 22px;
+      font-size: .67rem; color: var(--muted); }
+    .ex-check-item .ex-carga input[type=number] { flex: 0 0 58px; width: 58px; padding: 3px 6px;
+      border: 1px solid var(--border); border-radius: 5px; background: var(--card);
+      color: var(--text); font-size: .76rem; text-align: right; -moz-appearance: textfield; }
     .ex-carga input::-webkit-outer-spin-button,
     .ex-carga input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-    .ex-carga input:focus { outline: none; border-color: #2e7d32; }
+    .ex-check-item .ex-carga input[type=number]:focus { outline: none; border-color: #2e7d32; }
+
     .sensacao-box { border-top: 1px dashed var(--border); margin-top: 11px; padding-top: 9px; }
-    .sensacao-lbl { display: block; font-size: .75rem; color: var(--muted); margin-bottom: 6px; }
-    .sensacao-btns { display: flex; gap: 5px; }
-    .sensacao-btns button { flex: 1; padding: 6px 2px; border: 1px solid var(--border);
-      border-radius: 6px; background: var(--card); font-size: 1rem; line-height: 1.15;
+    .sensacao-btns { display: flex; gap: 4px; }
+    .sensacao-btns button { flex: 1 1 0; min-width: 0; padding: 6px 0; border: 1px solid var(--border);
+      border-radius: 6px; background: var(--card); font-size: 1.05rem; line-height: 1.1;
       cursor: pointer; transition: background .12s, border-color .12s; }
-    .sensacao-btns button .sv { display: block; font-size: .55rem; color: var(--muted); margin-top: 2px; }
     .sensacao-btns button:hover { border-color: #2e7d32; }
     .sensacao-btns button.ativo { background: #2e7d32; border-color: #2e7d32; }
-    .sensacao-btns button.ativo .sv { color: #e8f5e9; }
-    .ex-msg { font-size: .72rem; margin-top: 7px; min-height: 15px; }
+    .sensacao-sel { font-size: .7rem; color: var(--muted); text-align: center;
+      margin-top: 5px; min-height: 14px; }
+    .ex-msg { font-size: .7rem; margin-top: 6px; min-height: 14px; overflow-wrap: anywhere; }
     .ex-edit-toggle { background: none; border: none; color: var(--muted); font-size: .72rem;
       cursor: pointer; text-decoration: underline; padding: 5px 0 0; }
     .ex-edit-toggle:hover { color: var(--text); }
@@ -744,6 +759,15 @@ function renderAcademiaBloco(ac, key) {
 // Academia não tem Garmin: quem registra a sessão é o próprio atleta, marcando
 // os exercícios conforme executa. A nota de sensação (1-5) é o "enviar" — é ela
 // que fecha a sessão e dispara o registro do realizado no servidor.
+// "1. Agachamento — 3x10 — 20 kg (força de quadríceps)" → principal + detalhe.
+// O "porquê" entre parênteses vira uma segunda linha menor: junto do nome ele
+// empurrava tudo e quebrava o texto em palavras soltas na coluna estreita.
+function _splitExercicio(txt) {
+  const s = String(txt || '').trim();
+  const m = s.match(/^(.*?)\s*\(([^()]*)\)\s*$/);
+  return m ? {principal: m[1].trim(), detalhe: m[2].trim()} : {principal: s, detalhe: ''};
+}
+
 function renderChecklistAcademia(key, itens, exec, locked) {
   const feitos = new Set((exec && exec.itens_feitos) || []);
   const cargas = (exec && exec.cargas) || {};
@@ -755,28 +779,36 @@ function renderChecklistAcademia(key, itens, exec, locked) {
   for (let i = 0; i < itens.length; i++) {
     const on = feitos.has(i);
     const kg = cargas[String(i)] ?? '';
-    // O input de carga fica FORA do <label>: dentro dele, tocar no campo
-    // marcaria o checkbox junto (o label ativa o seu controle).
+    const ex = _splitExercicio(itens[i]);
+    // Nome e carga em LINHAS separadas: lado a lado não cabe na largura de uma
+    // coluna do calendário. O input fica FORA do <label> porque, dentro dele,
+    // tocar no campo marcaria o checkbox junto.
     html += `<div class="ex-check-item${on ? ' feito' : ''}" id="ex-item-${key}-${i}">
       <label class="ex-check-main">
         <input type="checkbox" ${on ? 'checked' : ''} ${dis} onchange="toggleExercicio('${key}',${i},this.checked)">
-        <span class="ex-nome">${itens[i]}</span>
+        <span class="ex-nome">
+          <span class="ex-principal">${ex.principal}</span>
+          ${ex.detalhe ? `<span class="ex-detalhe">${ex.detalhe}</span>` : ''}
+        </span>
       </label>
-      <span class="ex-carga">
+      <div class="ex-carga">
+        <span>carga</span>
         <input type="number" min="0" max="500" step="0.5" inputmode="decimal" value="${kg}"
-          placeholder="—" title="Carga usada neste exercício" ${dis}
-          onchange="setCarga('${key}',${i},this.value)">kg
-      </span>
+          placeholder="—" title="Carga que você usou neste exercício" ${dis}
+          onchange="setCarga('${key}',${i},this.value)">
+        <span>kg</span>
+      </div>
     </div>`;
   }
   html += '</div>';
 
   html += `<div class="sensacao-box">
-    <label class="sensacao-lbl">Como você se sentiu na academia?</label>
+    <label>Como se sentiu?</label>
     <div class="sensacao-btns" id="sens-${key}">
       ${[1,2,3,4,5].map(n => `<button ${dis} class="${sens === n ? 'ativo' : ''}"
-        onclick="darSensacao('${key}',${n})" title="${SENSACAO_TXT[n]}">${SENSACAO_EMOJI[n]}<span class="sv">${SENSACAO_TXT[n]}</span></button>`).join('')}
+        onclick="darSensacao('${key}',${n})" title="${SENSACAO_TXT[n]}">${SENSACAO_EMOJI[n]}</button>`).join('')}
     </div>
+    <div class="sensacao-sel" id="sens-sel-${key}">${sens ? SENSACAO_TXT[sens] : ''}</div>
     <div class="ex-msg" id="ex-msg-${key}"></div>
   </div>`;
   return html;
@@ -811,6 +843,8 @@ function darSensacao(key, n) {
   const e = _execucao[key] || (_execucao[key] = {itens_feitos: [], sensacao: null});
   e.sensacao = n;
   document.querySelectorAll(`#sens-${key} button`).forEach((b, i) => b.classList.toggle('ativo', i + 1 === n));
+  const sel = document.getElementById(`sens-sel-${key}`);
+  if (sel) sel.textContent = SENSACAO_TXT[n] || '';
   enviarExecucao(key, n);
 }
 
