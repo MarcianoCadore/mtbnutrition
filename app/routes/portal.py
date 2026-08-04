@@ -269,6 +269,44 @@ HTML = """<!DOCTYPE html>
     .academia-bloco .ac-exercicios li:last-child { border-bottom: none; }
     .academia-bloco .ac-obs { font-size: .72rem; color: #666; line-height: 1.4; margin-top: 4px; }
 
+    /* Checklist de academia: o atleta marca cada exercício conforme executa e
+       fecha a sessão dando a nota de sensação. Não há Garmin para musculação —
+       este é o único "sensor" da sessão. */
+    .ex-progresso { font-size: .72rem; color: var(--muted); font-weight: 700; margin-bottom: 6px; }
+    .ex-check-list { display: flex; flex-direction: column; gap: 3px; }
+    .ex-check-item { display: flex; align-items: flex-start; gap: 8px; padding: 7px 8px;
+      border: 1px solid var(--border); border-radius: 6px; background: var(--card);
+      font-size: .78rem; line-height: 1.35; color: var(--text);
+      transition: background .12s, border-color .12s; }
+    .ex-check-item:hover { border-color: #2e7d32; }
+    .ex-check-main { display: flex; align-items: flex-start; gap: 8px; flex: 1; cursor: pointer; }
+    .ex-check-main input[type=checkbox] { flex-shrink: 0; margin: 1px 0 0; width: 15px; height: 15px;
+      accent-color: #2e7d32; cursor: pointer; }
+    .ex-check-item.feito { background: #e8f5e9; border-color: #a5d6a7; }
+    .ex-check-item.feito .ex-nome { text-decoration: line-through; opacity: .55; }
+    .ex-carga { display: flex; align-items: center; gap: 3px; flex-shrink: 0;
+      font-size: .68rem; color: var(--muted); }
+    .ex-carga input { width: 46px; padding: 3px 4px; border: 1px solid var(--border);
+      border-radius: 5px; background: var(--card); color: var(--text);
+      font-size: .74rem; text-align: right; -moz-appearance: textfield; }
+    .ex-carga input::-webkit-outer-spin-button,
+    .ex-carga input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    .ex-carga input:focus { outline: none; border-color: #2e7d32; }
+    .sensacao-box { border-top: 1px dashed var(--border); margin-top: 11px; padding-top: 9px; }
+    .sensacao-lbl { display: block; font-size: .75rem; color: var(--muted); margin-bottom: 6px; }
+    .sensacao-btns { display: flex; gap: 5px; }
+    .sensacao-btns button { flex: 1; padding: 6px 2px; border: 1px solid var(--border);
+      border-radius: 6px; background: var(--card); font-size: 1rem; line-height: 1.15;
+      cursor: pointer; transition: background .12s, border-color .12s; }
+    .sensacao-btns button .sv { display: block; font-size: .55rem; color: var(--muted); margin-top: 2px; }
+    .sensacao-btns button:hover { border-color: #2e7d32; }
+    .sensacao-btns button.ativo { background: #2e7d32; border-color: #2e7d32; }
+    .sensacao-btns button.ativo .sv { color: #e8f5e9; }
+    .ex-msg { font-size: .72rem; margin-top: 7px; min-height: 15px; }
+    .ex-edit-toggle { background: none; border: none; color: var(--muted); font-size: .72rem;
+      cursor: pointer; text-decoration: underline; padding: 5px 0 0; }
+    .ex-edit-toggle:hover { color: var(--text); }
+
     .actions { display: flex; gap: 12px; flex-wrap: wrap; }
     .btn { padding: 13px 22px; border: none; border-radius: 12px; font-size: .95rem; font-weight: 700; cursor: pointer; transition: transform .15s, box-shadow .15s, background .2s, border-color .2s, color .2s; display: flex; align-items: center; gap: 6px; }
     .btn-save  { background: var(--grad-green);  color: #fff; flex: 1; justify-content: center; box-shadow: 0 4px 12px -2px rgba(15,139,125,.4); }
@@ -344,6 +382,10 @@ HTML = """<!DOCTYPE html>
     [data-theme="dark"] .academia-bloco .ac-arrow { color: #6ee7b7; }
     [data-theme="dark"] .academia-bloco .ac-porque { background: #1f2937; color: var(--text); }
     [data-theme="dark"] .academia-bloco .ac-exercicios li { border-bottom-color: #1a5e40; }
+    [data-theme="dark"] .ex-check-item { background: #111827; }
+    [data-theme="dark"] .ex-check-item.feito { background: #0d2020; border-color: #1a5e40; }
+    [data-theme="dark"] .sensacao-btns button { background: #111827; }
+    [data-theme="dark"] .ex-carga input { background: #1f2937; }
     [data-theme="dark"] .extra-form select,
     [data-theme="dark"] .extra-form input[type=number],
     [data-theme="dark"] .extra-form textarea { background: #111827; color: var(--text); border-color: var(--border); }
@@ -542,6 +584,10 @@ function _alvoPotencia(tipo) {
 let monday = getMonday(new Date());
 const _resultados = {};
 const _planejado = {};
+// Estado do checklist de academia por dia: {itens_feitos: [i], sensacao: 1-5}.
+const _execucao = {};
+const SENSACAO_EMOJI = {1:'😞', 2:'😕', 3:'😐', 4:'🙂', 5:'😄'};
+const SENSACAO_TXT   = {1:'muito ruim', 2:'ruim', 3:'normal', 4:'bem', 5:'muito bem'};
 
 // Objetivo e dica por tipo de treino. A prescrição concreta (séries×tempo,
 // cadência, recuperação) vem SÓ das "Notas do treino" — texto real gerado por
@@ -695,6 +741,116 @@ function renderAcademiaBloco(ac, key) {
   return html;
 }
 
+// Academia não tem Garmin: quem registra a sessão é o próprio atleta, marcando
+// os exercícios conforme executa. A nota de sensação (1-5) é o "enviar" — é ela
+// que fecha a sessão e dispara o registro do realizado no servidor.
+function renderChecklistAcademia(key, itens, exec, locked) {
+  const feitos = new Set((exec && exec.itens_feitos) || []);
+  const cargas = (exec && exec.cargas) || {};
+  const sens = (exec && exec.sensacao) || null;
+  const dis = locked ? 'disabled' : '';
+
+  let html = `<div class="ex-progresso" id="ex-prog-${key}">${feitos.size}/${itens.length} concluídos</div>`;
+  html += `<div class="ex-check-list" id="ex-list-${key}">`;
+  for (let i = 0; i < itens.length; i++) {
+    const on = feitos.has(i);
+    const kg = cargas[String(i)] ?? '';
+    // O input de carga fica FORA do <label>: dentro dele, tocar no campo
+    // marcaria o checkbox junto (o label ativa o seu controle).
+    html += `<div class="ex-check-item${on ? ' feito' : ''}" id="ex-item-${key}-${i}">
+      <label class="ex-check-main">
+        <input type="checkbox" ${on ? 'checked' : ''} ${dis} onchange="toggleExercicio('${key}',${i},this.checked)">
+        <span class="ex-nome">${itens[i]}</span>
+      </label>
+      <span class="ex-carga">
+        <input type="number" min="0" max="500" step="0.5" inputmode="decimal" value="${kg}"
+          placeholder="—" title="Carga usada neste exercício" ${dis}
+          onchange="setCarga('${key}',${i},this.value)">kg
+      </span>
+    </div>`;
+  }
+  html += '</div>';
+
+  html += `<div class="sensacao-box">
+    <label class="sensacao-lbl">Como você se sentiu na academia?</label>
+    <div class="sensacao-btns" id="sens-${key}">
+      ${[1,2,3,4,5].map(n => `<button ${dis} class="${sens === n ? 'ativo' : ''}"
+        onclick="darSensacao('${key}',${n})" title="${SENSACAO_TXT[n]}">${SENSACAO_EMOJI[n]}<span class="sv">${SENSACAO_TXT[n]}</span></button>`).join('')}
+    </div>
+    <div class="ex-msg" id="ex-msg-${key}"></div>
+  </div>`;
+  return html;
+}
+
+// Carga registrada por exercício. É o número que a IA usa para prescrever a
+// próxima sessão — sem ele a progressão de força vira chute.
+function setCarga(key, idx, valor) {
+  const e = _execucao[key] || (_execucao[key] = {itens_feitos: [], sensacao: null});
+  e.cargas = e.cargas || {};
+  const kg = parseFloat(String(valor).replace(',', '.'));
+  if (isNaN(kg) || kg <= 0) delete e.cargas[String(idx)];
+  else e.cargas[String(idx)] = kg;
+  enviarExecucao(key, e.sensacao);
+}
+
+function toggleExercicio(key, idx, on) {
+  const e = _execucao[key] || (_execucao[key] = {itens_feitos: [], sensacao: null});
+  const s = new Set(e.itens_feitos || []);
+  on ? s.add(idx) : s.delete(idx);
+  e.itens_feitos = [...s].sort((a, b) => a - b);
+
+  document.getElementById(`ex-item-${key}-${idx}`)?.classList.toggle('feito', on);
+  const total = document.querySelectorAll(`#ex-list-${key} .ex-check-item`).length;
+  const prog = document.getElementById(`ex-prog-${key}`);
+  if (prog) prog.textContent = `${e.itens_feitos.length}/${total} concluídos`;
+
+  enviarExecucao(key, e.sensacao);
+}
+
+function darSensacao(key, n) {
+  const e = _execucao[key] || (_execucao[key] = {itens_feitos: [], sensacao: null});
+  e.sensacao = n;
+  document.querySelectorAll(`#sens-${key} button`).forEach((b, i) => b.classList.toggle('ativo', i + 1 === n));
+  enviarExecucao(key, n);
+}
+
+async function enviarExecucao(key, sensacao) {
+  const e = _execucao[key] || {itens_feitos: []};
+  const msg = document.getElementById(`ex-msg-${key}`);
+  const setMsg = (txt, cor) => { if (msg) { msg.style.color = cor; msg.textContent = txt; } };
+  setMsg('⏳ salvando…', 'var(--muted)');
+  try {
+    const r = await fetch(`/workout/treino/${iso(monday)}/${key}/academia-execucao`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        itens_feitos: e.itens_feitos || [],
+        cargas: e.cargas || {},
+        sensacao: sensacao ?? null,
+      }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Erro');
+
+    if (d.erro)            setMsg(d.erro, '#c62828');
+    else if (d.registrado) {
+      setMsg(d.nota != null ? `✅ sessão registrada — nota ${d.nota}` : '✅ sessão registrada', '#2e7d32');
+      toast('✅ Academia registrada!', 'ok');
+      await load();   // recarrega para o card virar "realizado" e mostrar a avaliação
+    }
+    else setMsg('progresso salvo', 'var(--muted)');
+  } catch (err) {
+    setMsg('não salvou: ' + err.message, '#c62828');
+  }
+}
+
+function toggleDescEdit(key) {
+  const ta = document.getElementById(`desc-${key}`);
+  if (!ta) return;
+  ta.style.display = ta.style.display === 'none' ? '' : 'none';
+  if (ta.style.display !== 'none') ta.focus();
+}
+
 function iso(d) { return d.toISOString().split('T')[0]; }
 function localIso(d) { const y=d.getFullYear(); const m=String(d.getMonth()+1).padStart(2,'0'); const day=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${day}`; }
 
@@ -787,6 +943,16 @@ function buildCards(treinos) {
     const acSub = t.academia;
     const academiaSubHTML = acSub && acSub.descricao ? renderAcademiaBloco(acSub, key) : '';
 
+    // Dia de academia com lista no formato da casa vira checklist. Descrição
+    // em texto livre (plano antigo, editado à mão) cai no textarea de sempre.
+    const exItensAcad = isAcademia ? _parseAcademiaTexto(desc).exItens : [];
+    const temChecklist = exItensAcad.length > 0;
+    if (temChecklist) _execucao[key] = t.execucao || {itens_feitos: [], sensacao: null};
+    // O checklist é execução, não edição do plano: `isFuturo` inclui HOJE (para
+    // travar a prescrição contra edição manual), mas hoje é exatamente quando o
+    // atleta está na academia marcando. Só dia que ainda não chegou fica travado.
+    const checkTravado = key > todayISO;
+
     c.innerHTML = `
       <div class="day-head tipo-${t.tipo}" id="h-${key}">
         <div class="day-name">${DIAS[i]}${isToday ? ' ●' : ''}${isFuturo ? ' 🔒' : ''}</div>
@@ -819,7 +985,9 @@ function buildCards(treinos) {
               <label>${isAcademia ? 'Exercícios' : 'Notas'}</label>
               <button class="info-treino" onclick="abrirTreinoInfo('${key}')" title="Ver especificação do treino"><span class="ic">ⓘ</span> saber mais</button>
             </div>
-            <textarea id="desc-${key}" placeholder="${isAcademia ? 'Lista de exercícios...' : 'Detalhes...'}" ${lockAttr}>${desc}</textarea>
+            ${temChecklist ? renderChecklistAcademia(key, exItensAcad, _execucao[key], checkTravado) : ''}
+            <textarea id="desc-${key}" placeholder="${isAcademia ? 'Lista de exercícios...' : 'Detalhes...'}" ${lockAttr} style="${temChecklist ? 'display:none' : ''}">${desc}</textarea>
+            ${temChecklist && !lockAttr ? `<button class="ex-edit-toggle" onclick="toggleDescEdit('${key}')">✏️ editar a lista</button>` : ''}
           </div>
         </div>
 
@@ -830,7 +998,7 @@ function buildCards(treinos) {
           ${hide ? '🏃 Adicionar treino' : '🛌 Marcar descanso'}
         </button>` : ''}
 
-        ${window.FTP_ON && !hide ? `<div class="indoor-area">
+        ${window.FTP_ON && !hide && !isAcademia ? `<div class="indoor-area">
           <div class="indoor-toggle" id="indoor-toggle-${key}">
             <button id="indoor-out-${key}" class="${!t.indoor ? 'ativo' : ''}"
               onclick="setIndoor('${key}', false)" title="Outdoor — Garmin usará frequência cardíaca">
@@ -1087,12 +1255,26 @@ function abrirAvaliacao(key) {
   // Cinta cardíaca: quando a FC não vale (sem bateria, cinta solta, sem cinta),
   // o atleta refaz a avaliação sem FC — a nota deixa de cobrar zona que não foi
   // medida. O mesmo ajuste que ele pode pedir no chat.
-  const fcBanner = fcOff
+  // Sessão contada pelo atleta (academia, pedal sem relógio): nunca houve FC
+  // para "voltar a considerar" — o botão só levaria a uma reavaliação pedindo
+  // zonas que ninguém mediu. Banner próprio e sem botão.
+  const relatada = res.origem === 'relato_atleta';
+  const fcBanner = relatada
+    ? `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:9px;padding:9px 12px;margin-bottom:10px;font-size:.84rem;color:#1e40af">
+         🗣️ Sessão <b>registrada pelo seu relato</b> — sem dados de dispositivo, então não há FC, potência nem TSS.
+       </div>`
+    : fcOff
     ? `<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:9px;padding:9px 12px;margin-bottom:10px;font-size:.84rem;color:#9a3412">
          ⚠️ Avaliado <b>sem os dados de FC</b>${res.fc_invalida_motivo ? ` — ${res.fc_invalida_motivo}` : ''}.
        </div>`
     : '';
-  const fcBtn = fcOff
+  const relatoHTML = res.relato
+    ? `<div class="analise-bloco" style="margin-bottom:10px"><div class="esp-titulo">O que você contou</div>
+         <div class="esp-notas">${res.relato.replace(/</g,'&lt;').replace(/\\n/g,'<br>')}</div></div>`
+    : '';
+  const fcBtn = relatada
+    ? ''
+    : fcOff
     ? `<button class="aval-btn" id="btnFC-${key}" onclick="marcarFCInvalida('${key}', false)" style="margin-top:10px">↩️ Voltar a considerar a FC</button>`
     : `<button class="aval-btn" id="btnFC-${key}" onclick="marcarFCInvalida('${key}', true)" style="margin-top:10px">⚠️ FC não confiável — reavaliar sem FC</button>`;
 
@@ -1100,6 +1282,7 @@ function abrirAvaliacao(key) {
   document.getElementById('avalModalBody').innerHTML = `
     ${fcBanner}
     ${mItems.length ? `<div class="metrics">${mItems.join('')}</div>` : ''}
+    ${relatoHTML}
     ${notaHTML}
     <div class="analise-bloco">
       ${ia.resumo ? `<div class="resumo-txt">"${ia.resumo}"</div>` : ''}

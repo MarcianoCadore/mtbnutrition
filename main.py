@@ -19,6 +19,16 @@ from app.services.mongo_service import get_db
 from app import pix
 from config.settings import settings
 
+# ─── Logging ──────────────────────────────────────────────────────────────────
+# Sem isto o root logger fica sem handler e no nível WARNING: todo `logger.info`
+# dos serviços (criar_treino_dia, mover_treino, registrar_realizado…) some, e o
+# journald só mostra o access log do uvicorn. Ficamos sem rastro de quem mudou
+# o calendário — foi o que impediu de auditar uma alteração feita pelo chat.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s [%(name)s] %(message)s",
+)
+
 logger = logging.getLogger(__name__)
 
 # ─── Segredo de assinatura ────────────────────────────────────────────────────

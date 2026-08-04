@@ -18,13 +18,19 @@ derivado de FC: a nota passa a sair de potência, volume e cadência.
 
 import logging
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from app.services.mongo_service import get_db
 
 logger = logging.getLogger(__name__)
 
 MOTIVO_PADRAO = "dados de FC não confiáveis (cinta cardíaca)"
+
+# Marca em `resultado.origem` as sessões que o atleta contou em vez de o
+# dispositivo ter gravado. Serve para não confundir com dado medido — e para o
+# sync do Garmin/Strava poder sobrescrever sem dó quando a atividade chegar.
+ORIGEM_RELATO = "relato_atleta"
+MOTIVO_SEM_DISPOSITIVO = "sessão relatada pelo atleta, sem dados de dispositivo"
 
 
 def _semana_de(data_iso: str) -> str:
@@ -159,6 +165,122 @@ async def reavaliar_treino(user_id, data_iso: str, ignorar_fc: bool | None = Non
         "nota": analise.get("nota"),
         "analise_ia": analise,
         "tss_obtido": resultado.get("tss_obtido"),
+    }
+
+
+# ── registro de sessão relatada pelo atleta ──────────────────────────────────
+
+async def registrar_realizado(
+    user_id,
+    data_iso: str,
+    duracao_min: int | None = None,
+    relato: str | None = None,
+    distancia_km: float | None = None,
+    percepcao_esforco: int | None = None,
+) -> dict:
+    """Marca como REALIZADO um treino que o atleta relatou de viva voz.
+
+    Existe para as sessões que nenhum dispositivo captura: academia, um pedal
+    sem relógio, o rolo sem sensor. Antes disto o chat só tinha ferramentas de
+    planejamento e "registrava" a sessão chamando `criar_treino_dia` — o que
+    reescrevia a `descricao` do dia (destruindo a prescrição planejada) e não
+    gravava nada em `resultado`: sem nota, sem TSS, fora da análise da semana.
+
+    Escreve APENAS em `resultado`; o planejado (tipo, duração, descrição,
+    sub-bloco de academia) fica intacto. Nunca sobrescreve resultado vindo de
+    Garmin/Strava: dado medido vale mais que memória, e o re-sync o traria de
+    volta de qualquer jeito.
+    """
+    from app.services.ai_service import analisar_atividade_pos_treino
+
+    from app.utils import hoje_local
+
+    if data_iso > hoje_local().isoformat():
+        raise ValueError(
+            f"{data_iso} ainda não chegou — não dá para registrar um treino "
+            "que não aconteceu."
+        )
+
+    db = get_db()
+    semana = _semana_de(data_iso)
+    doc = await db.semanas.find_one({"semana_inicio": semana, "user_id": str(user_id)})
+    if not doc:
+        raise ValueError(f"Não encontrei a semana de {data_iso} no calendário.")
+
+    treino = next(
+        (t for t in doc.get("treinos", [])
+         if t.get("data") == data_iso and t.get("origem") != "extra"),
+        None,
+    )
+    if not treino or (treino.get("tipo") or "DESCANSO") == "DESCANSO":
+        raise ValueError(
+            f"{data_iso} não tem treino planejado — não há o que marcar como "
+            "realizado. Se o atleta treinou fora do plano, agende o treino com "
+            "adicionar_treino primeiro e só então registre."
+        )
+
+    anterior = treino.get("resultado") or {}
+    if anterior.get("garmin_activity_id") or anterior.get("strava_activity_id"):
+        raise ValueError(
+            f"O treino de {data_iso} já foi sincronizado do dispositivo — o "
+            "registro por relato não sobrescreve dado medido."
+        )
+
+    duracao = duracao_min or treino.get("duracao_min")
+    if not duracao:
+        raise ValueError(
+            f"Informe a duração da sessão de {data_iso} — o planejado não tem "
+            "duração para herdar."
+        )
+
+    # Sem dispositivo não existe FC. Marcar fc_invalida faz a análise entrar no
+    # caminho "julgue pelo volume e pela execução" em vez de cobrar zonas que
+    # ninguém mediu — ver deve_ignorar_fc() e o bloco SEM DADOS DE FC do prompt.
+    resultado = {
+        "origem": ORIGEM_RELATO,
+        "duracao_min": int(duracao),
+        "registrado_em": datetime.now(timezone.utc).isoformat(),
+        "fc_invalida": True,
+        "fc_invalida_motivo": MOTIVO_SEM_DISPOSITIVO,
+    }
+    if distancia_km:
+        resultado["distancia_km"] = float(distancia_km)
+    if percepcao_esforco:
+        resultado["percepcao_esforco"] = int(percepcao_esforco)
+    if relato and relato.strip():
+        resultado["relato"] = relato.strip()
+
+    # Sem potência e sem FC não há como calcular TSS: deixa `tss_obtido` fora
+    # para o card cair no "TSS previsto" do planejado em vez de exibir um
+    # número inventado.
+    analise: dict = {}
+    try:
+        analise = await analisar_atividade_pos_treino(
+            treino, resultado, user_id, None, ignorar_fc=True
+        )
+        resultado["analise_ia"] = analise
+    except Exception as exc:
+        logger.warning("registrar_realizado: análise falhou em %s: %s", data_iso, exc)
+
+    await db.semanas.update_one(
+        {
+            "semana_inicio": semana, "user_id": str(user_id),
+            "treinos": {"$elemMatch": {"data": data_iso, "origem": {"$ne": "extra"}}},
+        },
+        {"$set": {"treinos.$.resultado": resultado}},
+    )
+    logger.info(
+        "registrar_realizado user=%s: %s tipo=%s dur=%smin (relato do atleta)",
+        user_id, data_iso, treino.get("tipo"), duracao,
+    )
+
+    return {
+        "data": data_iso,
+        "semana_inicio": semana,
+        "tipo": treino.get("tipo"),
+        "duracao_min": int(duracao),
+        "nota": analise.get("nota"),
+        "analise_ia": analise,
     }
 
 

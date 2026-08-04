@@ -5,7 +5,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, UploadFile, File, Request, Form
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from app.models.models import Treino, TipoTreino
 from app.services.mongo_service import get_db
@@ -152,6 +152,11 @@ async def salvar_semana(request: Request, plano: PlanoSemanal):
             # model_dump(); preserva o bloco salvo quando o cliente não o envia.
             if saved.get("academia") and not t.get("academia"):
                 t["academia"] = saved["academia"]
+            # execucao (checklist da academia + sensação) é escrita só pela rota
+            # /academia-execucao e também não está no modelo — sem preservar,
+            # salvar a semana apagaria os checks que o atleta acabou de dar.
+            if saved.get("execucao") and not t.get("execucao"):
+                t["execucao"] = saved["execucao"]
             # bloqueia alteração se data >= hoje E treino ainda não foi realizado
             if t["data"] >= today_iso and not saved.get("resultado") and saved:
                 data["treinos"][i] = saved
@@ -775,6 +780,163 @@ async def zwo_treino_agendado(request: Request, semana_inicio: str, data: str):
     return _resposta_download(xml, treino.get("nome") or treino["tipo"], "zwo")
 
 
+# ── Execução da academia (checklist + sensação) ──────────────────────────────
+# Musculação não gera atividade para o Garmin sincronizar, então quem "mede" a
+# sessão é o próprio atleta: marca os exercícios conforme executa e, no fim, dá
+# uma nota de 1 a 5 para como se sentiu. Dar a nota é o que finaliza a sessão —
+# não existe botão de "registrar", o check-off É o registro.
+
+SENSACAO_LABEL = {
+    1: "muito ruim", 2: "ruim", 3: "normal", 4: "bem", 5: "muito bem",
+}
+
+
+CARGA_MAX_KG = 500.0  # acima disso é digitação errada, não levantamento
+
+
+class AcademiaExecucaoBody(BaseModel):
+    itens_feitos: list[int] = []
+    cargas: dict[str, float] = {}   # índice do exercício (str) → kg usados
+    sensacao: Optional[int] = None  # 1 (muito ruim) a 5 (muito bem)
+
+
+def _fmt_kg(v: float) -> str:
+    """20.0 → '20 kg'; 22.5 → '22,5 kg'."""
+    return (f"{v:.0f}" if float(v).is_integer() else f"{v:.1f}".replace(".", ",")) + " kg"
+
+
+def _relato_academia(exercicios: list[str], feitos: list[int],
+                     cargas: dict[int, float], sensacao: Optional[int]) -> str:
+    """Monta, a partir do checklist, o relato que vai para a análise da sessão.
+
+    A carga registrada entra aqui e no `execucao` — é ela que dá à IA um número
+    real para progredir, em vez de um chute sobre quanto o atleta aguenta.
+    """
+    def _com_carga(i: int, nome: str) -> str:
+        kg = cargas.get(i)
+        return f"{nome} ({_fmt_kg(kg)})" if kg else nome
+
+    ok = [_com_carga(i, e) for i, e in enumerate(exercicios) if i in feitos]
+    faltou = [e for i, e in enumerate(exercicios) if i not in feitos]
+    partes = [f"Academia: {len(ok)} de {len(exercicios)} exercícios concluídos."]
+    if ok:
+        partes.append("Executados: " + "; ".join(ok) + ".")
+    if faltou:
+        partes.append("Não executados: " + "; ".join(faltou) + ".")
+    if sensacao:
+        partes.append(
+            f"Sensação relatada pelo atleta: {sensacao}/5 "
+            f"({SENSACAO_LABEL.get(sensacao, '')})."
+        )
+    return " ".join(partes)
+
+
+@router.post("/treino/{semana_inicio}/{data}/academia-execucao")
+async def academia_execucao(
+    request: Request,
+    semana_inicio: str,
+    data: str,
+    body: AcademiaExecucaoBody,
+):
+    """Salva o progresso do checklist e, quando vem `sensacao`, fecha a sessão.
+
+    O corpo carrega o estado completo (não um delta), então marcar/desmarcar em
+    sequência rápida não gera corrida: a última requisição vence.
+    """
+    from app.services.plano_semana_service import extrair_exercicios_academia
+    from app.services.avaliacao_service import registrar_realizado
+
+    db = get_db()
+    user_id = request.state.user_id
+
+    doc = await db.semanas.find_one({"semana_inicio": semana_inicio, "user_id": user_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Semana não encontrada.")
+
+    treino = next(
+        (t for t in doc.get("treinos", []) if t["data"] == data and t.get("origem") != "extra"),
+        None,
+    )
+    if not treino:
+        raise HTTPException(status_code=404, detail="Treino não encontrado para esta data.")
+    if treino.get("tipo") != "ACADEMIA":
+        raise HTTPException(
+            status_code=400,
+            detail="O checklist de execução só existe para treino de academia.",
+        )
+    if data > hoje_local().isoformat():
+        raise HTTPException(
+            status_code=400,
+            detail="Este treino ainda não aconteceu — o checklist abre no dia.",
+        )
+
+    exercicios = extrair_exercicios_academia(treino.get("descricao"))
+    if not exercicios:
+        raise HTTPException(
+            status_code=400,
+            detail="A descrição deste dia não tem lista de exercícios para marcar.",
+        )
+
+    feitos = sorted({i for i in body.itens_feitos if 0 <= i < len(exercicios)})
+    if body.sensacao is not None and body.sensacao not in SENSACAO_LABEL:
+        raise HTTPException(status_code=400, detail="Sensação deve ser de 1 a 5.")
+
+    # Cargas: só índices que existem na lista e valores plausíveis. Zero/negativo
+    # é "não informado" (o campo em branco), não um levantamento de 0 kg.
+    cargas: dict[int, float] = {}
+    for chave, valor in (body.cargas or {}).items():
+        try:
+            idx, kg = int(chave), float(valor)
+        except (TypeError, ValueError):
+            continue
+        if not (0 <= idx < len(exercicios)) or kg <= 0:
+            continue
+        if kg > CARGA_MAX_KG:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Carga de {kg:.0f} kg parece erro de digitação.",
+            )
+        cargas[idx] = round(kg, 1)
+
+    execucao = {
+        "itens_feitos": feitos,
+        "total_itens": len(exercicios),
+        "cargas": {str(i): kg for i, kg in sorted(cargas.items())},
+        "sensacao": body.sensacao,
+        "atualizado_em": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.semanas.update_one(
+        {
+            "semana_inicio": semana_inicio, "user_id": user_id,
+            "treinos": {"$elemMatch": {"data": data, "origem": {"$ne": "extra"}}},
+        },
+        {"$set": {"treinos.$.execucao": execucao}},
+    )
+
+    # A sensação é o "enviar": só nela a sessão vira realizada e ganha análise.
+    registrado, nota, erro = False, None, None
+    if body.sensacao is not None:
+        try:
+            r = await registrar_realizado(
+                user_id, data,
+                duracao_min=treino.get("duracao_min"),
+                relato=_relato_academia(exercicios, feitos, cargas, body.sensacao),
+                percepcao_esforco=None,
+            )
+            registrado, nota = True, r.get("nota")
+        except ValueError as exc:
+            # Ex.: sessão já sincronizada de dispositivo. O checklist fica salvo.
+            erro = str(exc)
+            logger.warning("academia_execucao: registro recusado em %s: %s", data, exc)
+
+    return {
+        "execucao": execucao,
+        "registrado": registrado,
+        "nota": nota,
+        "erro": erro,
+    }
+
+
 class IndoorBody(BaseModel):
     indoor: bool  # True = indoor (watts), False = outdoor (FC)
 
@@ -804,6 +966,15 @@ async def marcar_indoor(
     if not treino or treino.get("tipo") == "DESCANSO":
         raise HTTPException(status_code=404, detail="Treino não encontrado para esta data.")
 
+    # Academia não é treino de bike: não tem alvo de FC/watts nem builder de
+    # workout no Garmin. Sem esta guarda o toggle marcava `indoor` num dia de
+    # musculação e ainda tentava subir um workout de ciclismo.
+    if treino.get("tipo") == "ACADEMIA":
+        raise HTTPException(
+            status_code=400,
+            detail="Treino de academia não tem alvo de FC/watts — indoor/outdoor não se aplica.",
+        )
+
     # Atualiza campo indoor no banco
     await db.semanas.update_one(
         {
@@ -822,6 +993,7 @@ async def marcar_indoor(
             await deletar_workout_garmin(user_id, gid_antigo)
 
         # Re-envia com o alvo correto (forcar_indoor=True/False)
+        novo_gid = None
         try:
             novo_gid = await upload_e_agendar(
                 user_id=user_id,
@@ -845,6 +1017,18 @@ async def marcar_indoor(
                 garmin_sync = {"ok": False, "motivo": "upload retornou vazio"}
         except Exception as e:
             garmin_sync = {"ok": False, "motivo": str(e)}
+
+        # O antigo já foi deletado do Garmin lá em cima. Se o novo não subiu, o
+        # id no banco aponta para um workout que não existe mais — limpa, senão
+        # o próximo toggle tenta deletar um fantasma e o card mostra "enviado".
+        if not novo_gid and gid_antigo:
+            await db.semanas.update_one(
+                {
+                    "semana_inicio": semana_inicio, "user_id": user_id,
+                    "treinos": {"$elemMatch": {"data": data, "origem": {"$ne": "extra"}}},
+                },
+                {"$set": {"treinos.$.garmin_workout_id": None}},
+            )
 
     return {
         "indoor": body.indoor,
@@ -1280,6 +1464,7 @@ async def pagina_perfil(request: Request):
     academia_treina = "1" if academia.get("treina") else "0"
     academia_disp_json = _json.dumps(academia.get("disponibilidade") or {})
     academia_freq = str(int(academia.get("frequencia_semanal") or 0))
+    academia_nivel = str(academia.get("nivel") or "")
     usa_cinta = "0" if pref.get("sem_cinta_fc") else "1"
     tema = (pref.get("tema")) or "light"
     html = (_PAGINA_PERFIL
@@ -1294,6 +1479,7 @@ async def pagina_perfil(request: Request):
             .replace("{{ACADEMIA_TREINA}}", academia_treina)
             .replace("{{ACADEMIA_DISP_JSON}}", academia_disp_json)
             .replace("{{ACADEMIA_FREQ}}", academia_freq)
+            .replace("{{ACADEMIA_NIVEL}}", academia_nivel)
             .replace("{{BASAL_METABOLICO}}", val(nutricao.get("basal_metabolico")))
             .replace("{{META_CALORICA}}", val(nutricao.get("meta_calorica_diaria")))
             .replace("__TEMA__", tema))
@@ -1331,6 +1517,13 @@ async def salvar_perfil(request: Request):
     except (ValueError, TypeError):
         frequencia_semanal = 0
 
+    # Nível define a carga de entrada da prescrição. Valor inválido/ausente vira
+    # "" e o gerador trata como iniciante — errar para o lado seguro.
+    from app.services.plano_semana_service import NIVEIS_ACADEMIA
+    nivel = str(form.get("academia_nivel", ""))
+    if nivel not in NIVEIS_ACADEMIA:
+        nivel = ""
+
     try:
         basal_metabolico = int(form.get("basal_metabolico") or 0) or None
     except (ValueError, TypeError):
@@ -1346,12 +1539,24 @@ async def salvar_perfil(request: Request):
         "perfil.altura_cm": altura_cm,
         "perfil.sexo": sexo,
         "preferencias.objetivo": obj,
-        "academia.treina": treina_academia,
-        "academia.disponibilidade": disponibilidade,
-        "academia.frequencia_semanal": frequencia_semanal,
-        "nutricao.basal_metabolico": basal_metabolico,
-        "nutricao.meta_calorica_diaria": meta_calorica_diaria,
     }
+    # A página de perfil tem três formulários independentes (perfil, academia,
+    # nutrição) e todos postam aqui, cada um mandando só o seu bloco. Gravar
+    # todos os campos sempre fazia "Salvar perfil" zerar a academia inteira
+    # (treina=False, dias={}, nível="") e as metas de nutrição, porque o que não
+    # veio no form virava False/{}/None. Só grava o bloco que foi enviado.
+    if "treina_academia" in form:
+        campos.update({
+            "academia.treina": treina_academia,
+            "academia.disponibilidade": disponibilidade,
+            "academia.frequencia_semanal": frequencia_semanal,
+            "academia.nivel": nivel,
+        })
+    if "basal_metabolico" in form or "meta_calorica_diaria" in form:
+        campos.update({
+            "nutricao.basal_metabolico": basal_metabolico,
+            "nutricao.meta_calorica_diaria": meta_calorica_diaria,
+        })
     await atualizar_usuario(request.state.user_id, campos)
     return {"status": "ok"}
 
@@ -2383,6 +2588,18 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
         <button type="button" class="freq-btn" id="freq-2" onclick="setFreq(2)">2x</button>
       </div>
     </div>
+    <div style="margin-top:18px">
+      <label class="fld" for="academia_nivel" style="margin-bottom:6px;display:block">Qual é o seu nível na academia?</label>
+      <p class="aca-hint" style="margin-top:0">Define a carga com que a IA começa. Não adianta ela sugerir
+        50 kg de agachamento para quem nunca pisou numa academia — e nem 10 kg para quem já treina há anos.
+        A partir da segunda sessão a referência passa a ser a carga que <b>você registrar</b> no card do treino.</p>
+      <select id="academia_nivel" style="width:100%">
+        <option value="nunca">Nunca treinei musculação</option>
+        <option value="iniciante">Iniciante — menos de 6 meses, ou voltando depois de parado</option>
+        <option value="intermediario">Intermediário — mais de 6 meses, domino os exercícios</option>
+        <option value="avancado">Avançado — anos de treino, técnica sólida</option>
+      </select>
+    </div>
     <button type="button" id="btn-academia" onclick="salvarAcademia()" style="margin-top:18px">Salvar configuração de academia</button>
     <div id="st-academia" class="status"></div>
   </div>
@@ -2889,6 +3106,7 @@ async function salvarAcademia() {
   body.set('objetivo', document.getElementById('objetivo').value);
   body.set('treina_academia', _academiaTreina ? '1' : '0');
   body.set('academia_freq', String(_academiaFreq));
+  body.set('academia_nivel', document.getElementById('academia_nivel').value);
   for (let d = 0; d < 7; d++) {
     const val = _academiaDisp[String(d)];
     body.set(`academia_dia_${d}`, val || 'none');
@@ -2907,6 +3125,9 @@ async function salvarAcademia() {
 setAcademia(_academiaTreina);
 renderAcaGrid();
 setFreq(_academiaFreq);
+// Nível ainda não informado (usuário antigo) cai em iniciante — mesmo lado
+// seguro que o gerador assume.
+document.getElementById('academia_nivel').value = '{{ACADEMIA_NIVEL}}' || 'iniciante';
 
 function setTema(t) {
   localStorage.setItem('mtb-tema', t);

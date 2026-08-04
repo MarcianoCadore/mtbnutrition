@@ -131,6 +131,83 @@ def limpar_titulo_descricao(txt: str | None) -> str | None:
 
 _MARCADOR_LEGENDA = "🎯 Alvo"
 
+# Nível do atleta na academia — define a carga de ENTRADA da prescrição. Sem
+# isto a IA chuta o peso, e "agachamento 50 kg" para quem nunca pisou numa
+# academia é receita de lesão. A partir da 2ª sessão quem manda é a carga que o
+# atleta registrou no checklist; o nível só governa o ponto de partida e o
+# tamanho do salto entre sessões.
+NIVEIS_ACADEMIA: dict[str, str] = {
+    "nunca": (
+        "NUNCA treinou musculação. NÃO prescreva carga externa: peso corporal, máquinas "
+        "guiadas e elásticos, 2-3 séries de 10-15 repetições, foco total em técnica e "
+        "amplitude. Nada de agachamento livre com barra, levantamento terra ou carga máxima. "
+        "Só comece a sugerir kg depois que houver histórico de execução registrado."
+    ),
+    "iniciante": (
+        "INICIANTE (menos de 6 meses, ou voltando depois de tempo parado). Cargas leves em "
+        "máquinas e halteres, movimentos simples e estáveis. Progressão pequena: +1 a 2 kg ou "
+        "+2 repetições por vez. Evite agachamento livre pesado, terra pesado e séries de força "
+        "máxima (menos de 6 repetições)."
+    ),
+    "intermediario": (
+        "INTERMEDIÁRIO (mais de 6 meses treinando, domina os exercícios). Cargas moderadas a "
+        "altas, exercícios livres liberados. Progressão de ~5% ou +2,5 a 5 kg por vez. Pode "
+        "usar séries de 6-10 repetições com carga significativa."
+    ),
+    "avancado": (
+        "AVANÇADO (anos de treino, técnica sólida). Pode prescrever cargas altas, exercícios "
+        "complexos e blocos de força máxima (4-6 repetições pesadas). Progressão guiada pelo "
+        "histórico de carga, não por percentual fixo."
+    ),
+}
+_NIVEL_PADRAO = "iniciante"
+
+
+def nome_exercicio(item: str) -> str:
+    """Nome nu do exercício, a partir da linha prescrita.
+
+    "1. Agachamento — 3x10 — 20 kg (quadríceps)" → "Agachamento".
+    É a chave que liga a carga registrada numa semana à prescrição da seguinte:
+    sem casar o nome, o gerador não tem como saber de que exercício era o kg.
+    """
+    s = re.sub(r"^\s*\d+\s*[\.\)]\s*", "", item or "").strip()
+    s = re.split(r"\s+[—–-]\s+", s)[0]
+    s = re.sub(r"\s*\(.*$", "", s)
+    return s.strip()
+
+
+def extrair_exercicios_academia(descricao: str | None) -> list[str]:
+    """Lista os exercícios de uma descrição de ACADEMIA, na ordem prescrita.
+
+    Espelha o `_parseAcademiaTexto()` do portal: pega as linhas entre o
+    cabeçalho "EXERCÍCIOS:" e "OBSERVAÇÕES:". É o que dá índice estável a cada
+    item do checklist — o atleta marca a posição N, e o servidor precisa saber
+    que exercício é esse para montar o relato da sessão.
+
+    Devolve [] quando a descrição não segue o formato (ex.: texto livre antigo),
+    e nesse caso o card cai no textarea de sempre.
+    """
+    if not descricao:
+        return []
+    itens: list[str] = []
+    secao = ""
+    for linha in descricao.split("\n")[1:]:
+        l = linha.strip()
+        if not l:
+            continue
+        if l.startswith("POR QUE HOJE:"):
+            secao = "porque"
+            continue
+        if l.startswith("EXERC") and ":" in l:
+            secao = "ex"
+            continue
+        if l.startswith("OBSERVA") and ":" in l:
+            secao = "obs"
+            continue
+        if secao == "ex":
+            itens.append(l)
+    return itens
+
 
 def limpar_descricao_planejada(txt: str | None) -> str | None:
     """Limpeza canônica da descrição de um treino planejado: remove parênteses de
@@ -360,10 +437,39 @@ def _resumo_treino(t: dict) -> str:
         linhas.append(f"    Duração: {t['duracao_min']} min")
     res = t.get("resultado") or {}
     ia = res.get("analise_ia") or {}
+    # Academia é o único tipo sem dado de dispositivo: o "sensor" da sessão é o
+    # checklist que o atleta marcou no card + a nota de sensação. É daí que sai
+    # a decisão de progredir carga — nunca de FC, que nunca existiu aqui.
+    if t.get("tipo") == "ACADEMIA":
+        exe = t.get("execucao") or {}
+        if exe.get("total_itens"):
+            feitos = len(exe.get("itens_feitos") or [])
+            linha = f"    Execução: {feitos}/{exe['total_itens']} exercícios concluídos"
+            if exe.get("sensacao"):
+                linha += f" | sensação do atleta: {exe['sensacao']}/5 (1=muito ruim, 5=muito bem)"
+            linhas.append(linha)
+            # Carga real levantada, casada pelo NOME do exercício: é daqui que
+            # sai a prescrição da próxima semana. Sem isso a IA volta a chutar
+            # quanto o atleta aguenta.
+            cargas = exe.get("cargas") or {}
+            if cargas:
+                exercicios = extrair_exercicios_academia(t.get("descricao"))
+                usadas = []
+                for chave, kg in sorted(cargas.items(), key=lambda kv: int(kv[0])):
+                    i = int(chave)
+                    if 0 <= i < len(exercicios):
+                        usadas.append(f"{nome_exercicio(exercicios[i])} {kg}kg")
+                if usadas:
+                    linhas.append("    Cargas usadas: " + "; ".join(usadas))
+        elif res:
+            linhas.append("    Execução: sessão registrada, sem detalhe de checklist")
+        else:
+            linhas.append("    Execução: sem registro do atleta para esta sessão")
+        linhas.append("    (musculação não tem FC/potência/TSS — não use esses dados aqui)")
     # FC marcada como não confiável (sem cinta / cinta sem bateria) não entra na
     # decisão de progressão — a regra "FC abaixo do alvo → aumentar carga"
     # aumentaria a carga em cima de um dado que não existiu.
-    if res.get("fc_invalida"):
+    elif res.get("fc_invalida"):
         linhas.append("    FC: sem dado confiável nesta sessão (não use FC para decidir a progressão)")
     elif res.get("avg_hr"):
         linhas.append(f"    FC média: {res['avg_hr']} bpm")
@@ -673,6 +779,15 @@ Se houver prova em menos de 7 dias: reduza volume, mantenha intensidade curta, p
                 "NUNCA coloque academia em um dia que já tem bike — são atividades exclusivas. "
                 "Nunca adjacente a VO2MAX ou TIROS."
             )
+        # Nível não informado (usuário que nunca abriu a config) cai em
+        # iniciante: entre errar para leve e errar para pesado, leve não lesiona.
+        _nivel_key = academia_cfg.get("nivel") or _NIVEL_PADRAO
+        _nivel_txt = NIVEIS_ACADEMIA.get(_nivel_key, NIVEIS_ACADEMIA[_NIVEL_PADRAO])
+        if not academia_cfg.get("nivel"):
+            _nivel_txt += (
+                " (o atleta ainda NÃO informou o nível — trate como iniciante e seja "
+                "conservador na carga.)"
+            )
         _bloco_academia_prompt = f"""ACADEMIA (musculação no ginásio — tipo "ACADEMIA"):
 {_intro_academia}
 
@@ -698,8 +813,40 @@ COMO ESCOLHER O FOCO DO TREINO DE ACADEMIA:
   * Dia anterior ou posterior DURO (VO2MAX, TIROS, FORCA, Z2_LONGO ≥180 min): PARTE SUPERIOR + CORE puro. PROIBIDO perna pesada.
   * Dia anterior e posterior LEVES (RECUPERACAO, DESCANSO): MEMBROS INFERIORES + CORE (agachamento búlgaro, hip thrust, stiff).
 
+NÍVEL DO ATLETA NA ACADEMIA — respeite antes de escolher qualquer carga:
+{_nivel_txt}
+
+CARGA EM KG:
+- Prescreva a carga de cada exercício na descrição. Formato: "— 20 kg", "— peso corporal",
+  "— elástico", "— barra livre 30 kg".
+- Se houver "Cargas usadas" no histórico acima, a nova prescrição PARTE DAQUELES NÚMEROS,
+  exercício por exercício. Nunca escreva uma carga absoluta ignorando o que o atleta
+  levantou de fato na última sessão.
+- Sem histórico de carga, a sugestão é um PONTO DE PARTIDA compatível com o nível acima e
+  com o peso corporal do atleta — escreva "ajuste na 1ª série" ao lado. Não é meta.
+- Carga alta para nível "nunca treinou" ou "iniciante" é risco de lesão: não faça.
+
+PROGRESSÃO DA ACADEMIA (o objetivo é deixar o atleta cada vez mais forte):
+O atleta marca cada exercício no card conforme executa e, no fim, dá uma nota de 1 a 5 para
+como se sentiu. Isso chega até você como "Execução: X/Y exercícios concluídos | sensação do
+atleta: N/5". Use essa linha — e SÓ ela — para decidir a carga da próxima academia:
+- Concluiu TUDO e sensação 4-5 → PROGREDIR: suba a carga (dentro do salto permitido pelo nível),
+  as repetições ou as séries em 1-2 exercícios. Diga na descrição o que subiu em relação à
+  última sessão, citando o kg anterior (ex.: "agachamento 22 kg — subiu de 20 kg").
+- Concluiu TUDO e sensação 3 → MANTER a estrutura; no máximo uma progressão leve.
+- Sessão INCOMPLETA ou sensação 1-2 → NÃO progrida: repita a prescrição ou reduza o volume, e
+  considere se o volume de bike da semana está pesando nas pernas.
+- Sem linha de execução (primeira academia, ou sessão que o atleta não registrou) → prescrição
+  conservadora, sem assumir progressão.
+- NUNCA use FC, zona cardíaca, potência ou TSS para decidir a academia: musculação não é
+  capturada por dispositivo nenhum, esses dados não existem para ela.
+- Mantenha os exercícios reconhecíveis entre semanas (mesmo nome) quando a intenção for
+  progredir carga — trocar tudo toda semana impede medir progresso.
+
 Formato OBRIGATÓRIO da "descricao" para ACADEMIA:
-  "ACADEMIA — Força MTB (foco: [glúteos+core / pernas+core / superior+core])\\n\\nPOR QUE HOJE: [1-2 frases explicando a escolha]\\n\\nEXERCÍCIOS:\\n1. [exercício] — [séries]x[reps/tempo] ([benefício para MTB])\\n2. ...\\n\\nOBSERVAÇÕES:\\n- Descanso 90s entre séries\\n- [dica prática de MTB]"
+  "ACADEMIA — Força MTB (foco: [glúteos+core / pernas+core / superior+core])\\n\\nPOR QUE HOJE: [1-2 frases explicando a escolha]\\n\\nEXERCÍCIOS:\\n1. [exercício] — [séries]x[reps/tempo] — [carga] ([benefício para MTB])\\n2. ...\\n\\nOBSERVAÇÕES:\\n- Descanso 90s entre séries\\n- [dica prática de MTB]"
+Cada item de EXERCÍCIOS vira uma linha do checklist que o atleta marca no app, com um campo
+para ele anotar a carga que realmente usou. Mantenha um exercício por linha numerada.
 """
     else:
         _bloco_academia_prompt = (

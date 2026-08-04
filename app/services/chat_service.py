@@ -140,6 +140,54 @@ _TOOLS = [
         },
     },
     {
+        "name": "registrar_treino_realizado",
+        "description": (
+            "Marca um treino do calendário como REALIZADO a partir do relato do atleta. "
+            "USE SEMPRE que ele disser que fez, completou ou terminou um treino que não "
+            "chegou pelo Garmin/Strava: academia, pedal sem relógio, rolo sem sensor, ou "
+            "quando ele disser que não consegue registrar no sistema. "
+            "NUNCA use adicionar_treino para registrar sessão feita — adicionar_treino "
+            "reescreve o PLANO do dia, apaga a prescrição e não marca nada como realizado. "
+            "Esta ferramenta preserva o treino planejado e gera nota e análise da sessão. "
+            "Recusa se o treino já veio do dispositivo: dado medido tem prioridade."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "string",
+                    "description": "Data do treino realizado, formato YYYY-MM-DD.",
+                },
+                "duracao_min": {
+                    "type": "integer",
+                    "description": (
+                        "Duração real em minutos. Se o atleta não disser, omita — "
+                        "a duração do planejado é usada."
+                    ),
+                },
+                "relato": {
+                    "type": "string",
+                    "description": (
+                        "O que o atleta contou, nas palavras dele: exercícios ou séries "
+                        "executados, cargas, sensações, o que não conseguiu fazer."
+                    ),
+                },
+                "distancia_km": {
+                    "type": "number",
+                    "description": "Distância em km, se ele informar (pedal).",
+                },
+                "percepcao_esforco": {
+                    "type": "integer",
+                    "description": (
+                        "Percepção de esforço de 0 a 10, só se ele informar ou se der "
+                        "para inferir com clareza do relato."
+                    ),
+                },
+            },
+            "required": ["data", "relato"],
+        },
+    },
+    {
         "name": "configurar_cinta_fc",
         "description": (
             "Define se o atleta usa cinta cardíaca. USE quando ele disser que NÃO tem/não usa "
@@ -222,6 +270,56 @@ async def _salvar_mensagem(user_id: str, role: str, texto: str) -> None:
     )
 
 
+def _linhas_treinos(treinos: list[dict], desc_max: int = 80) -> list[str]:
+    """Formata os treinos de uma semana para o chat ler.
+
+    Um dia pode render mais de uma linha: o treino principal, o sub-bloco de
+    academia (campo `academia`) e os "extras" (origem="extra"). Achatar os três
+    numa lista simples fazia o chat ler um extra como se fosse o treino do dia
+    e nunca enxergar a academia acoplada a um dia de bike.
+    """
+    linhas: list[str] = []
+    # Primário antes dos extras da mesma data (False < True na ordenação).
+    for t in sorted(treinos, key=lambda x: (x.get("data") or "", x.get("origem") == "extra")):
+        data = t.get("data") or ""
+        tipo = t.get("tipo") or "DESCANSO"
+        marca = "EXTRA " if t.get("origem") == "extra" else ""
+        resultado = t.get("resultado") or {}
+
+        if resultado.get("duracao_min"):
+            linha = f"  {data} [{tipo}] {marca}REALIZADO {resultado['duracao_min']}min"
+            if resultado.get("distancia_km"):
+                linha += f" {resultado['distancia_km']}km"
+            nota = (resultado.get("analise_ia") or {}).get("nota")
+            if nota is not None:
+                linha += f" (nota {nota})"
+            if resultado.get("origem") == "relato_atleta":
+                linha += " [relatado pelo atleta, sem dispositivo]"
+            elif resultado.get("fc_invalida"):
+                linha += " [FC ignorada]"
+        elif tipo == "DESCANSO":
+            linha = f"  {data} DESCANSO"
+        else:
+            linha = f"  {data} [{tipo}] {marca}PLANEJADO"
+            if t.get("duracao_min"):
+                linha += f" {t['duracao_min']}min"
+            if t.get("distancia_km"):
+                linha += f" {t['distancia_km']}km"
+
+        desc = " ".join((t.get("descricao") or "").split())
+        if desc:
+            linha += f" — {desc[:desc_max]}"
+        linhas.append(linha)
+
+        ac = t.get("academia") or {}
+        ac_desc = " ".join((ac.get("descricao") or "").split())
+        if ac_desc:
+            ac_dur = f" {ac['duracao_min']}min" if ac.get("duracao_min") else ""
+            linhas.append(f"    + ACADEMIA{ac_dur} no mesmo dia — {ac_desc[:desc_max]}")
+
+    return linhas
+
+
 async def _build_sistema(user_id: str) -> str:
     from app.services.user_service import get_por_id
 
@@ -233,6 +331,23 @@ async def _build_sistema(user_id: str) -> str:
         "Quando o atleta pedir para adicionar, remover ou alterar treinos, use as ferramentas — não apenas sugira.",
         "Antes de propor alterações, consulte a semana com ver_semana para saber o que já está agendado.",
         "Após cada ação, confirme o que foi feito e explique brevemente a escolha.",
+        "",
+        "== PLANEJAR ≠ REGISTRAR ==",
+        "adicionar_treino, remover_treino e mover_treino mexem no PLANO — só para o que ainda "
+        "vai acontecer.",
+        "Quando o atleta disser que JÁ FEZ um treino e ele não apareceu pelo Garmin/Strava, "
+        "chame registrar_treino_realizado com o relato dele. NUNCA use adicionar_treino para "
+        "isso: além de não registrar nada como feito, ele reescreve a descrição do dia e apaga "
+        "a prescrição planejada.",
+        "",
+        "== NUNCA INVENTE ==",
+        "Só afirme que registrou, alterou ou removeu algo depois que a ferramenta confirmou. Se "
+        "a ferramenta devolver erro, diga o que falhou — nunca diga que deu certo.",
+        "O calendário abaixo é a única fonte de verdade sobre o que está planejado. Não invente "
+        "treinos que não estão nele, nem descreva de memória algo que 'você tinha planejado'.",
+        "Um dia de ACADEMIA é só academia: o gerador de plano nunca coloca bike e academia no "
+        "mesmo dia. Quando um dia de bike também tem musculação, ela aparece na linha "
+        "'+ ACADEMIA' logo abaixo do treino daquele dia.",
         "",
         "== FREQUÊNCIA CARDÍACA NÃO CONFIÁVEL ==",
         "Se o atleta disser que a FC de um treino não vale (cinta sem bateria, bateria fraca, "
@@ -306,34 +421,7 @@ async def _build_sistema(user_id: str) -> str:
                 continue
             label = {-1: "Semana passada", 0: "Semana atual", 1: "Próxima semana"}[delta_sem]
             linhas.append(f"\n{label} (início {seg}):")
-            for t in treinos:
-                data = t.get("data") or ""
-                tipo = t.get("tipo") or "DESCANSO"
-                dur = t.get("duracao_min")
-                dist = t.get("distancia_km")
-                desc = (t.get("descricao") or "")[:80]
-                resultado = t.get("resultado")
-
-                if resultado and resultado.get("duracao_min"):
-                    r_dur = resultado["duracao_min"]
-                    r_dist = resultado.get("distancia_km")
-                    nota = (resultado.get("analise_ia") or {}).get("nota")
-                    linha = f"  {data} [{tipo}] REALIZADO {r_dur}min"
-                    if r_dist:
-                        linha += f" {r_dist}km"
-                    if nota is not None:
-                        linha += f" (nota {nota})"
-                    if resultado.get("fc_invalida"):
-                        linha += " [FC ignorada]"
-                else:
-                    linha = f"  {data} [{tipo}] PLANEJADO"
-                    if dur:
-                        linha += f" {dur}min"
-                    if dist:
-                        linha += f" {dist}km"
-                if desc:
-                    linha += f" — {desc}"
-                linhas.append(linha)
+            linhas.extend(_linhas_treinos(treinos))
     except Exception:
         pass
 
@@ -372,26 +460,7 @@ async def _executar_ferramenta(user_id: str, nome: str, args: dict) -> str:
             treinos = await get_treinos_semana(user_id, args["semana_inicio"])
             if not treinos:
                 return f"Nenhum treino encontrado para a semana de {args['semana_inicio']}."
-            linhas = []
-            for t in sorted(treinos, key=lambda x: x.get("data", "")):
-                tipo = t.get("tipo", "DESCANSO")
-                data = t.get("data", "")
-                dur = t.get("duracao_min")
-                desc = (t.get("descricao") or "")[:120]
-                resultado = t.get("resultado")
-                if resultado and resultado.get("duracao_min"):
-                    linha = f"{data}: [{tipo}] REALIZADO {resultado['duracao_min']}min"
-                    nota = (resultado.get("analise_ia") or {}).get("nota")
-                    if nota is not None:
-                        linha += f" (nota {nota})"
-                    if resultado.get("fc_invalida"):
-                        linha += " [FC ignorada]"
-                elif tipo != "DESCANSO":
-                    linha = f"{data}: [{tipo}] {dur}min — {desc}"
-                else:
-                    linha = f"{data}: DESCANSO"
-                linhas.append(linha)
-            return "\n".join(linhas)
+            return "\n".join(_linhas_treinos(treinos, desc_max=120))
 
         elif nome == "adicionar_treino":
             resultado = await criar_treino_dia(
@@ -441,6 +510,34 @@ async def _executar_ferramenta(user_id: str, nome: str, args: dict) -> str:
                 partes.append(f"TSS obtido: {r['tss_obtido']}")
             elif r["fc_invalida"]:
                 partes.append("TSS obtido: indisponível (dependia da FC).")
+            return "\n".join(p for p in partes if p)
+
+        elif nome == "registrar_treino_realizado":
+            from app.services.avaliacao_service import registrar_realizado
+            r = await registrar_realizado(
+                user_id,
+                args["data"],
+                args.get("duracao_min"),
+                args.get("relato"),
+                args.get("distancia_km"),
+                args.get("percepcao_esforco"),
+            )
+            ia = r.get("analise_ia") or {}
+            partes = [
+                f"Treino de {r['data']} ({r.get('tipo') or '—'}) marcado como REALIZADO "
+                f"({r['duracao_min']}min) a partir do relato do atleta. O treino planejado "
+                f"do dia foi preservado.",
+                f"Nota: {r['nota']}" if r.get("nota") is not None else "",
+                f"Resumo: {ia.get('resumo')}" if ia.get("resumo") else "",
+            ]
+            if ia.get("pontos_fortes"):
+                partes.append("Pontos fortes: " + "; ".join(ia["pontos_fortes"]))
+            if ia.get("pontos_fracos"):
+                partes.append("A melhorar: " + "; ".join(ia["pontos_fracos"]))
+            partes.append(
+                "Sem dispositivo não há TSS nem dados de FC para esta sessão — não cite "
+                "zonas, bpm nem TSS obtido."
+            )
             return "\n".join(p for p in partes if p)
 
         elif nome == "configurar_cinta_fc":

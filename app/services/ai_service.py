@@ -299,8 +299,16 @@ async def analisar_atividade_pos_treino(planejado: dict, resultado: dict, user_i
 
     `ignorar_fc=True` descarta FC média/máxima e tempo em zonas de FC: é o caso
     de quem não usa cinta cardíaca ou treinou com a cinta sem bateria. Em None,
-    a decisão vem da marcação do treino / preferência do atleta."""
-    if ignorar_fc is None:
+    a decisão vem da marcação do treino / preferência do atleta.
+
+    ACADEMIA ignora FC sempre, qualquer que seja a origem do resultado: não
+    existe atividade de musculação para o Garmin sincronizar como existe para o
+    pedal, então FC, potência e cadência simplesmente não foram medidas.
+    """
+    e_academia = (planejado or {}).get("tipo") == "ACADEMIA"
+    if e_academia:
+        ignorar_fc = True
+    elif ignorar_fc is None:
         try:
             from app.services.avaliacao_service import deve_ignorar_fc
             ignorar_fc = await deve_ignorar_fc(user_id, resultado)
@@ -342,6 +350,13 @@ async def analisar_atividade_pos_treino(planejado: dict, resultado: dict, user_i
         linhas.append(f"- Elevação: {resultado['elevacao_m']} m")
     if resultado.get("calorias"):
         linhas.append(f"- Calorias: {resultado['calorias']} kcal")
+    if resultado.get("percepcao_esforco"):
+        linhas.append(f"- Percepção de esforço (PSE 0-10): {resultado['percepcao_esforco']}")
+    if resultado.get("relato"):
+        # Sessão sem dispositivo (academia, pedal sem relógio): o relato do
+        # atleta é a única evidência de como foi a execução. Sem passá-lo, a
+        # análise sai genérica, baseada só na duração.
+        linhas.append(f"- Relato do atleta sobre a sessão: {resultado['relato']}")
 
     if not linhas:
         return _fallback_pos_treino(planejado, resultado, ignorar_fc)
@@ -447,12 +462,37 @@ async def analisar_atividade_pos_treino(planejado: dict, resultado: dict, user_i
     peso_txt = f", {peso_atleta:.0f} kg" if peso_atleta else ""
     lim_txt = f", limiar de lactato {limiar} bpm" if limiar else ""
     ftp_txt = f", FTP {ftp_analise}W" if ftp_analise else ""
+    # Numa sessão de academia, FC máx / limiar / FTP são referências de bike que
+    # não têm o que fazer ali — e entregá-las contradiz o "nunca cite FC" logo
+    # abaixo no mesmo prompt.
+    atleta_linha = (
+        f"Atleta: {nome_atleta}{idade_txt}{peso_txt}"
+        if e_academia else
+        f"Atleta: {nome_atleta}{idade_txt}{peso_txt}, FC máxima {fc_max} bpm{lim_txt}{ftp_txt}"
+    )
 
     # Sem FC confiável (sem cinta / cinta sem bateria) o julgamento muda de base:
     # a IA precisa ser instruída a NÃO cobrar o que não foi medido, senão devolve
     # "faltou intensidade" para um treino que pode ter sido perfeito.
     tem_potencia = bool(resultado.get("avg_power") or resultado.get("norm_power"))
-    if ignorar_fc:
+    if e_academia:
+        # Musculação não gera atividade para o Garmin sincronizar: não existe FC,
+        # potência, cadência nem TSS. O julgamento é execução + percepção, e o
+        # "o que ajustar" tem de falar de carga/série/repetição, não de zona.
+        bloco_fc = """
+IMPORTANTE — SESSÃO DE MUSCULAÇÃO (ACADEMIA), NÃO É TREINO DE BIKE:
+- Musculação não é capturada por dispositivo nenhum: não há FC, bpm, zonas, potência,
+  cadência, distância nem TSS. NUNCA cite nem invente qualquer um desses dados.
+- A ausência desses dados NÃO é ponto fraco do atleta e NÃO reduz a nota. Não escreva
+  frases como "sem dados de FC não é possível confirmar o esforço".
+- Julgue apenas o que existe: exercícios executados vs. prescritos, duração realizada vs.
+  planejada e a percepção que o atleta relatou.
+- Se o atleta cumpriu os exercícios prescritos, a nota fica entre 8 e 10.
+- O "o que ajustar" deve tratar de PROGRESSÃO DE FORÇA para a próxima sessão: carga,
+  séries, repetições, tempo sob tensão ou variação do exercício.
+"""
+        zonas_linha = ""
+    elif ignorar_fc:
         motivo_fc = resultado.get("fc_invalida_motivo") or "sem cinta cardíaca / cinta sem dados confiáveis"
         base_txt = (
             "Julgue a intensidade pela POTÊNCIA (watts, NP e IF) — ela é suficiente e é a "
@@ -499,7 +539,22 @@ IMPORTANTE — SEM DADOS DE FC NESTA SESSÃO ({motivo_fc}):
   diluída por aquecimento e recuperações — não a use como prova de esforço fraco.
 - Sem métrica de intensidade, o que dá para afirmar é o cumprimento do volume e
   da estrutura prescrita: avalie por aí e não especule sobre esforço."""
-    if not ignorar_fc:
+    _DIR_ACADEMIA = """- Musculação para MTB serve à bike: força de pernas (potência em subida e saída),
+  core (estabilidade e absorção de impacto) e superiores (controle do guidão).
+- Progressão de força é por CARGA, SÉRIES, REPETIÇÕES ou variação do exercício — nunca
+  por zona cardíaca. Se o atleta cumpriu tudo e relatou boa sensação, sugira subir a
+  carga ou o número de repetições na próxima sessão.
+- Se a sessão ficou incompleta ou a sensação foi ruim, mantenha ou reduza antes de
+  progredir, e considere se o volume de bike da semana está pesando."""
+    if e_academia:
+        diretrizes = _DIR_ACADEMIA
+        foco_txt = "a execução dos exercícios prescritos e a percepção do atleta"
+        criterio_nota = "os exercícios prescritos"
+        eixos_txt = "volume (duração realizada vs planejada) e a progressão de carga/séries para a próxima sessão"
+        eixos_nota = "e o volume"
+        persona = ("Você é um coach de ciclismo MTB que também prescreve o trabalho de "
+                   "força na academia para os seus atletas.")
+    elif not ignorar_fc:
         diretrizes = f"{_DIR_FC}\n{_DIR_POT}"
         foco_txt = "intensidade (zonas de FC atingidas)"
         criterio_nota = "a intensidade prescrita (zonas de FC)"
@@ -511,10 +566,14 @@ IMPORTANTE — SEM DADOS DE FC NESTA SESSÃO ({motivo_fc}):
         diretrizes = _DIR_VOLUME
         foco_txt = "a execução do que foi prescrito"
         criterio_nota = "a estrutura prescrita"
+    if not e_academia:
+        eixos_txt = "volume (duração realizada vs planejada), cadência e o que ajustar no próximo treino"
+        eixos_nota = ", o volume e a cadência"
+        persona = "Você é um coach de ciclismo MTB especializado em análise de desempenho."
 
-    prompt = f"""Você é um coach de ciclismo MTB especializado em análise de desempenho.
+    prompt = f"""{persona}
 
-Atleta: {nome_atleta}{idade_txt}{peso_txt}, FC máxima {fc_max} bpm{lim_txt}{ftp_txt}
+{atleta_linha}
 {zonas_linha}Objetivo: {objetivo_atleta}
 
 {chr(10).join(linhas)}
@@ -523,12 +582,12 @@ DIRETRIZES DE ANÁLISE (fisiologia — leve a sério):
 {diretrizes}
 
 Compare o planejado com o realizado. Comente {foco_txt},
-volume (duração realizada vs planejada), cadência e o que ajustar no próximo treino.
+{eixos_txt}.
 Seja CONCISO: cada ponto deve ter no máximo 1 frase curta (até ~140 caracteres),
 sem markdown (não use **). No máximo 3 pontos fortes e 3 pontos fracos.
 Atribua uma NOTA de 0 a 10 (pode ter 1 casa decimal) para o treino, ponderando os
 pontos fortes e fracos: quão bem o realizado cumpriu o objetivo do planejado
-(cumpriu {criterio_nota}, o volume e a cadência). 10 = execução exemplar;
+(cumpriu {criterio_nota}{eixos_nota}). 10 = execução exemplar;
 abaixo de 5 só quando o treino destoou muito do planejado.
 Responda APENAS em JSON válido, sem markdown, sem texto extra:
 {{
