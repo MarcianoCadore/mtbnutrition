@@ -859,7 +859,14 @@ async def academia_execucao(
     )
     if not treino:
         raise HTTPException(status_code=404, detail="Treino não encontrado para esta data.")
-    if treino.get("tipo") != "ACADEMIA":
+    # Dois lugares podem ter academia no mesmo dia:
+    #  - dia SÓ de academia   → tipo=ACADEMIA, exercícios em `descricao`;
+    #  - DIA DUPLO (bike+gym) → exercícios no sub-objeto `academia`.
+    # No dia duplo o `resultado` do treino pertence ao PEDAL, então a execução
+    # da musculação é gravada dentro do próprio sub-objeto.
+    sub = treino.get("academia") or {}
+    e_dia_duplo = treino.get("tipo") != "ACADEMIA" and bool(sub.get("descricao"))
+    if treino.get("tipo") != "ACADEMIA" and not e_dia_duplo:
         raise HTTPException(
             status_code=400,
             detail="O checklist de execução só existe para treino de academia.",
@@ -870,7 +877,8 @@ async def academia_execucao(
             detail="Este treino ainda não aconteceu — o checklist abre no dia.",
         )
 
-    exercicios = extrair_exercicios_academia(treino.get("descricao"))
+    fonte = sub if e_dia_duplo else treino
+    exercicios = extrair_exercicios_academia(fonte.get("descricao"))
     if not exercicios:
         raise HTTPException(
             status_code=400,
@@ -905,17 +913,21 @@ async def academia_execucao(
         "sensacao": body.sensacao,
         "atualizado_em": datetime.now(timezone.utc).isoformat(),
     }
+    campo = "treinos.$.academia.execucao" if e_dia_duplo else "treinos.$.execucao"
     await db.semanas.update_one(
         {
             "semana_inicio": semana_inicio, "user_id": user_id,
             "treinos": {"$elemMatch": {"data": data, "origem": {"$ne": "extra"}}},
         },
-        {"$set": {"treinos.$.execucao": execucao}},
+        {"$set": {campo: execucao}},
     )
 
     # A sensação é o "enviar": só nela a sessão vira realizada e ganha análise.
+    # No dia duplo não há `registrar_realizado`: aquele slot é do pedal, que
+    # ainda vai chegar pelo Garmin. A execução da musculação fica guardada no
+    # sub-objeto e é dela que sai a progressão de carga.
     registrado, nota, erro = False, None, None
-    if body.sensacao is not None:
+    if body.sensacao is not None and not e_dia_duplo:
         try:
             r = await registrar_realizado(
                 user_id, data,
@@ -934,6 +946,7 @@ async def academia_execucao(
         "registrado": registrado,
         "nota": nota,
         "erro": erro,
+        "dia_duplo": e_dia_duplo,
     }
 
 

@@ -147,6 +147,44 @@ OBSERVAÇÕES:
         txt = _resumo_treino({"data": "2026-06-24", "tipo": "ACADEMIA", "duracao_min": 45})
         assert "sem registro do atleta" in txt
 
+    def test_dia_duplo_nao_perde_a_academia(self):
+        """Sem esta linha o dia duplo chegaria ao gerador como se só tivesse pedal."""
+        txt = _resumo_treino({
+            "data": "2026-06-24", "tipo": "RECUPERACAO", "duracao_min": 50,
+            "descricao": "Pedal leve Z1", "periodo": "noite",
+            "academia": {
+                "duracao_min": 45, "periodo": "manha",
+                "descricao": """ACADEMIA — Força MTB (foco: superior+core)
+
+EXERCÍCIOS:
+1. Remada — 3x10 — 30 kg
+2. Prancha — 3x45s
+
+OBSERVAÇÕES:
+- Descanso 90s""",
+                "execucao": {"itens_feitos": [0, 1], "total_itens": 2,
+                             "cargas": {"0": 32.5}, "sensacao": 4},
+            },
+        })
+        assert "+ ACADEMIA no mesmo dia (45 min, manha)" in txt
+        assert "Execução: 2/2 exercícios concluídos" in txt
+        assert "sensação do atleta: 4/5" in txt
+        assert "Cargas usadas: Remada 32.5kg" in txt
+
+    def test_dia_duplo_sem_registro(self):
+        txt = _resumo_treino({
+            "data": "2026-06-24", "tipo": "RECUPERACAO", "duracao_min": 50,
+            "academia": {"duracao_min": 45, "descricao": "ACADEMIA — Força MTB"},
+        })
+        assert "+ ACADEMIA no mesmo dia" in txt
+        assert "sem registro do atleta" in txt
+
+    def test_bike_sem_academia_nao_ganha_linha(self):
+        txt = _resumo_treino({
+            "data": "2026-06-24", "tipo": "TIROS", "duracao_min": 60,
+        })
+        assert "ACADEMIA no mesmo dia" not in txt
+
     def test_bike_com_fc_invalida_mantem_a_linha_antiga(self):
         txt = _resumo_treino({
             "data": "2026-06-24", "tipo": "TIROS", "duracao_min": 60,

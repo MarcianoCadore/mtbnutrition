@@ -268,6 +268,7 @@ HTML = """<!DOCTYPE html>
     .academia-bloco .ac-exercicios li { font-size: .75rem; color: var(--text); line-height: 1.5; padding: 2px 0; border-bottom: 1px solid #c8e6c9; }
     .academia-bloco .ac-exercicios li:last-child { border-bottom: none; }
     .academia-bloco .ac-obs { font-size: .72rem; color: #666; line-height: 1.4; margin-top: 4px; }
+    .academia-bloco .ac-check { cursor: default; }
 
     /* Checklist de academia: o atleta marca cada exercício conforme executa e
        fecha a sessão dando a nota de sensação. Não há Garmin para musculação —
@@ -726,15 +727,31 @@ function _parseAcademiaTexto(descricao) {
   return {raw, foco, porqueText: porqueText.trim(), obsText, exItens};
 }
 
-function renderAcademiaBloco(ac, key) {
+const PERIODO_LABEL = {manha: '🌅 Manhã', meio_dia: '☀️ Meio-dia', tarde: '🌇 Tarde', noite: '🌙 Noite'};
+
+// Card de academia do DIA DUPLO (bike + gym). Com `key`, ele é interativo: o
+// mesmo checklist do dia só-academia, mas gravando no sub-objeto. Sem `key`
+// (prévia da semana gerada) fica só leitura.
+function renderAcademiaBloco(ac, key, locked) {
   const ad = ac.duracao_min || 0;
   const adStr = ad ? ((Math.floor(ad/60)>0?Math.floor(ad/60)+'h':'')+(ad%60>0?ad%60+'min':'')) : '';
   const {raw, foco, porqueText, obsText, exItens} = _parseAcademiaTexto(ac.descricao);
   const clickable = !!key;
+  const sk = key ? key + '-ac' : '';
+  const interativo = clickable && exItens.length > 0;
+  if (interativo) {
+    _execucao[sk] = Object.assign({data: key, itens_feitos: [], cargas: {}, sensacao: null},
+                                  ac.execucao || {});
+  }
 
   let detalhes = '';
   if (porqueText) detalhes += '<div class="ac-porque">' + porqueText + '</div>';
-  if (exItens.length) {
+  if (interativo) {
+    // stopPropagation: o card inteiro é um acordeão com onclick — sem isto,
+    // marcar um exercício fecharia o bloco na cara do atleta.
+    detalhes += '<div class="ac-check" onclick="event.stopPropagation()">'
+              + renderChecklistAcademia(sk, exItens, !!locked) + '</div>';
+  } else if (exItens.length) {
     detalhes += '<ul class="ac-exercicios">';
     for (let i = 0; i < exItens.length; i++) detalhes += '<li>' + exItens[i] + '</li>';
     detalhes += '</ul>';
@@ -750,6 +767,7 @@ function renderAcademiaBloco(ac, key) {
   if (adStr) html += '<span class="ac-dur">&#8987; ' + adStr + '</span>';
   if (clickable) html += '<span class="ac-arrow">&#9656;</span>';
   html += '</div>';
+  if (ac.periodo && PERIODO_LABEL[ac.periodo]) html += '<div class="ac-foco">' + PERIODO_LABEL[ac.periodo] + '</div>';
   if (foco) html += '<div class="ac-foco">Foco: ' + foco + '</div>';
   html += '<div class="ac-detalhes">' + detalhes + '</div>';
   html += '</div>';
@@ -768,11 +786,17 @@ function _splitExercicio(txt) {
   return m ? {principal: m[1].trim(), detalhe: m[2].trim()} : {principal: s, detalhe: ''};
 }
 
-function renderChecklistAcademia(key, itens, exec, locked) {
-  const feitos = new Set((exec && exec.itens_feitos) || []);
-  const cargas = (exec && exec.cargas) || {};
-  const sens = (exec && exec.sensacao) || null;
+// `sk` (slot key) identifica o checklist no DOM e em _execucao. Um dia duplo tem
+// dois: o do treino principal (sk = data) e o do bloco de academia
+// (sk = data + '-ac'). A data real do treino vem de _execucao[sk].data, porque é
+// ela que monta a URL — o sk sozinho não serve.
+function renderChecklistAcademia(sk, itens, locked) {
+  const exec = _execucao[sk] || {};
+  const feitos = new Set(exec.itens_feitos || []);
+  const cargas = exec.cargas || {};
+  const sens = exec.sensacao || null;
   const dis = locked ? 'disabled' : '';
+  const key = sk;
 
   let html = `<div class="ex-progresso" id="ex-prog-${key}">${feitos.size}/${itens.length} concluídos</div>`;
   html += `<div class="ex-check-list" id="ex-list-${key}">`;
@@ -817,7 +841,7 @@ function renderChecklistAcademia(key, itens, exec, locked) {
 // Carga registrada por exercício. É o número que a IA usa para prescrever a
 // próxima sessão — sem ele a progressão de força vira chute.
 function setCarga(key, idx, valor) {
-  const e = _execucao[key] || (_execucao[key] = {itens_feitos: [], sensacao: null});
+  const e = _execucao[key] || (_execucao[key] = {data: key, itens_feitos: [], sensacao: null});
   e.cargas = e.cargas || {};
   const kg = parseFloat(String(valor).replace(',', '.'));
   if (isNaN(kg) || kg <= 0) delete e.cargas[String(idx)];
@@ -826,7 +850,7 @@ function setCarga(key, idx, valor) {
 }
 
 function toggleExercicio(key, idx, on) {
-  const e = _execucao[key] || (_execucao[key] = {itens_feitos: [], sensacao: null});
+  const e = _execucao[key] || (_execucao[key] = {data: key, itens_feitos: [], sensacao: null});
   const s = new Set(e.itens_feitos || []);
   on ? s.add(idx) : s.delete(idx);
   e.itens_feitos = [...s].sort((a, b) => a - b);
@@ -840,7 +864,7 @@ function toggleExercicio(key, idx, on) {
 }
 
 function darSensacao(key, n) {
-  const e = _execucao[key] || (_execucao[key] = {itens_feitos: [], sensacao: null});
+  const e = _execucao[key] || (_execucao[key] = {data: key, itens_feitos: [], sensacao: null});
   e.sensacao = n;
   document.querySelectorAll(`#sens-${key} button`).forEach((b, i) => b.classList.toggle('ativo', i + 1 === n));
   const sel = document.getElementById(`sens-sel-${key}`);
@@ -850,11 +874,12 @@ function darSensacao(key, n) {
 
 async function enviarExecucao(key, sensacao) {
   const e = _execucao[key] || {itens_feitos: []};
+  const dataISO = e.data || key;   // no bloco de academia o sk tem sufixo '-ac'
   const msg = document.getElementById(`ex-msg-${key}`);
   const setMsg = (txt, cor) => { if (msg) { msg.style.color = cor; msg.textContent = txt; } };
   setMsg('⏳ salvando…', 'var(--muted)');
   try {
-    const r = await fetch(`/workout/treino/${iso(monday)}/${key}/academia-execucao`, {
+    const r = await fetch(`/workout/treino/${iso(monday)}/${dataISO}/academia-execucao`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
@@ -871,6 +896,12 @@ async function enviarExecucao(key, sensacao) {
       setMsg(d.nota != null ? `✅ sessão registrada — nota ${d.nota}` : '✅ sessão registrada', '#2e7d32');
       toast('✅ Academia registrada!', 'ok');
       await load();   // recarrega para o card virar "realizado" e mostrar a avaliação
+    }
+    // Dia duplo: o `resultado` do dia é do pedal, que ainda vem pelo Garmin.
+    // A academia fica guardada no bloco e alimenta a progressão de carga.
+    else if (d.dia_duplo && sensacao != null) {
+      setMsg('✅ academia concluída', '#2e7d32');
+      toast('✅ Academia concluída!', 'ok');
     }
     else setMsg('progresso salvo', 'var(--muted)');
   } catch (err) {
@@ -975,13 +1006,17 @@ function buildCards(treinos) {
       </ul>` : '';
 
     const acSub = t.academia;
-    const academiaSubHTML = acSub && acSub.descricao ? renderAcademiaBloco(acSub, key) : '';
+    const academiaSubHTML = acSub && acSub.descricao
+      ? renderAcademiaBloco(acSub, key, key > todayISO) : '';
 
     // Dia de academia com lista no formato da casa vira checklist. Descrição
     // em texto livre (plano antigo, editado à mão) cai no textarea de sempre.
     const exItensAcad = isAcademia ? _parseAcademiaTexto(desc).exItens : [];
     const temChecklist = exItensAcad.length > 0;
-    if (temChecklist) _execucao[key] = t.execucao || {itens_feitos: [], sensacao: null};
+    if (temChecklist) {
+      _execucao[key] = Object.assign({data: key, itens_feitos: [], cargas: {}, sensacao: null},
+                                     t.execucao || {});
+    }
     // O checklist é execução, não edição do plano: `isFuturo` inclui HOJE (para
     // travar a prescrição contra edição manual), mas hoje é exatamente quando o
     // atleta está na academia marcando. Só dia que ainda não chegou fica travado.
@@ -1019,7 +1054,7 @@ function buildCards(treinos) {
               <label>${isAcademia ? 'Exercícios' : 'Notas'}</label>
               <button class="info-treino" onclick="abrirTreinoInfo('${key}')" title="Ver especificação do treino"><span class="ic">ⓘ</span> saber mais</button>
             </div>
-            ${temChecklist ? renderChecklistAcademia(key, exItensAcad, _execucao[key], checkTravado) : ''}
+            ${temChecklist ? renderChecklistAcademia(key, exItensAcad, checkTravado) : ''}
             <textarea id="desc-${key}" placeholder="${isAcademia ? 'Lista de exercícios...' : 'Detalhes...'}" ${lockAttr} style="${temChecklist ? 'display:none' : ''}">${desc}</textarea>
             ${temChecklist && !lockAttr ? `<button class="ex-edit-toggle" onclick="toggleDescEdit('${key}')">✏️ editar a lista</button>` : ''}
           </div>
@@ -1875,6 +1910,7 @@ async function enviarParaGarmin() {
     descricao:    t.descricao    || null,
     cadencia_rpm: t.cadencia_rpm || null,
     academia:     t.academia     || null,
+    periodo:      t.periodo      || null,
   }));
 
   try {

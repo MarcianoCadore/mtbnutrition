@@ -162,6 +162,20 @@ NIVEIS_ACADEMIA: dict[str, str] = {
 }
 _NIVEL_PADRAO = "iniciante"
 
+# Dia duplo (bike + academia no mesmo dia): só com pedal leve. Somar musculação
+# a uma sessão de qualidade ou ao longão vira um dia duro disfarçado — e a soma
+# não aparece em lugar nenhum, porque cada card mostra só a sua parte. O prompt
+# pede isso, mas a trava fica no código: a IA desobedece.
+_TIPOS_ACEITAM_ACADEMIA = {"RECUPERACAO", "Z2_LONGO"}
+_DUPLO_MAX_MIN_BIKE = 120
+
+_PERIODOS_VALIDOS = {"manha", "meio_dia", "tarde", "noite"}
+
+
+def _periodo_valido(valor) -> str | None:
+    v = str(valor or "").strip().lower()
+    return v if v in _PERIODOS_VALIDOS else None
+
 
 def nome_exercicio(item: str) -> str:
     """Nome nu do exercício, a partir da linha prescrita.
@@ -431,6 +445,35 @@ def _aplicar_regras_agenda(
     return tipo, duracao, descricao, cadencia
 
 
+def _linhas_execucao_academia(fonte: dict, ident: str = "    ") -> list[str]:
+    """Checklist + cargas de uma sessão de academia, para o prompt de geração.
+
+    `fonte` é o próprio treino (dia só de academia) ou o sub-objeto `academia`
+    (dia duplo) — a estrutura de `execucao` é a mesma nos dois, e é dela que sai
+    a decisão de progredir carga.
+    """
+    exe = fonte.get("execucao") or {}
+    if not exe.get("total_itens"):
+        return []
+    feitos = len(exe.get("itens_feitos") or [])
+    linha = f"{ident}Execução: {feitos}/{exe['total_itens']} exercícios concluídos"
+    if exe.get("sensacao"):
+        linha += f" | sensação do atleta: {exe['sensacao']}/5 (1=muito ruim, 5=muito bem)"
+    linhas = [linha]
+
+    cargas = exe.get("cargas") or {}
+    if cargas:
+        exercicios = extrair_exercicios_academia(fonte.get("descricao"))
+        usadas = []
+        for chave, kg in sorted(cargas.items(), key=lambda kv: int(kv[0])):
+            i = int(chave)
+            if 0 <= i < len(exercicios):
+                usadas.append(f"{nome_exercicio(exercicios[i])} {kg}kg")
+        if usadas:
+            linhas.append(f"{ident}Cargas usadas: " + "; ".join(usadas))
+    return linhas
+
+
 def _resumo_treino(t: dict) -> str:
     linhas = [f"  - {t['data']} | {t.get('tipo','?')}"]
     if t.get("duracao_min"):
@@ -441,26 +484,12 @@ def _resumo_treino(t: dict) -> str:
     # checklist que o atleta marcou no card + a nota de sensação. É daí que sai
     # a decisão de progredir carga — nunca de FC, que nunca existiu aqui.
     if t.get("tipo") == "ACADEMIA":
-        exe = t.get("execucao") or {}
-        if exe.get("total_itens"):
-            feitos = len(exe.get("itens_feitos") or [])
-            linha = f"    Execução: {feitos}/{exe['total_itens']} exercícios concluídos"
-            if exe.get("sensacao"):
-                linha += f" | sensação do atleta: {exe['sensacao']}/5 (1=muito ruim, 5=muito bem)"
-            linhas.append(linha)
-            # Carga real levantada, casada pelo NOME do exercício: é daqui que
-            # sai a prescrição da próxima semana. Sem isso a IA volta a chutar
-            # quanto o atleta aguenta.
-            cargas = exe.get("cargas") or {}
-            if cargas:
-                exercicios = extrair_exercicios_academia(t.get("descricao"))
-                usadas = []
-                for chave, kg in sorted(cargas.items(), key=lambda kv: int(kv[0])):
-                    i = int(chave)
-                    if 0 <= i < len(exercicios):
-                        usadas.append(f"{nome_exercicio(exercicios[i])} {kg}kg")
-                if usadas:
-                    linhas.append("    Cargas usadas: " + "; ".join(usadas))
+        # Carga real levantada, casada pelo NOME do exercício: é daqui que sai a
+        # prescrição da próxima semana. Sem isso a IA volta a chutar quanto o
+        # atleta aguenta.
+        exec_linhas = _linhas_execucao_academia(t)
+        if exec_linhas:
+            linhas.extend(exec_linhas)
         elif res:
             linhas.append("    Execução: sessão registrada, sem detalhe de checklist")
         else:
@@ -486,6 +515,20 @@ def _resumo_treino(t: dict) -> str:
         linhas.append(f"    Pontos fortes: {'; '.join(ia['pontos_fortes'])}")
     if ia.get("pontos_fracos"):
         linhas.append(f"    A melhorar: {'; '.join(ia['pontos_fracos'])}")
+
+    # DIA DUPLO: a musculação do dia tem card e execução próprios, dentro do
+    # sub-objeto. Sem esta parte, um dia duplo chegaria ao gerador como se
+    # tivesse tido só o pedal — e a progressão de carga perderia a sessão.
+    sub = t.get("academia") or {}
+    if sub.get("descricao"):
+        dur_sub = sub.get("duracao_min")
+        periodo_sub = f", {sub['periodo']}" if sub.get("periodo") else ""
+        linhas.append(
+            f"    + ACADEMIA no mesmo dia ({dur_sub or '?'} min{periodo_sub})"
+        )
+        exec_sub = _linhas_execucao_academia(sub, ident="      ")
+        linhas.extend(exec_sub or ["      Execução: sem registro do atleta para esta sessão"])
+
     return "\n".join(linhas)
 
 
@@ -551,7 +594,8 @@ IMPORTANTE: gere os "treinos" PRIMEIRO — depois escreva "analise_semana" e "pr
       "duracao_min": 90,
       "descricao": "Prescrição COMPLETA do treino: aquecimento + estrutura principal (séries×tempo, zona-alvo pelo NOME — Z1 a Z5, cadência) + volta à calma. NUNCA escreva faixas de FC em bpm — só o nome da zona; o app anexa as faixas reais. Para ACADEMIA: lista completa de exercícios com séries×reps.",
       "cadencia_rpm": "85-95",
-      "academia": null
+      "academia": null,
+      "periodo": null
     }
   ],
   "analise_semana": "Avaliação objetiva da semana atual: o que foi bem, o que foi fraco, como a FC se comportou vs. o alvo. 2-3 frases diretas.",
@@ -560,9 +604,24 @@ IMPORTANTE: gere os "treinos" PRIMEIRO — depois escreva "analise_semana" e "pr
 
 REGRAS DO JSON:
 - "cadencia_rpm" deve ser null para dias ACADEMIA puro (é ginásio, não bike).
-- ACADEMIA é sempre tipo exclusivo — nunca use o campo "academia" como sub-objeto dentro de outro tipo. Um dia = uma atividade.
 - Descrições de treinos de bike devem citar a intensidade pelo NOME da zona (Z1-Z5). NUNCA escreva faixas de FC em bpm — o app anexa automaticamente as faixas reais do atleta.
-- O campo "progressao" deve descrever APENAS o que está nos treinos gerados acima — não mencione academia se nenhum dia tiver tipo ACADEMIA.
+- O campo "progressao" deve descrever APENAS o que está nos treinos gerados acima — não mencione academia se nenhum dia não tiver academia.
+
+DUAS SESSÕES NO MESMO DIA (bike + academia):
+Há duas formas de programar academia, e elas são excludentes entre si no mesmo dia:
+  a) DIA SÓ DE ACADEMIA — "tipo": "ACADEMIA", "academia": null, "cadencia_rpm": null.
+  b) DIA DUPLO — o dia tem um treino de bike em "tipo"/"descricao" E um segundo card de
+     musculação no campo "academia": {"duracao_min": 45, "periodo": "manha", "descricao": "..."}.
+     A "descricao" do sub-objeto segue o MESMO formato obrigatório de ACADEMIA descrito abaixo.
+- Use o DIA DUPLO apenas quando a agenda de academia do atleta (dias/períodos informados) cair
+  num dia que já tem bike. Não invente dia duplo fora dessa agenda.
+- No dia duplo, o "periodo" da academia e o "periodo" do treino de bike devem ser DIFERENTES
+  (ex.: academia "manha", bike "noite"), respeitando o período que o atleta informou.
+- O DIA DUPLO só é permitido quando o treino de bike do dia for RECUPERACAO ou Z2_LONGO de até
+  120 min. É PROIBIDO combinar academia com: VO2MAX, TIROS, TEMPO, FORCA, e com o longão
+  (Z2_LONGO acima de 120 min). Nesses dias, mova a academia para outro dia da agenda ou deixe
+  a semana sem ela.
+- Nunca coloque academia (dia puro OU dia duplo) na véspera nem no dia seguinte de VO2MAX/TIROS.
 """
 
 
@@ -768,15 +827,22 @@ Se houver prova em menos de 7 dias: reduza volume, mantenha intensidade curta, p
             )
             _intro_academia = (
                 f"O atleta TREINA NA ACADEMIA. Dias/períodos disponíveis: {disp_agenda}.\n"
-                "PRIORIDADE: agende sessões de ACADEMIA nesses dias/períodos.\n"
-                "REGRA: dia de academia = tipo ACADEMIA EXCLUSIVAMENTE. Não coloque bike + academia no mesmo dia. "
-                "O atleta vai à academia, não pedala naquele dia."
+                "PRIORIDADE: agende a academia nesses dias/períodos — é a agenda real dele.\n"
+                "Se o dia da agenda estiver livre de bike, faça um DIA SÓ DE ACADEMIA "
+                '(tipo="ACADEMIA").\n'
+                "Se o dia da agenda já tiver bike, faça um DIA DUPLO: mantenha o treino de bike e "
+                'ponha a musculação no campo "academia", com o período informado acima — mas SOMENTE '
+                "se o treino de bike do dia for RECUPERACAO ou Z2_LONGO de até 120 min.\n"
+                "Se o dia da agenda tiver VO2MAX, TIROS, TEMPO, FORCA ou o longão, NÃO dobre: "
+                "mova a academia para outro dia da agenda do atleta."
             )
         else:
             _intro_academia = (
                 "O atleta TREINA NA ACADEMIA mas não informou dias preferidos.\n"
-                "Escolha automaticamente os melhores dias: substitua DESCANSO por ACADEMIA nesses dias. "
-                "NUNCA coloque academia em um dia que já tem bike — são atividades exclusivas. "
+                "Escolha automaticamente os melhores dias: prefira substituir DESCANSO por "
+                'tipo="ACADEMIA". Sem dia livre, você pode usar um DIA DUPLO (bike + campo '
+                '"academia") desde que o treino de bike seja RECUPERACAO ou Z2_LONGO de até 120 min.\n'
+                "Nunca dobre com VO2MAX, TIROS, TEMPO, FORCA ou o longão. "
                 "Nunca adjacente a VO2MAX ou TIROS."
             )
         # Nível não informado (usuário que nunca abriu a config) cai em
@@ -807,11 +873,14 @@ A academia é um COMPLEMENTO ao bike. {"" if academia_freq > 0 else "Decida quan
 ⛔ REGRAS INVIOLÁVEIS — leia antes de posicionar qualquer sessão de academia:
 1. NUNCA coloque ACADEMIA no dia ANTERIOR ou POSTERIOR a VO2MAX ou TIROS. Verifique os dois lados.
 2. NUNCA crie 3 dias consecutivos duros (VO2MAX, TIROS, FORCA, ACADEMIA, Z2_LONGO ≥180min). Sempre intercale com RECUPERACAO ou DESCANSO.
-3. ACADEMIA é dia exclusivo de musculação — tipo = "ACADEMIA", sem bike nesse dia. NÃO use o campo "academia" dentro de outro tipo de treino.
+3. Academia no MESMO dia que bike (campo "academia" preenchido) só é permitida quando o treino de bike daquele dia for RECUPERACAO ou Z2_LONGO de até 120 min, e em período diferente do pedal. Com VO2MAX, TIROS, TEMPO, FORCA ou longão (≥150 min) no dia, é PROIBIDO — a academia vai para outro dia.
 
 COMO ESCOLHER O FOCO DO TREINO DE ACADEMIA:
   * Dia anterior ou posterior DURO (VO2MAX, TIROS, FORCA, Z2_LONGO ≥180 min): PARTE SUPERIOR + CORE puro. PROIBIDO perna pesada.
   * Dia anterior e posterior LEVES (RECUPERACAO, DESCANSO): MEMBROS INFERIORES + CORE (agachamento búlgaro, hip thrust, stiff).
+  * DIA DUPLO (academia + bike leve no mesmo dia): o pedal do dia já usa as pernas — vá de
+    PARTE SUPERIOR + CORE, ou pernas com carga moderada, nunca perna pesada. A soma das duas
+    sessões não pode virar um dia duro disfarçado.
 
 NÍVEL DO ATLETA NA ACADEMIA — respeite antes de escolher qualquer carga:
 {_nivel_txt}
@@ -969,13 +1038,33 @@ RESTRIÇÕES DE AGENDA (OBRIGATÓRIAS):
             "descricao":   descricao,
             "cadencia_rpm": cadencia,
         }
-        # sub-objeto academia (bike + gym no mesmo dia)
+        periodo_bike = _periodo_valido(t.get("periodo"))
+        if periodo_bike:
+            treino_out["periodo"] = periodo_bike
+
+        # sub-objeto academia = DIA DUPLO (bike + gym no mesmo dia).
         academia_sub = t.get("academia")
         if academia_sub and isinstance(academia_sub, dict) and academia_sub.get("descricao"):
-            treino_out["academia"] = {
-                "duracao_min": int(academia_sub.get("duracao_min") or 60),
-                "descricao": academia_sub["descricao"],
-            }
+            pode_dobrar = (
+                tipo in _TIPOS_ACEITAM_ACADEMIA
+                and (duracao or 0) <= _DUPLO_MAX_MIN_BIKE
+            )
+            if pode_dobrar:
+                periodo_ac = _periodo_valido(academia_sub.get("periodo"))
+                # Mesmo período nas duas sessões é agenda impossível: se a IA
+                # repetir, prefere-se deixar o da academia em aberto a mentir.
+                if periodo_ac and periodo_ac == periodo_bike:
+                    periodo_ac = None
+                treino_out["academia"] = {
+                    "duracao_min": int(academia_sub.get("duracao_min") or 60),
+                    "descricao": academia_sub["descricao"],
+                    "periodo": periodo_ac,
+                }
+            else:
+                logger.info(
+                    "Dia duplo recusado em %s: bike %s de %s min não aceita academia junto",
+                    t.get("data"), tipo, duracao,
+                )
         treinos_out.append(treino_out)
 
     # Código é dono dos números: anexa a legenda com as faixas reais do atleta
