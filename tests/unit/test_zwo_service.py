@@ -66,6 +66,49 @@ def test_textevents_de_antecipacao():
     assert any("conclu" in (t.get("message") or "").lower() for t in eventos)
 
 
+def _potencias(bloco) -> list[float]:
+    """Todas as potências do bloco (rampa devolve início e fim)."""
+    if bloco.tag in ("Warmup", "Cooldown"):
+        return [float(bloco.get("PowerLow")), float(bloco.get("PowerHigh"))]
+    return [float(bloco.get("Power"))]
+
+
+def test_recuperacao_nao_tem_pico_nas_pontas():
+    """Regressão: as rampas iam até o topo da Z1 (55% FTP) e o miolo ficava no meio
+    da banda (27,5%) — o treino de recuperação saía pico/queda/pico no rolo."""
+    root, _ = _root("RECUPERACAO", 61)
+    blocos = list(root.find("workout"))
+    miolo = float(next(b for b in blocos if b.tag == "SteadyState").get("Power"))
+    for b in blocos:
+        for p in _potencias(b):
+            assert p <= miolo + 1e-9, (b.tag, p, miolo)  # nada acima do bloco principal
+
+
+def test_recuperacao_fica_perto_de_50pct_do_ftp():
+    """27% do FTP é pedalar à toa; recuperação ativa vive na casa dos 45-55%."""
+    root, _ = _root("RECUPERACAO", 61)
+    for b in root.find("workout"):
+        for p in _potencias(b):
+            assert 0.40 <= p <= 0.60, (b.tag, p)
+
+
+def test_cooldown_comeca_mais_forte_do_que_termina():
+    """Zwift/MyWhoosh leem PowerLow como INÍCIO da rampa: se o menor valor vier
+    primeiro, a volta à calma SOBE no fim do treino."""
+    for tipo in ("RECUPERACAO", "Z2_LONGO", "TEMPO", "FORCA", "TIROS", "VO2MAX", "TESTE_FTP"):
+        root, _ = _root(tipo, 62)
+        cd = list(root.find("workout"))[-1]
+        assert cd.tag == "Cooldown", tipo
+        assert float(cd.get("PowerLow")) > float(cd.get("PowerHigh")), tipo
+
+
+def test_warmup_nao_ultrapassa_o_bloco_seguinte_da_mesma_zona():
+    """O aquecimento termina exatamente no valor do bloco fixo da zona — sem degrau."""
+    root, _ = _root("RECUPERACAO", 61)
+    blocos = list(root.find("workout"))
+    assert float(blocos[0].get("PowerHigh")) == float(blocos[1].get("Power"))
+
+
 def test_tipo_sem_builder_retorna_none():
     assert build_zwo_xml("NAO_EXISTE", 60) is None
 

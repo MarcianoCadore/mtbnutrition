@@ -7,8 +7,8 @@ FTP dele. Por isso a exportação não exige FTP configurado no nosso app.
 
 A fonte da estrutura é a MESMA usada para o Garmin (`preview_estrutura` →
 `_BUILDERS`): fase (warmup/interval/recovery/cooldown), zona (1-5) e duração de
-cada bloco. As porcentagens de FTP por zona vêm de `config_service._ZONAS_POT_PCT`
-(bandas Coggan, iguais para todos), então o .zwo nunca diverge da prescrição.
+cada bloco. As porcentagens de FTP por zona vêm de `config_service.faixa_util_pct`
+(bandas Coggan com piso prescritível), então o .zwo nunca diverge da prescrição.
 
 Mensagens seguem o esquema do Zwift: `<textevent timeoffset=... message=...>`
 aninhado no bloco. Para o aviso "faltam 15 s", o texto é colocado no fim do bloco
@@ -20,12 +20,9 @@ from __future__ import annotations
 from xml.sax.saxutils import escape, quoteattr
 
 from app.services.garmin_workout_service import preview_estrutura
-from app.services.config_service import _ZONAS_POT_PCT
+from app.services.config_service import faixa_util_pct
 
 ANTECIPACAO_PADRAO_S = 15
-
-# {zona: (pct_min, pct_max)} — fração do FTP de cada zona.
-_PCT = {z: (lo, hi) for z, lo, hi, _ in _ZONAS_POT_PCT}
 
 _DESCRICOES = {
     "RECUPERACAO": "Pedal leve em Z1. Recuperação ativa.",
@@ -60,18 +57,20 @@ def _fmt_dur(segundos: int) -> str:
 
 
 def _mid_pct(zona: int | None) -> float:
-    lo, hi = _PCT.get(zona or 0, (0.5, 0.6))
+    """Potência-alvo de um bloco fixo da zona (meio da faixa prescritível)."""
+    lo, hi = faixa_util_pct(zona or 0)
     return (lo + hi) / 2
 
 
 def _ramp_pct(zona: int | None) -> tuple[float, float]:
-    """(low, high) de uma rampa de aquecimento/volta à calma para a zona.
+    """(piso, alvo) da rampa de aquecimento/volta à calma da zona.
 
-    A Z1 começa em 0% do FTP; uma rampa a partir de 0 não faz sentido no rolo,
-    então aplicamos um piso.
+    A rampa vai do piso da zona até o MESMO valor do bloco fixo — nunca acima.
+    Se ela subisse até o topo da zona, um treino de uma zona só (recuperação, toda
+    em Z1) sairia com as pontas mais fortes que o miolo: pico, queda, pico.
     """
-    lo, hi = _PCT.get(zona or 0, (0.45, 0.6))
-    return (max(lo, 0.45), max(hi, 0.5))
+    lo, _ = faixa_util_pct(zona or 0)
+    return lo, _mid_pct(zona)
 
 
 def build_zwo_xml(
@@ -127,11 +126,13 @@ def build_zwo_xml(
 
         # ── elemento do bloco ───────────────────────────────────────────────────
         if fase == "warmup":
-            lo, hi = _ramp_pct(zona)
-            blocos.append(f'    <Warmup Duration="{dur}" PowerLow="{_num(lo)}" PowerHigh="{_num(hi)}">{ev_xml}</Warmup>')
+            piso, alvo = _ramp_pct(zona)
+            blocos.append(f'    <Warmup Duration="{dur}" PowerLow="{_num(piso)}" PowerHigh="{_num(alvo)}">{ev_xml}</Warmup>')
         elif fase == "cooldown":
-            lo, hi = _ramp_pct(zona)
-            blocos.append(f'    <Cooldown Duration="{dur}" PowerLow="{_num(lo)}" PowerHigh="{_num(hi)}">{ev_xml}</Cooldown>')
+            # Zwift/MyWhoosh leem PowerLow como o INÍCIO da rampa: na volta à calma
+            # o valor MAIOR vem primeiro, senão o app faz o treino subir no fim.
+            piso, alvo = _ramp_pct(zona)
+            blocos.append(f'    <Cooldown Duration="{dur}" PowerLow="{_num(alvo)}" PowerHigh="{_num(piso)}">{ev_xml}</Cooldown>')
         else:
             p = _num(_mid_pct(zona))
             blocos.append(f'    <SteadyState Duration="{dur}" Power="{p}">{ev_xml}</SteadyState>')

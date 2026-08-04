@@ -83,6 +83,30 @@ def test_cooldown_rampa_descendente():
     assert int(cd.get("StartPower")) > int(cd.get("EndPower"))  # desce
 
 
+def _potencias(step) -> list[int]:
+    """Todas as potências do step (rampa devolve início e fim)."""
+    if step.tag == "Ramp":
+        return [int(step.get("StartPower")), int(step.get("EndPower"))]
+    return [int(step.get("Power"))]
+
+
+def test_recuperacao_nao_tem_pico_nas_pontas():
+    """Regressão: as rampas subiam até o topo da Z1 (138 W p/ FTP 250) e o miolo
+    ficava no meio da banda nominal (69 W) — pico/queda/pico num treino leve."""
+    root, _ = _root("RECUPERACAO", 61)
+    steps = list(root.find("WorkoutSteps"))
+    miolo = int(next(s for s in steps if s.tag == "Steady").get("Power"))
+    for s in steps:
+        assert max(_potencias(s)) <= miolo, (s.get("Name"), _potencias(s), miolo)
+
+
+def test_recuperacao_fica_perto_de_50pct_do_ftp():
+    root, _ = _root("RECUPERACAO", 61)
+    for s in root.find("WorkoutSteps"):
+        for w in _potencias(s):
+            assert 0.40 * FTP <= w <= 0.60 * FTP, (s.get("Name"), w)
+
+
 def test_evento_final_de_conclusao_perto_do_fim():
     root, _ = _root("VO2MAX", 62)
     steps = list(root.find("WorkoutSteps"))

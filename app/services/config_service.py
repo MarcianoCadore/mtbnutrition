@@ -26,6 +26,16 @@ _ZONAS_POT_PCT = [
 ]
 
 
+_PCT_POR_ZONA = {z: (lo, hi) for z, lo, hi, _ in _ZONAS_POT_PCT}
+
+# Piso PRESCRITÍVEL de qualquer zona, em fração do FTP. A banda da Z1 começa em
+# 0% (é uma faixa de *classificação*: tudo abaixo de 55% do FTP é Z1), mas
+# ninguém pedala a 0 W — abaixo de ~45% do FTP não há estímulo de recuperação
+# ativa, é só girar a perna. Sem esse piso o meio da Z1 daria 27,5% do FTP e um
+# treino de recuperação sairia com as pontas (rampas) valendo o DOBRO do miolo.
+PISO_UTIL_PCT = 0.45
+
+
 def calc_zonas_potencia(ftp: int) -> list[dict]:
     """Calcula as 7 zonas de potência (watts) a partir do FTP."""
     zonas = []
@@ -34,6 +44,27 @@ def calc_zonas_potencia(ftp: int) -> list[dict]:
         max_w = round(ftp * pct_max) if pct_max < 9 else 9999
         zonas.append({"zona": zona, "min": min_w, "max": max_w, "nome": nome})
     return zonas
+
+
+def faixa_util_pct(zona: int) -> tuple[float, float]:
+    """Faixa da zona realmente PRESCRITÍVEL, em fração do FTP.
+
+    Igual à banda nominal para Z2+; na Z1 o fundo sobe para `PISO_UTIL_PCT`.
+    Use isto (e não `_ZONAS_POT_PCT`) sempre que for gerar potência-alvo de um
+    bloco de treino — classificar um treino executado é outra coisa.
+    """
+    lo, hi = _PCT_POR_ZONA.get(zona, (PISO_UTIL_PCT, 0.60))
+    return max(lo, min(PISO_UTIL_PCT, hi)), hi
+
+
+def faixa_util_watts(zona: int, min_w: int, max_w: int) -> tuple[int, int]:
+    """Mesma faixa útil de `faixa_util_pct`, em watts, a partir da faixa nominal
+    do atleta (o topo da zona já é `pct_max × FTP`, então dá para recuperar o FTP)."""
+    _, hi_pct = _PCT_POR_ZONA.get(zona, (0.0, 0.0))
+    if not max_w or not 0 < hi_pct < 9:      # zona desconhecida ou aberta (Z7)
+        return min_w, max_w
+    util_lo, _ = faixa_util_pct(zona)
+    return max(min_w, round(max_w / hi_pct * util_lo)), max_w
 
 
 # Zonas de FC padrão calibradas com FC máx 185 e LTHR 165 (89% de 185).

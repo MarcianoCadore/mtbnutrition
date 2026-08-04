@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from xml.sax.saxutils import escape, quoteattr
 
+from app.services.config_service import faixa_util_watts
 from app.services.garmin_workout_service import preview_estrutura
 
 # Antecipação padrão (segundos) das mensagens antes de cada bloco.
@@ -57,15 +58,26 @@ def _fmt_dur(segundos: int) -> str:
     return f"{s}s"
 
 
-def _ramp_bounds(min_w: int, max_w: int, subindo: bool) -> tuple[int, int]:
+def _watts_alvo(zona: int | None, min_w: int, max_w: int) -> int:
+    """Potência-alvo de um bloco fixo: meio da faixa PRESCRITÍVEL da zona.
+
+    Não é o meio da faixa nominal: a Z1 vai de 0 W (0-55% do FTP) e o seu meio
+    daria ~27% do FTP — pedalar à toa. `faixa_util_watts` sobe esse fundo.
+    """
+    lo, hi = faixa_util_watts(zona or 0, min_w, max_w)
+    return round((lo + hi) / 2) if hi else lo
+
+
+def _ramp_bounds(zona: int | None, min_w: int, max_w: int, subindo: bool) -> tuple[int, int]:
     """Extremos (start, end) de uma rampa de aquecimento/volta à calma.
 
-    A Z1 do atleta costuma começar em 0 W (0-55% do FTP); uma rampa começando em
-    0 W não faz sentido no rolo. Então usamos um piso derivado do topo da zona.
+    A rampa vai do piso da zona até o MESMO valor de um bloco fixo dela — nunca
+    até o topo. Se subisse ao topo, um treino de uma zona só (recuperação, toda em
+    Z1) sairia com as pontas mais fortes que o miolo: pico, queda, pico.
     """
-    piso = round(max_w * 0.45) or 1
-    baixo = min_w if min_w >= piso else piso
-    return (baixo, max_w) if subindo else (max_w, baixo)
+    piso, _ = faixa_util_watts(zona or 0, min_w, max_w)
+    alvo = _watts_alvo(zona, min_w, max_w)
+    return (piso, alvo) if subindo else (alvo, piso)
 
 
 def _rotulo_base(fase: str, zona: int | None) -> str:
@@ -129,7 +141,7 @@ def build_erg_xml(
             step_nome = base
 
         if fase in ("warmup", "cooldown"):
-            start_w, end_w = _ramp_bounds(mn, mx, subindo=(fase == "warmup"))
+            start_w, end_w = _ramp_bounds(zona, mn, mx, subindo=(fase == "warmup"))
             steps_xml.append(
                 f'        <Ramp Id="{step_id}" Name={quoteattr(step_nome)} '
                 f'Duration="{dur}" StartPower="{start_w}" EndPower="{end_w}"/>'
@@ -139,7 +151,7 @@ def build_erg_xml(
             else:
                 texto = f"Volta à calma: de {start_w} a {end_w} watts por {_fmt_dur(dur)}."
         else:
-            power = round((mn + mx) / 2) if mx else mn
+            power = _watts_alvo(zona, mn, mx)
             steps_xml.append(
                 f'        <Steady Id="{step_id}" Name={quoteattr(step_nome)} '
                 f'Duration="{dur}" Power="{power}"/>'
