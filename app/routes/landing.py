@@ -430,7 +430,17 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
       <div class="feature reveal">
         <div class="f-icon">🧠</div>
         <h3>Um assistente que te conhece</h3>
-        <p>Ele sabe seu histórico de cor. Peça para remexer a semana, tire uma dúvida de treino ou conte como foi o pedal de ontem — são 5 perguntas por semana, a qualquer hora do dia ou da noite.</p>
+        <p>Ele sabe seu histórico de cor. Peça para remexer a semana, tire uma dúvida de treino ou conte como foi o pedal de ontem — são 20 perguntas por semana, a qualquer hora do dia ou da noite.</p>
+      </div>
+      <div class="feature reveal">
+        <div class="f-icon">📥</div>
+        <h3>Você não começa do zero</h3>
+        <p>Conectou o Garmin, a plataforma importa os seus últimos <strong>90 dias</strong>. No primeiro login o histórico já está lá — e a IA monta a primeira semana calibrada no que você realmente vinha pedalando, não num chute.</p>
+      </div>
+      <div class="feature reveal">
+        <div class="f-icon">⚡</div>
+        <h3>Seu FTP, sem teste de 20 minutos</h3>
+        <p>A plataforma lê os seus melhores esforços e calcula o FTP sozinha — é ele que define os watts de cada prescrição e o arquivo do rolo. Melhorou numa pedalada forte? O número sobe junto, sem você parar uma semana para testar.</p>
       </div>
     </div>
   </div>
@@ -478,6 +488,8 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
           <tr><td>Manda o treino pro Garmin</td><td class="comp-nos">Sim</td><td>Sim</td><td>Sim</td></tr>
           <tr><td>Analisa cada pedalada</td><td class="comp-nos">Sim, com nota e leitura</td><td>Sim, números</td><td>Sim, números</td></tr>
           <tr><td>Recalibra a próxima semana</td><td class="comp-nos"><b>Automático</b></td><td>Só com coach</td><td>Não</td></tr>
+          <tr><td>Importa seu histórico ao conectar</td><td class="comp-nos">Sim, 90 dias</td><td>Sim</td><td>Sim</td></tr>
+          <tr><td>Calcula seu FTP sozinho</td><td class="comp-nos">Sim</td><td>Não</td><td>Sim</td></tr>
           <tr><td>Academia junto do pedal</td><td class="comp-nos">Sim, com carga progressiva</td><td>Parcial</td><td>Não</td></tr>
           <tr><td>O que comer em cada dia</td><td class="comp-nos"><b>Sim, periodizado</b></td><td>Não</td><td>Não</td></tr>
           <tr><td>Fala com você no WhatsApp</td><td class="comp-nos">Sim</td><td>Não</td><td>Não</td></tr>
@@ -512,7 +524,9 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
           <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Treinos para MTB, estrada, gravel e rolo — indoor ou outdoor</li>
           <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Academia planejada pela IA, com checklist e progressão de carga</li>
           <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Download em .zwo para MyWhoosh, Zwift e TrainerRoad</li>
-          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Assistente IA com o seu histórico — 5 perguntas por semana</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Importação dos seus últimos 90 dias do Garmin</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> FTP estimado automaticamente, sem teste de 20 min</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Assistente IA com o seu histórico — 20 perguntas por semana</li>
         </ul>
         <a class="btn btn-primary btn-lg" href="/signup" style="width:100%">Começar 14 dias grátis</a>
         <p class="price-cancel">Comece com <b>14 dias grátis</b> — sem cartão, sem cobrança automática. Depois do teste, o QR code Pix fica no portal: você paga, manda o comprovante no WhatsApp e o acesso é liberado. Ao assinar você concorda com os <a href="/termos" style="color:var(--green-hi)">termos de uso</a> e a <a href="/privacidade" style="color:var(--green-hi)">política de privacidade</a>.</p>

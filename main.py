@@ -175,7 +175,7 @@ _CHAT_WIDGET = """
     const el = document.getElementById('cw-quota');
     if(d.limite == null){ el.style.display = 'none'; return; }
     const pct = Math.round((d.restantes / d.limite) * 100);
-    el.innerHTML = 'No plano gratuito você ainda pode fazer <b>' + d.restantes +
+    el.innerHTML = 'Você ainda pode fazer <b>' + d.restantes +
       '</b> de ' + d.limite + ' pergunta' + (d.limite > 1 ? 's' : '') + ' esta semana' +
       '<div class="cw-bar"><b style="width:' + pct + '%"></b></div>';
     el.style.display = 'block';
@@ -402,6 +402,31 @@ _FAIXA_CSS = (
 )
 
 
+def _link_assinatura(u: dict) -> str:
+    """Link fixo de Assinatura na navegação, com o estado atual.
+
+    A faixa do topo só aparece perto do vencimento — sem este link, quem está
+    no dia 2 do trial não vê quantos dias tem nem consegue chegar na tela de
+    pagamento, mesmo querendo pagar.
+    """
+    est = assinatura_service.estado(u)
+    dias = est.get("dias")
+
+    if est["em_trial"]:
+        rotulo = f"🎁 Teste · {dias}d" if dias else "🎁 Teste"
+        cor = "#ffd479"
+    elif not est["acesso"]:
+        rotulo = "⏳ Assinar"
+        cor = "#ff9b9b"
+    else:
+        ate = est.get("pago_ate")
+        rotulo = f"💚 Ativa até {ate.strftime('%d/%m')}" if ate else "💚 Assinatura"
+        cor = "inherit"
+
+    return (f'<a href="/assinar" class="assinatura-nav-link" style="color:{cor}" '
+            f'title="Ver assinatura e pagamento">{rotulo}</a>')
+
+
 _AVISO_NUTRICAO = (
     '<div style="max-width:760px;margin:26px auto 34px;padding:12px 16px;'
     'border-radius:10px;background:rgba(148,163,184,.12);border:1px solid rgba(148,163,184,.28);'
@@ -488,13 +513,21 @@ async def inject_chat(request: Request, call_next):
         if fim != -1:
             html = html[:fim + 1] + faixa + html[fim + 1:]
 
-    # Injeta link Admin antes do "Sair" (ou antes de </nav> como fallback)
+    # Injeta os links de navegação antes do "Sair" (ou antes de </nav> como
+    # fallback). Ficam aqui, e não em cada template, porque cada tela do portal
+    # tem a sua própria <nav> — e uma tela nova nasceria sem o link.
+    _LOGOUT_ANCHOR = '<a href="/logout">'
+    extras = ""
     if is_admin and not request.url.path.startswith("/admin"):
-        _LOGOUT_ANCHOR = '<a href="/logout">'
+        extras += _ADMIN_NAV_LINK
+    if not request.url.path.startswith("/assinar"):
+        extras += _link_assinatura(u)
+
+    if extras:
         if _LOGOUT_ANCHOR in html:
-            html = html.replace(_LOGOUT_ANCHOR, _ADMIN_NAV_LINK + _LOGOUT_ANCHOR, 1)
+            html = html.replace(_LOGOUT_ANCHOR, extras + _LOGOUT_ANCHOR, 1)
         elif "</nav>" in html:
-            html = html.replace("</nav>", _ADMIN_NAV_LINK + "</nav>", 1)
+            html = html.replace("</nav>", extras + "</nav>", 1)
 
     if avisar_nutricao:
         if "</main>" in html:

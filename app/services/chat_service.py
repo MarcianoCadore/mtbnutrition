@@ -235,13 +235,30 @@ def _semana_atual_iso() -> str:
     return (hoje - timedelta(days=hoje.weekday())).isoformat()
 
 
+LIMITE_PADRAO_SEMANA = 20
+"""Teto de perguntas para quem o admin não configurou à mão.
+
+Antes a ausência de configuração significava **ilimitado** — uma bomba de custo
+silenciosa: a R$ 0,086 por pergunta, só o chat pode comer metade dos R$ 24,99
+antes de somar o parecer em Opus e a geração de semana. 20/semana são quase 3
+por dia (4× o que a landing prometia) e, no teto, ~30% da mensalidade.
+
+Para liberar alguém de verdade, o admin ainda pode: `chat_limite_semana: 0`
+significa sem teto.
+"""
+
+
 async def quota_chat(user_id: str) -> dict:
     """Status da quota: {limite, usadas, restantes}. limite None = ilimitado."""
     from app.services.user_service import get_por_id
     u = await get_por_id(user_id) or {}
-    limite = (u.get("features") or {}).get("chat_limite_semana")
-    if not isinstance(limite, int) or limite <= 0:
-        return {"limite": None, "usadas": 0, "restantes": None}
+    features = u.get("features") or {}
+    limite = features.get("chat_limite_semana")
+
+    if limite == 0:
+        return {"limite": None, "usadas": 0, "restantes": None}   # liberado pelo admin
+    if not isinstance(limite, int) or limite < 0:
+        limite = LIMITE_PADRAO_SEMANA
     db = get_db()
     doc = await db.chat_uso.find_one(
         {"user_id": user_id, "semana_inicio": _semana_atual_iso()})

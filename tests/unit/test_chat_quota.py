@@ -1,13 +1,16 @@
 """Quota semanal de perguntas do chat (features.chat_limite_semana).
 
-O admin define o limite por usuário no painel; o uso é contado em db.chat_uso
-por (user_id, semana) e renova naturalmente na virada de segunda-feira.
+Sem configuração vale `LIMITE_PADRAO_SEMANA`; o admin sobrescreve por usuário no
+painel, e `0` é o ilimitado explícito. O uso é contado em db.chat_uso por
+(user_id, semana) e renova naturalmente na virada de segunda-feira.
 """
 import pytest
 from bson import ObjectId
 
 import app.services.chat_service as chat
-from app.services.chat_service import quota_chat, registrar_pergunta_chat, _semana_atual_iso
+from app.services.chat_service import (
+    LIMITE_PADRAO_SEMANA, quota_chat, registrar_pergunta_chat, _semana_atual_iso,
+)
 
 
 async def _seed_user(fake_db, features=None):
@@ -20,16 +23,21 @@ async def _seed_user(fake_db, features=None):
 
 
 class TestQuotaChat:
-    async def test_sem_limite_configurado_e_ilimitado(self, fake_db):
+    async def test_sem_configuracao_usa_o_limite_padrao(self, fake_db):
+        """Ausência de config não pode significar ilimitado: a R$ 0,086 por
+        pergunta, o chat sozinho comeria metade da mensalidade."""
         uid = await _seed_user(fake_db)
         q = await quota_chat(uid)
-        assert q == {"limite": None, "usadas": 0, "restantes": None}
+        assert q == {"limite": LIMITE_PADRAO_SEMANA, "usadas": 0,
+                     "restantes": LIMITE_PADRAO_SEMANA}
 
-    async def test_limite_zero_ou_invalido_e_ilimitado(self, fake_db):
+    async def test_zero_e_ilimitado_explicito_do_admin(self, fake_db):
         uid = await _seed_user(fake_db, {"chat_limite_semana": 0})
         assert (await quota_chat(uid))["limite"] is None
-        uid2 = await _seed_user(fake_db, {"chat_limite_semana": "5"})
-        assert (await quota_chat(uid2))["limite"] is None
+
+    async def test_valor_invalido_cai_no_padrao(self, fake_db):
+        uid = await _seed_user(fake_db, {"chat_limite_semana": "5"})
+        assert (await quota_chat(uid))["limite"] == LIMITE_PADRAO_SEMANA
 
     async def test_limite_sem_uso(self, fake_db):
         uid = await _seed_user(fake_db, {"chat_limite_semana": 5})

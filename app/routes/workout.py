@@ -1306,6 +1306,30 @@ async def backfill_historico(request: Request, dias: int = 90):
     return {"importadas": resultado.get("importadas", 0), "dias": dias, "ftp": ftp_novo}
 
 
+@router.get("/evolucao", response_class=HTMLResponse)
+async def pagina_evolucao(request: Request):
+    """Prova de progresso — o que segura a renovação no segundo mês.
+
+    Não é o PMC: nada de CTL/ATL/TSB, que mentem nas primeiras semanas. São
+    métricas que sobrevivem a pouco dado — carga semanal, curva de potência e
+    FTP no tempo.
+    """
+    from app.services.user_service import get_por_id
+    try:
+        u = await get_por_id(request.state.user_id) or {}
+    except Exception:
+        u = {}
+    tema = (u.get("preferencias") or {}).get("tema") or "light"
+    return _PAGINA_EVOLUCAO.replace("__TEMA__", tema)
+
+
+@router.get("/evolucao/dados")
+async def evolucao_dados(request: Request, semanas: int = 12):
+    from app.services.evolucao_service import resumo
+    semanas = max(4, min(int(semanas or 12), 52))
+    return await resumo(request.state.user_id, semanas)
+
+
 @router.get("/curva-potencia")
 async def curva_potencia(request: Request):
     """Melhores esforços dos últimos 90 dias + o FTP que sai deles."""
@@ -3391,6 +3415,182 @@ function setTema(t) {
   document.getElementById('tema-claro').classList.toggle('active', t === 'light');
   document.getElementById('tema-escuro').classList.toggle('active', t === 'dark');
 })();
+</script>
+</body>
+</html>"""
+_PAGINA_EVOLUCAO = """<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Evolução — MTB Nutrition</title>
+<style>
+  :root { --green:#128c7e; --bg:#f0f2f5; --card:#fff; --text:#1a1a2e; --muted:#6b7280; --border:#e5e7eb; --accent:#2dd4bf; }
+  [data-theme="dark"] { --bg:#0b1220; --card:#1a2536; --text:#e5e7eb; --muted:#94a3b8; --border:#2a3852; --green:#1db39e; --accent:#2dd4bf; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; background:var(--bg); color:var(--text); }
+  nav { background:var(--green); color:#fff; padding:14px 20px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  nav .logo { font-weight:700; font-size:1.05rem; }
+  nav a { margin-left:auto; color:rgba(255,255,255,.9); text-decoration:none; font-size:.9rem; font-weight:600; white-space:nowrap; }
+  main { max-width:960px; margin:0 auto; padding:26px 20px 60px; }
+  h1 { font-size:1.5rem; margin-bottom:6px; }
+  .sub { color:var(--muted); margin-bottom:24px; font-size:.93rem; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:20px; margin-bottom:18px; }
+  .card h2 { font-size:1rem; color:var(--green); margin-bottom:4px; }
+  .card .hint { font-size:.8rem; color:var(--muted); margin-bottom:16px; line-height:1.5; }
+
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; margin-bottom:18px; }
+  .tile { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:14px 16px; }
+  .tile .v { font-size:1.7rem; font-weight:800; line-height:1.1; }
+  .tile .l { font-size:.72rem; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-top:3px; font-weight:700; }
+  .tile .d { font-size:.75rem; color:var(--muted); margin-top:5px; }
+  .up { color:#16a34a; font-weight:700; }
+
+  .bars { display:flex; align-items:flex-end; gap:5px; height:150px; }
+  .bar-col { flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; height:100%; position:relative; }
+  .bar { width:100%; background:linear-gradient(180deg,var(--accent),var(--green)); border-radius:5px 5px 0 0; min-height:2px; transition:filter .15s; }
+  .bar.vazia { background:var(--border); }
+  .bar-col:hover .bar { filter:brightness(1.15); }
+  .bar-col .tip { position:absolute; bottom:calc(100% + 6px); left:50%; transform:translateX(-50%); background:#0b0b0b; color:#fff; font-size:.7rem; padding:6px 9px; border-radius:7px; white-space:nowrap; opacity:0; visibility:hidden; z-index:5; }
+  .bar-col:hover .tip { opacity:1; visibility:visible; }
+  .axis { display:flex; gap:5px; margin-top:7px; }
+  .axis span { flex:1; text-align:center; font-size:.62rem; color:var(--muted); }
+
+  .curva { display:grid; gap:9px; }
+  .cv-linha { display:grid; grid-template-columns:64px 1fr 76px; align-items:center; gap:12px; }
+  .cv-dur { font-size:.8rem; color:var(--muted); font-weight:700; text-align:right; }
+  .cv-barra { height:24px; background:var(--border); border-radius:6px; overflow:hidden; }
+  .cv-barra i { display:block; height:100%; background:linear-gradient(90deg,var(--green),var(--accent)); border-radius:6px; }
+  .cv-w { font-size:.9rem; font-weight:800; }
+  .cv-w small { display:block; font-size:.68rem; color:var(--muted); font-weight:500; }
+
+  .vazio { text-align:center; padding:26px 16px; color:var(--muted); font-size:.9rem; line-height:1.6; }
+  .vazio b { color:var(--text); }
+  .btn { display:inline-block; margin-top:12px; background:var(--green); color:#fff; border:none; border-radius:9px; padding:11px 20px; font-size:.9rem; font-weight:700; cursor:pointer; text-decoration:none; }
+</style>
+<script>(function(){var t=localStorage.getItem('mtb-tema')||'__TEMA__';document.documentElement.setAttribute('data-theme',t)})();</script>
+</head>
+<body>
+<nav>
+  <span style="font-size:1.4rem">📈</span>
+  <span class="logo">MTB Nutrition</span>
+  <a href="/portal/">← Voltar ao portal</a>
+</nav>
+<main>
+  <h1>Sua evolução</h1>
+  <p class="sub">O que mudou nas últimas 12 semanas — comparando você com você mesmo.</p>
+  <div id="conteudo"><p class="vazio">Carregando…</p></div>
+</main>
+
+<script>
+function fmtSemana(iso) {
+  const [a, m, d] = iso.split('-');
+  return d + '/' + m;
+}
+
+function tileFtp(f) {
+  if (f.atual) {
+    const est = (f.estimado && f.estimado > f.atual)
+      ? `<div class="d up">↑ ${f.estimado}W disponível na sua curva</div>`
+      : (f.estimado_de ? `<div class="d">de ${f.estimado_de}</div>` : '');
+    return `<div class="tile"><div class="v">${f.atual}<small style="font-size:.9rem">W</small></div>
+            <div class="l">FTP</div>${est}</div>`;
+  }
+  return `<div class="tile"><div class="v">—</div><div class="l">FTP</div>
+          <div class="d">Sem dado de potência ainda</div></div>`;
+}
+
+function render(d) {
+  const el = document.getElementById('conteudo');
+  const t = d.totais;
+
+  if (!t.sessoes && !d.curva.length) {
+    el.innerHTML = `<div class="card"><p class="vazio">
+      Ainda não há treinos suficientes para montar sua evolução.<br>
+      <b>Conecte o Garmin</b> — importamos seus últimos 90 dias e esta tela nasce cheia.
+      <br><a class="btn" href="/workout/integracao">Conectar agora</a></p></div>`;
+    return;
+  }
+
+  // ── Tiles
+  let html = `<div class="tiles">
+    ${tileFtp(d.ftp)}
+    <div class="tile"><div class="v">${t.sessoes}</div><div class="l">Treinos</div>
+      <div class="d">em ${t.semanas_com_treino} semana(s)</div></div>
+    <div class="tile"><div class="v">${t.horas}<small style="font-size:.9rem">h</small></div>
+      <div class="l">No selim</div><div class="d">${t.km} km rodados</div></div>
+    <div class="tile"><div class="v">${t.tss_medio ?? '—'}</div><div class="l">Carga média</div>
+      <div class="d">TSS por semana</div></div>
+  </div>`;
+
+  // ── Carga semanal
+  const maxTss = Math.max(...d.semanal.map(s => s.tss), 1);
+  const barras = d.semanal.map(s => {
+    const h = s.tss ? Math.max(3, Math.round(100 * s.tss / maxTss)) : 2;
+    const det = s.sessoes
+      ? `${s.sessoes} treino(s) · ${Math.round(s.minutos/60)}h · ${s.km} km`
+      : 'sem treino registrado';
+    return `<div class="bar-col">
+      <div class="tip"><b>${fmtSemana(s.semana)}</b> · ${s.tss} TSS<br>${det}</div>
+      <div class="bar ${s.tss ? '' : 'vazia'}" style="height:${h}%"></div>
+    </div>`;
+  }).join('');
+  html += `<div class="card">
+    <h2>Carga por semana</h2>
+    <p class="hint">Soma do TSS de cada semana. Uma barra baixa não é fracasso — semana de descanso também constrói.</p>
+    <div class="bars">${barras}</div>
+    <div class="axis">${d.semanal.map(s => `<span>${fmtSemana(s.semana)}</span>`).join('')}</div>
+  </div>`;
+
+  // ── Curva de potência
+  if (d.curva.length) {
+    const maxW = Math.max(...d.curva.map(c => c.watts));
+    const rot = {5:'5s', 15:'15s', 60:'1min', 300:'5min', 600:'10min', 1200:'20min', 3600:'1h'};
+    const linhas = d.curva.map(c => `<div class="cv-linha">
+        <div class="cv-dur">${rot[c.duracao_s] || c.duracao_s + 's'}</div>
+        <div class="cv-barra"><i style="width:${Math.round(100*c.watts/maxW)}%"></i></div>
+        <div class="cv-w">${c.watts}W<small>${c.data ? c.data.slice(8,10)+'/'+c.data.slice(5,7) : ''}</small></div>
+      </div>`).join('');
+    html += `<div class="card">
+      <h2>Curva de potência — 90 dias</h2>
+      <p class="hint">Seu melhor esforço sustentado em cada duração. É daqui que sai o seu FTP: os 20 minutos valem 95% do que você aguenta uma hora inteira.</p>
+      <div class="curva">${linhas}</div>
+    </div>`;
+  } else {
+    html += `<div class="card"><h2>Curva de potência</h2>
+      <p class="vazio">Ainda sem dados de potência. A curva aparece assim que você
+      pedalar com medidor de potência (ou no rolo interativo).</p></div>`;
+  }
+
+  // ── FTP no tempo
+  if (d.ftp_historico.length > 1) {
+    const p = d.ftp_historico;
+    const primeiro = p[0], ultimo = p[p.length - 1];
+    const delta = ultimo.ftp - primeiro.ftp;
+    const pct = Math.round(100 * delta / primeiro.ftp);
+    html += `<div class="card">
+      <h2>Seu FTP no tempo</h2>
+      <p class="hint">${delta > 0
+        ? `<span class="up">+${delta}W (${pct}%)</span> desde ${primeiro.data}. Isso é potência que você não tinha.`
+        : `${primeiro.ftp}W → ${ultimo.ftp}W desde ${primeiro.data}.`}</p>
+      <div class="curva">${p.map(x => `<div class="cv-linha">
+        <div class="cv-dur">${x.data.slice(8,10)+'/'+x.data.slice(5,7)}</div>
+        <div class="cv-barra"><i style="width:${Math.round(100*x.ftp/Math.max(...p.map(y=>y.ftp)))}%"></i></div>
+        <div class="cv-w">${x.ftp}W<small>${x.origem === 'estimado' ? 'estimado' : 'teste'}</small></div>
+      </div>`).join('')}</div>
+    </div>`;
+  }
+
+  el.innerHTML = html;
+}
+
+fetch('/workout/evolucao/dados')
+  .then(r => r.json())
+  .then(render)
+  .catch(() => {
+    document.getElementById('conteudo').innerHTML =
+      '<div class="card"><p class="vazio">Não consegui carregar sua evolução agora.</p></div>';
+  });
 </script>
 </body>
 </html>"""

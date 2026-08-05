@@ -178,11 +178,16 @@ function renderCard(u) {
   const btnPagamento = pago
     ? `<button class="btn-sm btn-pago-on"  id="bp-${u.id}" onclick="togglePagamento('${u.id}',true)">Marcar pendente</button>`
     : `<button class="btn-sm btn-pago-off" id="bp-${u.id}" onclick="togglePagamento('${u.id}',false)">Marcar pago</button>`;
-  const lim = (u.features || {}).chat_limite_semana || '';
-  const opcoes = [3,5,10,20,50].map(n =>
+  // Sem configuração = padrão (20/semana). "Ilimitado" agora é uma escolha
+  // explícita (0), não o que acontece por esquecimento.
+  const limRaw = (u.features || {}).chat_limite_semana;
+  const lim = (typeof limRaw === 'number') ? limRaw : '';
+  const opcoes = [3,5,10,20,30,50].map(n =>
     `<option value="${n}" ${lim === n ? 'selected' : ''}>${n}/semana</option>`).join('');
   const selLimite = `<select class="sel-limite" onchange="setLimite('${u.id}', this.value, this)">
-    <option value="" ${!lim ? 'selected' : ''}>Ilimitado</option>${opcoes}</select>`;
+    <option value="" ${lim === '' ? 'selected' : ''}>Padrão (20/sem)</option>
+    ${opcoes}
+    <option value="0" ${lim === 0 ? 'selected' : ''}>Ilimitado</option></select>`;
 
   const ass = u.assinatura || {};
   const st = statusAss(u);
@@ -641,7 +646,8 @@ async def chat_limite(request: Request):
     user_id = body.get("user_id")
     limite = body.get("limite")
 
-    if not user_id or (limite is not None and (not isinstance(limite, int) or limite < 1)):
+    # None = volta ao padrão (LIMITE_PADRAO_SEMANA); 0 = ilimitado explícito.
+    if not user_id or (limite is not None and (not isinstance(limite, int) or limite < 0)):
         return JSONResponse({"erro": "Parâmetros inválidos."}, status_code=400)
 
     try:

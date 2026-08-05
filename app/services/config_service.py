@@ -4,11 +4,14 @@ doc do usuário em db.users (campos 'horarios' e 'zonas').
 Ajustes de fuga do plano (coleção db.ajustes_dia) são escopados por user_id
 usando o filtro {"user_id": user_id, "data": data}.
 """
+import logging
 import re
 
 from app.services.mongo_service import get_db
 from app.services.nutricao_service import DEFAULT_HORARIOS
 from app.utils import hoje_local
+
+logger = logging.getLogger(__name__)
 
 _RE_HORA = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
@@ -235,6 +238,15 @@ async def salvar_ftp(user_id: str, ftp: int, modo: str = "indoor",
     if origem != "estimado":
         campos["ultimo_teste_ftp"] = date.today().isoformat()
     await atualizar_usuario(user_id, campos)
+
+    # Série histórica para a tela de evolução — o perfil só guarda o valor
+    # atual, e "meu FTP subiu de 250 para 268" é o argumento de renovação.
+    try:
+        from app.services.evolucao_service import registrar_ftp
+        await registrar_ftp(user_id, ftp, origem)
+    except Exception as exc:
+        logger.warning("histórico de FTP não registrado para %s: %s", user_id, exc)
+
     return {"ftp": ftp, "potencia_modo": modo, "zonas": calc_zonas_potencia(ftp)}
 
 

@@ -452,6 +452,7 @@ HTML = """<!DOCTYPE html>
   <button class="nav-toggle" aria-label="Abrir menu" onclick="this.closest('nav').classList.toggle('open')">☰</button>
   <div class="nav-links">
     {{NAV_NUTRI}}
+    <a href="/workout/evolucao">📈 Evolução</a>
     <a href="/workout/calendario">📅 Provas</a>
     <a href="/workout/perfil">👤 Perfil</a>
     {{GARMIN_NAV}}
