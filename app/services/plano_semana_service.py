@@ -359,6 +359,16 @@ _MAX_MIN_DIA_UTIL = 120   # seg–sex: nenhum treino acima de 2h
 _LONGAO_MIN = 180         # longão do fim de semana: 3h (Z2 / "for fun")
 _LONGAO_DESC = "Longão for fun (~3h) — base aeróbica Z2, ritmo livre/conversacional. Foco em volume e economia de pedalada."
 
+# Tetos do polimento, por estágio. A descarga ainda é semana de treino (corta
+# volume, segura a intensidade); a semana da prova é só manutenção.
+_TAPER_LONGAO_MIN = {"descarga": 120, "prova": 90}
+_TAPER_TETO_UTIL_MIN = {"descarga": 90, "prova": 60}
+_TAPER_LONGAO_DESC = {
+    "descarga": ("Rodagem de descarga (~2h) — Z2 constante com 2-3 acelerações curtas. "
+                 "Encurta o longão sem tirar o ritmo de prova."),
+    "prova": ("Rodagem leve de taper (~1h30) — Z2 solto, pernas leves para a prova."),
+}
+
 # Dias de treino padrão (Marciano: seg–sáb = 0..5)
 _DIAS_TREINO_PADRAO = [0, 1, 2, 3, 4, 5]
 
@@ -416,13 +426,45 @@ _REGRAS_FASE = {
         "REGRAS DA FASE (PICO): intensidade alta e específica da prova; o volume "
         "começa a cair. Qualidade acima de quantidade; recuperação reforçada."
     ),
-    "taper": (
-        "REGRAS DA FASE (POLIMENTO/TAPER): REDUZA o volume ~40-50% mantendo apenas "
-        "estímulos CURTOS de intensidade para manter a forma. Nada de treino longo "
-        "ou desgastante. Descanso reforçado nos 2-3 dias antes da prova. Chegue "
-        "descansado e afiado."
+    # O taper não usa esta tabela: tem texto próprio por estágio (_REGRAS_TAPER),
+    # porque a semana de descarga e a semana da prova pedem coisas diferentes.
+}
+
+# Polimento: duas semanas, dois recados. O que a literatura sustenta é cortar
+# VOLUME mantendo INTENSIDADE — daí as duas frases insistirem nisso. O número
+# concreto (TSS-alvo) é anexado em runtime por _bloco_carga_taper().
+_REGRAS_TAPER = {
+    "descarga": (
+        "REGRAS DA FASE (POLIMENTO — SEMANA DE DESCARGA; a prova é na semana que vem): "
+        "corte o VOLUME ~40% e MANTENHA a intensidade. Os estímulos duros continuam, "
+        "só que mais curtos — metade das repetições de VO2MAX/TIROS, mesma qualidade. "
+        "Sem longão: a rodagem mais longa da semana fica em ~2h. O objetivo aqui é "
+        "começar a drenar a fadiga sem perder o afiamento."
+    ),
+    "prova": (
+        "REGRAS DA FASE (POLIMENTO — SEMANA DA PROVA): corte o VOLUME ~65% e mantenha "
+        "SÓ estímulos curtos de intensidade (2-3 acelerações de 1-2 min) para não "
+        "amortecer as pernas. Nada de treino longo ou desgastante. Descanso reforçado "
+        "nos 2-3 dias antes da prova. Chegue descansado e afiado."
     ),
 }
+
+
+def _bloco_carga_taper(alvo_tss: int | None, carga_cronica: int | None) -> str:
+    """Alvo numérico de carga da semana de polimento, para o prompt.
+
+    Sem TSS medido não há âncora: devolve "" e o plano segue só com as regras
+    qualitativas de _REGRAS_TAPER (comportamento de antes desta feature).
+    """
+    if not alvo_tss:
+        return ""
+    return (
+        f"\nALVO DE CARGA DA SEMANA: ~{alvo_tss} TSS somando todos os treinos. "
+        f"O atleta vem de {carga_cronica} TSS/semana nas últimas semanas — o corte "
+        "já está embutido nesse número. Distribua as sessões para ficar perto dele: "
+        "é o que faz o atleta chegar leve na prova sem destreinar. "
+        "O TSS da prova em si NÃO entra nessa conta."
+    )
 
 
 def _aplicar_regras_agenda(
@@ -433,10 +475,13 @@ def _aplicar_regras_agenda(
     cadencia,
     preferencias: dict | None = None,
     fase: str | None = None,
+    estagio_taper: str | None = None,
+    data_prova: str | None = None,
 ):
     """Aplica regras de agenda generalizadas por preferências do usuário.
 
     Regras:
+    - Dia da prova → passa intacto (o dia é da competição, não de treino).
     - Dias não listados em dias_treino → DESCANSO (sobrescreve qualquer tipo).
     - Seg–sex (wd ≤ 4): teto de 120 min quando for dia de treino.
     - Sábado (wd == 5): se estiver nos dias_treino, SEMPRE longão de 180 min.
@@ -446,6 +491,9 @@ def _aplicar_regras_agenda(
     - Domingo (wd == 6): se estiver nos dias_treino e não for o "dia do longão",
       não é modificado (livre para descanso/recuperação pela IA).
 
+    No polimento os tetos encolhem em dois degraus (`estagio_taper`): a semana de
+    descarga ainda treina, a semana da prova é só manutenção.
+
     Retorna (tipo, duracao, descricao, cadencia) ajustados.
     """
     pref = preferencias or {}
@@ -454,6 +502,11 @@ def _aplicar_regras_agenda(
     try:
         wd = datetime.strptime(data_iso, "%Y-%m-%d").weekday()  # 0=seg ... 6=dom
     except (ValueError, TypeError):
+        return tipo, duracao, descricao, cadencia
+
+    # 0) Dia da prova: a competição É o treino do dia. Nenhuma regra de agenda se
+    #    aplica — sem isso o "longão de sábado" sobrescrevia a prova de sábado.
+    if data_prova and data_iso == data_prova:
         return tipo, duracao, descricao, cadencia
 
     # 1) Dia fora dos dias de treino → DESCANSO
@@ -468,18 +521,25 @@ def _aplicar_regras_agenda(
             dia_longao = candidato
             break
 
+    # Estágio do polimento. Taper sem estágio informado (chamada antiga) é
+    # tratado como a semana da prova — o corte mais conservador dos dois.
+    est = estagio_taper if fase == "taper" else None
+    if fase == "taper" and est is None:
+        est = "prova"
+
     # 3) Dia do longão → longão garantido de 3h.
-    #    Em semana de taper (prova chegando), o longão encolhe para não cansar.
+    #    No polimento o longão encolhe para não cansar: ~2h na descarga, ~1h30 na
+    #    semana da prova.
     if wd == dia_longao:
-        if fase == "taper":
-            return ("Z2_LONGO", 90,
-                    "Rodagem leve de taper (~1h30) — Z2 solto, pernas leves para a prova.",
+        if est:
+            return ("Z2_LONGO", _TAPER_LONGAO_MIN[est],
+                    _TAPER_LONGAO_DESC[est],
                     (cadencia or "85-95"))
         return "Z2_LONGO", _LONGAO_MIN, _LONGAO_DESC, (cadencia or "85-95")
 
-    # 4) Dias úteis (seg–sex, wd ≤ 4) → teto de 2h (60 min no taper)
+    # 4) Dias úteis (seg–sex, wd ≤ 4) → teto de 2h (menor no polimento)
     if wd <= 4 and tipo != "DESCANSO" and duracao:
-        teto = 60 if fase == "taper" else _MAX_MIN_DIA_UTIL
+        teto = _TAPER_TETO_UTIL_MIN[est] if est else _MAX_MIN_DIA_UTIL
         duracao = min(int(duracao), teto)
 
     return tipo, duracao, descricao, cadencia
@@ -813,22 +873,36 @@ async def gerar_proxima_semana(
     # ── Próxima prova: periodização orientada ao objetivo ─────────────────────
     from app.services.prova_service import (
         proxima_prova, semanas_ate, fase_periodizacao, FASE_LABEL, listar_provas,
+        estagio_taper as _estagio_taper, carga_alvo_taper,
     )
     bloco_prova = ""
     fase_prova: str | None = None
+    estagio_prova: str | None = None
+    data_prova: str | None = None
     prova = await proxima_prova(user_id, ref=proxima)
 
-    # Provas nas próximas 2 semanas (para taper/prioritization)
+    # DEMAIS provas da janela de 2 semanas. A prova-alvo já é descrita em detalhe
+    # no bloco abaixo (com fase, alvo de carga e dia da prova); repeti-la aqui só
+    # gastava prompt. `proxima_prova` devolve uma só, então este bloco existe para
+    # a IA enxergar uma segunda prova próxima e não empilhar qualidade entre elas.
     proxima_mais2 = _shift_data(proxima, 14)
     todas_provas = await listar_provas(user_id)
-    provas_2semanas = [
+    outras_provas = [
         p for p in todas_provas
         if proxima <= p["data"] <= proxima_mais2
+        and str(p.get("_id")) != str((prova or {}).get("_id"))
     ]
 
     if prova:
         sem_rest = semanas_ate(prova["data"], ref=proxima)
         fase_prova = fase_periodizacao(sem_rest)
+        estagio_prova = _estagio_taper(sem_rest)
+        data_prova = prova["data"]
+        # Alvo de carga do polimento ancorado no TSS real das últimas semanas
+        # (o parecer é quem calcula a carga crônica). Sem parecer/TSS → None, e
+        # o prompt cai só nas regras qualitativas.
+        _cronica = ((parecer or {}).get("metricas") or {}).get("carga_cronica")
+        alvo_tss = carga_alvo_taper(_cronica, sem_rest)
         det = []
         if prova.get("distancia_km"):
             det.append(f"{prova['distancia_km']} km")
@@ -840,22 +914,32 @@ async def gerar_proxima_semana(
             det.append(f"prioridade {prova['prioridade']}")
         det_txt = (" — " + ", ".join(det)) if det else ""
         meta_txt = f"\nMeta do atleta: {prova['meta']}" if prova.get("meta") else ""
+        if estagio_prova:
+            regras_txt = _REGRAS_TAPER[estagio_prova] + _bloco_carga_taper(alvo_tss, _cronica)
+        else:
+            regras_txt = _REGRAS_FASE.get(fase_prova, "")
+        # A prova dentro da semana planejada é um dia da competição, não de treino.
+        dia_prova_txt = (
+            f"\nDIA DA PROVA ({prova['data']}): não prescreva treino nesse dia — "
+            "ele é da prova. Use o dia anterior para ativação curta e leve."
+            if proxima <= prova["data"] <= _shift_data(proxima, 6) else ""
+        )
         bloco_prova = f"""
 PRÓXIMA PROVA-ALVO: {prova['nome']} em {prova['data']} ({sem_rest} semana(s) restante(s)){det_txt}.{meta_txt}
 FASE DE PERIODIZAÇÃO: {FASE_LABEL.get(fase_prova, fase_prova)}.
-{_REGRAS_FASE.get(fase_prova, "")}
+{regras_txt}{dia_prova_txt}
 Direcione a semana para essa fase e para as exigências da prova (terreno/altimetria).
 """
 
-    if provas_2semanas:
+    if outras_provas:
         linhas_p2 = []
-        for p2 in provas_2semanas:
+        for p2 in outras_provas:
             sw = semanas_ate(p2["data"], ref=proxima)
             linhas_p2.append(f"  - {p2['nome']} em {p2['data']} ({sw} semana(s)) — prioridade {p2.get('prioridade','?')}")
         bloco_prova += f"""
-⚠️ PROVAS NAS PRÓXIMAS 2 SEMANAS — planeje taper e recuperação:
+⚠️ OUTRAS PROVAS NA JANELA DE 2 SEMANAS (além da prova-alvo acima):
 {chr(10).join(linhas_p2)}
-Se houver prova em menos de 7 dias: reduza volume, mantenha intensidade curta, priorize descanso.
+Leve-as em conta ao distribuir as sessões duras: nada de qualidade na véspera de nenhuma delas.
 """
 
     if treina_academia:
@@ -894,8 +978,23 @@ Se houver prova em menos de 7 dias: reduza volume, mantenha intensidade curta, p
                 " (o atleta ainda NÃO informou o nível — trate como iniciante e seja "
                 "conservador na carga.)"
             )
+        # Carga pesada de perna deixa fadiga neuromuscular por 48-72h; nos últimos
+        # ~10 dias antes da prova ela chega inteira no dia da largada. Precisa vir
+        # aqui em cima porque sobrepõe a frequência fixa que o atleta configurou.
+        _taper_academia = ""
+        if estagio_prova == "descarga":
+            _taper_academia = (
+                "\n⚠️ POLIMENTO (prova na semana que vem): a academia perde carga. "
+                "PROIBIDO perna pesada — só core, mobilidade e parte superior leve. "
+                "No máximo 1 sessão, e nunca nos 3 dias anteriores à prova.\n"
+            )
+        elif estagio_prova == "prova":
+            _taper_academia = (
+                "\n⚠️ SEMANA DA PROVA: NÃO inclua academia. Nem sessão leve, nem "
+                "dia duplo. A prioridade absoluta é chegar com as pernas frescas.\n"
+            )
         _bloco_academia_prompt = f"""ACADEMIA (musculação no ginásio — tipo "ACADEMIA"):
-{_intro_academia}
+{_intro_academia}{_taper_academia}
 
 OBJETIVO DOS EXERCÍCIOS: aumentar DIRETAMENTE a performance na bike MTB.
   → Glúteos e isquiotibiais: potência nas pedaladas e subidas (agachamento búlgaro, stiff, hip thrust)
@@ -1070,7 +1169,8 @@ RESTRIÇÕES DE AGENDA (OBRIGATÓRIAS):
         cadencia = None if tipo == "ACADEMIA" else t.get("cadencia_rpm")
         # regras de agenda (dias de treino, teto de 2h em dia útil, longão no fim de semana)
         tipo, duracao, descricao, cadencia = _aplicar_regras_agenda(
-            t.get("data", ""), tipo, duracao, descricao, cadencia, preferencias, fase_prova)
+            t.get("data", ""), tipo, duracao, descricao, cadencia, preferencias,
+            fase_prova, estagio_prova, data_prova)
         treino_out: dict = {
             "data":        t.get("data", ""),
             "tipo":        tipo,
@@ -1116,6 +1216,7 @@ RESTRIÇÕES DE AGENDA (OBRIGATÓRIAS):
         "analise_semana": data.get("analise_semana", ""),
         "progressao":     data.get("progressao", ""),
         "fase":           fase_prova,
+        "estagio_taper":  estagio_prova,
         "treinos":        treinos_out,
         "modelo_usado":   modelo_usado,
         "parecer_fisiologico": parecer,

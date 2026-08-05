@@ -3,6 +3,7 @@ import pytest
 
 from app.services.prova_service import (
     dias_ate, semanas_ate, fase_periodizacao, _limpar, FASE_LABEL,
+    estagio_taper, carga_alvo_taper,
 )
 
 
@@ -33,9 +34,10 @@ class TestFasePeriodizacao:
     @pytest.mark.parametrize("semanas,fase", [
         (0, "taper"),
         (1, "taper"),
-        (2, "pico"),
+        (2, "taper"),      # polimento passou a ser de 2 semanas (descarga + prova)
         (3, "pico"),
-        (4, "construcao"),
+        (4, "pico"),
+        (5, "construcao"),
         (8, "construcao"),
         (9, "base"),
         (20, "base"),
@@ -46,6 +48,46 @@ class TestFasePeriodizacao:
     def test_todas_fases_tem_label(self):
         for fase in ("base", "construcao", "pico", "taper"):
             assert fase in FASE_LABEL
+
+
+class TestEstagioTaper:
+    @pytest.mark.parametrize("semanas,estagio", [
+        (0, "prova"),        # prova nesta semana
+        (1, "prova"),
+        (2, "descarga"),     # prova na semana que vem
+        (3, None),           # ainda em pico
+        (10, None),
+    ])
+    def test_estagios(self, semanas, estagio):
+        assert estagio_taper(semanas) == estagio
+
+    def test_coerente_com_a_fase(self):
+        """Todo estágio de taper só existe dentro da fase taper, e vice-versa."""
+        for s in range(0, 15):
+            assert (estagio_taper(s) is not None) == (fase_periodizacao(s) == "taper")
+
+
+class TestCargaAlvoTaper:
+    def test_descarga_corta_40pct(self):
+        assert carga_alvo_taper(500, semanas=2) == 300
+
+    def test_semana_da_prova_corta_65pct(self):
+        assert carga_alvo_taper(500, semanas=1) == 175
+        assert carga_alvo_taper(500, semanas=0) == 175
+
+    def test_fora_do_taper_nao_tem_alvo(self):
+        assert carga_alvo_taper(500, semanas=3) is None
+        assert carga_alvo_taper(500, semanas=12) is None
+
+    @pytest.mark.parametrize("cronica", [None, 0])
+    def test_sem_carga_cronica_nao_inventa_numero(self, cronica):
+        """Atleta sem TSS medido cai nas regras qualitativas, não num alvo falso."""
+        assert carga_alvo_taper(cronica, semanas=1) is None
+
+    def test_escala_com_o_atleta(self):
+        """A prescrição é fração da carga própria — serve p/ 200 e p/ 600 TSS/sem."""
+        assert carga_alvo_taper(200, semanas=1) == 70
+        assert carga_alvo_taper(600, semanas=1) == 210
 
 
 class TestLimpar:

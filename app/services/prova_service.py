@@ -31,9 +31,21 @@ from app.services.mongo_service import get_db
 from app.utils import hoje_local
 
 # Limiares de periodização (em semanas até a prova).
-_SEMANAS_TAPER = 1      # ≤ 1 semana: polimento/taper (a semana da prova)
-_SEMANAS_PICO = 3       # 2–3 semanas: pico
-_SEMANAS_CONSTRUCAO = 8  # 4–8 semanas: construção; > 8: base
+_SEMANAS_TAPER = 2      # ≤ 2 semanas: polimento/taper (descarga + semana da prova)
+_SEMANAS_PICO = 4       # 3–4 semanas: pico
+_SEMANAS_CONSTRUCAO = 8  # 5–8 semanas: construção; > 8: base
+
+# Fração da carga crônica (TSS/semana real do atleta) que cada estágio do
+# polimento deve manter. Duas semanas cortando 40% e depois 65% do volume é o
+# protocolo da meta-análise de Bosquet (2007) — o que a literatura sustenta é o
+# corte de VOLUME mantendo a INTENSIDADE. Simulado no modelo CTL/ATL, esse par
+# aterrissa a forma (TSB) por volta de +10 a +15 no dia da prova.
+#
+# Ancorar na carga do próprio atleta (e não num teto fixo de minutos) é o que faz
+# a regra valer para quem treina 200 e para quem treina 600 TSS/semana. Como é
+# uma FRAÇÃO, ela também sobrevive à subestimação sistemática do TSS (sessões
+# sincronizadas sem FC nem potência): o erro entra no numerador e no denominador.
+_FRACAO_CARGA_TAPER = {"descarga": 0.60, "prova": 0.35}
 
 _PRIORIDADES = {"A", "B", "C"}
 _CAMPOS_EDITAVEIS = {
@@ -166,6 +178,31 @@ def fase_periodizacao(semanas: int) -> str:
     if semanas <= _SEMANAS_CONSTRUCAO:
         return "construcao"
     return "base"
+
+
+def estagio_taper(semanas: int) -> str | None:
+    """Qual das duas semanas de polimento é esta — None fora do taper.
+
+    "prova"    = a prova cai dentro da semana sendo planejada.
+    "descarga" = a prova é na semana seguinte; começa aqui o corte de volume.
+    """
+    if semanas > _SEMANAS_TAPER:
+        return None
+    return "prova" if semanas <= 1 else "descarga"
+
+
+def carga_alvo_taper(carga_cronica, semanas: int) -> int | None:
+    """TSS-alvo da semana de polimento, ancorado na carga real do atleta.
+
+    `carga_cronica` é a média de TSS/semana das últimas semanas executadas
+    (fisiologia_service.calcular_metricas). Sem ela — atleta novo, ou semanas
+    sem nenhum treino com TSS medido — devolve None e o plano cai nas regras
+    qualitativas de sempre.
+    """
+    estagio = estagio_taper(semanas)
+    if not estagio or not carga_cronica or carga_cronica <= 0:
+        return None
+    return round(carga_cronica * _FRACAO_CARGA_TAPER[estagio])
 
 
 # Rótulos amigáveis para exibir no portal.
