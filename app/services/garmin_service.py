@@ -789,6 +789,11 @@ async def sync_atividades(user_id: str, semana_inicio: str) -> int:
                     }}},
                 )
 
+        # Curva de potência: cada sessão pode conter um novo recorde e subir o
+        # eFTP. Rodar só no backfill deixaria o FTP congelado no dia da conexão.
+        from app.services.potencia_service import processar_fit as _curva
+        await _curva(user_id, act_date, fit_path)
+
         # Marca como processada ANTES de notificar — claim atômico por activity_id.
         # Garante que o pós-treino seja enviado exatamente uma vez, mesmo que o
         # sync rode de novo antes do WhatsApp concluir.
