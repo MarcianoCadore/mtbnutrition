@@ -3,11 +3,12 @@
 import json
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import anthropic
 
 from config.settings import settings
+from app.utils import hoje_local
 from app.services.mongo_service import get_db
 from app.services.user_service import get_por_id
 
@@ -361,6 +362,45 @@ _LONGAO_DESC = "Longão for fun (~3h) — base aeróbica Z2, ritmo livre/convers
 # Dias de treino padrão (Marciano: seg–sáb = 0..5)
 _DIAS_TREINO_PADRAO = [0, 1, 2, 3, 4, 5]
 
+# Quando o atleta diz só QUANTAS vezes por semana consegue treinar, o app escolhe
+# os dias: espaça o máximo possível e garante o fim de semana cedo (é onde cabe o
+# longão). 0 = não informado → cai no padrão.
+_DIAS_POR_FREQUENCIA = {
+    1: [5],                       # sáb
+    2: [2, 5],                    # qua, sáb
+    3: [1, 3, 5],                 # ter, qui, sáb
+    4: [1, 3, 5, 6],              # ter, qui, sáb, dom
+    5: [1, 2, 3, 5, 6],           # ter, qua, qui, sáb, dom
+    6: [0, 1, 2, 3, 4, 5],        # seg–sáb
+    7: [0, 1, 2, 3, 4, 5, 6],     # todos
+}
+
+
+def dias_treino_do_usuario(preferencias: dict | None) -> list[int]:
+    """Resolve os dias de treino do atleta (0=seg .. 6=dom).
+
+    Precedência: dias fixos escolhidos no perfil > distribuição derivada da
+    frequência semanal > padrão seg–sáb.
+    """
+    pref = preferencias or {}
+    dias: set[int] = set()
+    for d in pref.get("dias_treino") or []:
+        try:
+            v = int(d)
+        except (ValueError, TypeError):
+            continue
+        if 0 <= v <= 6:
+            dias.add(v)
+    if dias:
+        return sorted(dias)
+
+    try:
+        freq = int(pref.get("frequencia_semanal") or 0)
+    except (ValueError, TypeError):
+        freq = 0
+    return list(_DIAS_POR_FREQUENCIA.get(freq) or _DIAS_TREINO_PADRAO)
+
+
 # Regras de treino por fase de periodização (injetadas no prompt quando há prova).
 _REGRAS_FASE = {
     "base": (
@@ -409,7 +449,7 @@ def _aplicar_regras_agenda(
     Retorna (tipo, duracao, descricao, cadencia) ajustados.
     """
     pref = preferencias or {}
-    dias_treino: list[int] = pref.get("dias_treino") or _DIAS_TREINO_PADRAO
+    dias_treino: list[int] = dias_treino_do_usuario(pref)
 
     try:
         wd = datetime.strptime(data_iso, "%Y-%m-%d").weekday()  # 0=seg ... 6=dom
@@ -706,7 +746,7 @@ async def gerar_proxima_semana(
     # Dias de treino para o prompt
     dias_treino: list[int] = (
         dias_treino_override if dias_treino_override is not None
-        else (preferencias.get("dias_treino") or _DIAS_TREINO_PADRAO)
+        else dias_treino_do_usuario(preferencias)
     )
     _NOMES_DIA = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
     dias_treino_nomes = ", ".join(_NOMES_DIA[d] for d in sorted(dias_treino))
@@ -1147,16 +1187,33 @@ def _dia_treino(data_iso: str, tipo: str, duracao=None, descricao="", cadencia=N
     }
 
 
+def _primeiro_dia_planejavel(semana_inicio: str, hoje: date | None = None) -> str:
+    """Data a partir da qual faz sentido planejar treinos nesta semana.
+
+    Quem se cadastra numa quarta não deve receber treino para a segunda que já
+    passou: o plano começa HOJE. Só vale para a semana vigente — semanas passadas
+    (regeração de histórico) e futuras continuam sendo planejadas inteiras.
+    """
+    hoje_iso = (hoje or hoje_local()).isoformat()
+    if semana_inicio <= hoje_iso <= _shift_data(semana_inicio, 6):
+        return hoje_iso
+    return semana_inicio
+
+
 def _montar_primeira_semana_template(semana_inicio: str, objetivo: str,
-                                     dias_treino: list[int]) -> list[dict]:
+                                     dias_treino: list[int],
+                                     hoje: date | None = None) -> list[dict]:
     """Monta deterministicamente a 1ª semana a partir do perfil. Sempre válida.
 
+    - Dia que já passou (cadastro no meio da semana) → DESCANSO.
     - Dias fora de dias_treino → DESCANSO.
     - Dia de fim de semana (sáb>dom, se houver treino) → longão leve Z2.
-    - Demais dias de treino → sequência base do objetivo, em ordem.
+    - Demais dias de treino → sequência base do objetivo, em ordem, começando no
+      primeiro dia planejável (não se "gasta" a sequência em dias vencidos).
     """
     seq = _PRIMEIRA_SEMANA_SEQ.get(objetivo) or _PRIMEIRA_SEMANA_SEQ["performance_mtb"]
     dias_treino = sorted(dias_treino or _DIAS_TREINO_PADRAO)
+    inicio = _primeiro_dia_planejavel(semana_inicio, hoje)
 
     # Define o dia do longão (fim de semana com treino): sábado tem prioridade.
     dia_longao = next((c for c in (5, 6) if c in dias_treino), None)
@@ -1167,7 +1224,7 @@ def _montar_primeira_semana_template(semana_inicio: str, objetivo: str,
         data = _shift_data(semana_inicio, offset)
         wd = offset  # semana_inicio é segunda → offset == weekday (0=seg..6=dom)
 
-        if wd not in dias_treino:
+        if data < inicio or wd not in dias_treino:
             treinos.append(_dia_treino(data, "DESCANSO"))
             continue
 
@@ -1211,7 +1268,7 @@ async def gerar_primeira_semana(user_id: str, semana_inicio: str) -> dict:
     zonas_doc = u.get("zonas") or {}
 
     objetivo = pref.get("objetivo") or "performance_mtb"
-    dias_treino = pref.get("dias_treino") or _DIAS_TREINO_PADRAO
+    dias_treino = dias_treino_do_usuario(pref)
     idade = int(perfil.get("idade") or 34)
     peso = float(perfil.get("peso_kg") or 80)
     fc_max = int(zonas_doc.get("fc_max") or perfil.get("fc_max") or 190)
@@ -1224,6 +1281,16 @@ async def gerar_primeira_semana(user_id: str, semana_inicio: str) -> dict:
         "com segurança. Conforme você treinar e conectar o Garmin, os próximos planos "
         "ficam mais personalizados."
     )
+    inicio = _primeiro_dia_planejavel(semana_inicio)
+    if inicio != semana_inicio:
+        tem_treino = any(t["tipo"] != "DESCANSO" for t in treinos)
+        analise = (
+            ("Você entrou com a semana em andamento, então o plano começa hoje — "
+             "os dias que já passaram ficam em branco. ")
+            + (analise if tem_treino else
+               "Pelos seus dias de treino não sobrou nenhuma sessão até domingo: "
+               "aproveite para descansar que na segunda-feira o plano completo entra no ar.")
+        )
     progressao = "Semana inicial conservadora: base aeróbica, recuperação e um toque de qualidade."
 
     resumo_dias = "\n".join(

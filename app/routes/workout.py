@@ -1480,8 +1480,15 @@ async def pagina_perfil(request: Request):
     academia_nivel = str(academia.get("nivel") or "")
     usa_cinta = "0" if pref.get("sem_cinta_fc") else "1"
     tema = (pref.get("tema")) or "light"
+    bike_dias = sorted({
+        int(d) for d in (pref.get("dias_treino") or [])
+        if str(d).isdigit() and 0 <= int(d) <= 6
+    })
+    bike_freq = str(int(pref.get("frequencia_semanal") or 0))
     html = (_PAGINA_PERFIL
             .replace("{{USA_CINTA}}", usa_cinta)
+            .replace("{{BIKE_DIAS_JSON}}", _json.dumps(bike_dias))
+            .replace("{{BIKE_FREQ}}", bike_freq)
             .replace("{{IDADE}}", val(p.get("idade")))
             .replace("{{PESO}}", val(p.get("peso_kg")))
             .replace("{{ALTURA}}", val(p.get("altura_cm")))
@@ -1565,6 +1572,25 @@ async def salvar_perfil(request: Request):
             "academia.frequencia_semanal": frequencia_semanal,
             "academia.nivel": nivel,
         })
+    # Disponibilidade para pedalar: os dias marcados mandam; a frequência fica
+    # gravada junto para o gerador saber a intenção do atleta (e para o dia em
+    # que ele informar só o "quantas vezes" no cadastro).
+    if "bike_dias" in form:
+        try:
+            bike_freq = int(form.get("bike_freq") or 0)
+        except (ValueError, TypeError):
+            bike_freq = 0
+        bike_dias = sorted({
+            int(x) for x in str(form.get("bike_dias") or "").split(",")
+            if x.strip().isdigit() and 0 <= int(x) <= 6
+        })
+        if bike_dias:
+            campos.update({
+                "preferencias.dias_treino": bike_dias,
+                "preferencias.frequencia_semanal": (
+                    bike_freq if 1 <= bike_freq <= 7 else len(bike_dias)),
+            })
+
     if "basal_metabolico" in form or "meta_calorica_diaria" in form:
         campos.update({
             "nutricao.basal_metabolico": basal_metabolico,
@@ -2419,6 +2445,13 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
   .sub { color:var(--muted); margin-bottom:22px; font-size:.92rem; }
   .section-title { font-size:1rem; font-weight:800; color:var(--text); margin:28px 0 12px; display:flex; align-items:center; gap:8px; }
   .section-title::after { content:''; flex:1; height:1px; background:var(--border); }
+  /* No desktop as configurações viram duas colunas — a página tem muito bloco
+     para caber num scroll só. No celular continua tudo empilhado. */
+  @media (min-width:1000px) {
+    main { max-width:1140px; }
+    .cols { display:grid; grid-template-columns:1fr 1fr; gap:0 28px; align-items:start; }
+    .col > .section-title:first-child { margin-top:0; }
+  }
   .card { background:#fff; border-radius:14px; padding:22px; box-shadow:0 1px 4px rgba(0,0,0,.06); margin-bottom:14px; }
   .card h2 { font-size:1rem; color:var(--green); margin-bottom:6px; }
   .card p.hint { font-size:.85rem; color:var(--muted); margin-bottom:14px; line-height:1.5; }
@@ -2462,6 +2495,12 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
   .freq-btn { padding:8px 18px; border-radius:9px; border:1.5px solid var(--border); background:#fff; font-size:.88rem; font-weight:700; cursor:pointer; color:var(--muted); transition:.15s; }
   .freq-btn.freq-active { background:var(--green); color:#fff; border-color:var(--green); }
   .freq-btn:hover:not(.freq-active) { border-color:var(--green); color:var(--green); }
+  .freq-row { display:flex; gap:8px; flex-wrap:wrap; }
+  .freq-row .freq-btn { width:auto; margin-top:0; }
+  .dia-row { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
+  .dia-btn { width:42px; padding:9px 0; border-radius:9px; border:1.5px solid var(--border); background:#fff; font-size:.85rem; font-weight:700; cursor:pointer; color:var(--muted); transition:.15s; margin-top:0; }
+  .dia-btn.dia-active { background:var(--green); color:#fff; border-color:var(--green); }
+  .dia-btn:hover:not(.dia-active) { border-color:var(--green); color:var(--green); }
   .aca-hint { font-size:.83rem; color:var(--muted); line-height:1.5; margin-bottom:14px; padding:9px 12px; background:#f9fafb; border-radius:8px; border-left:3px solid var(--green); }
   .aca-row { display:flex; align-items:center; gap:12px; padding:9px 0; border-bottom:1px solid var(--border); }
   .aca-row:last-child { border-bottom:none; }
@@ -2489,6 +2528,13 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
   [data-theme="dark"] .tab-btn:hover:not(.active) { border-color:var(--green); color:var(--green); }
   [data-theme="dark"] .aca-btn { background:#1f2937; color:var(--text); border-color:var(--border); }
   [data-theme="dark"] .freq-btn { background:#1f2937; color:var(--text); border-color:var(--border); }
+  [data-theme="dark"] .dia-btn { background:#1f2937; color:var(--text); border-color:var(--border); }
+  /* O estado ativo precisa de override no escuro: as regras acima têm a mesma
+     especificidade e vêm depois, então engoliam o verde do botão selecionado. */
+  [data-theme="dark"] .aca-btn.aca-active,
+  [data-theme="dark"] .freq-btn.freq-active,
+  [data-theme="dark"] .dia-btn.dia-active,
+  [data-theme="dark"] .theme-opt.active { background:var(--green); color:#fff; border-color:var(--green); }
   [data-theme="dark"] .aca-hint { background:#111827; border-left-color:var(--green); color:var(--muted); }
   [data-theme="dark"] .aca-auto-tip { background:#1a2a40; color:#93c5fd; }
   [data-theme="dark"] .aca-row { border-bottom-color:var(--border); }
@@ -2511,6 +2557,9 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
 <main>
   <h1>Meu perfil</h1>
   <p class="sub">Dados pessoais, objetivo de treino e zonas de frequência cardíaca.</p>
+
+  <div class="cols">
+  <div class="col">
 
   <!-- ── Dados pessoais ── -->
   <div class="card">
@@ -2551,6 +2600,22 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
       <button type="submit" id="btn-perfil">Salvar perfil</button>
       <div id="st-perfil" class="status"></div>
     </form>
+  </div>
+
+  <!-- ── Disponibilidade para pedalar ── -->
+  <div class="section-title">🚴 Disponibilidade para treinar</div>
+  <div class="card">
+    <h2>📅 Quantas vezes por semana você consegue pedalar?</h2>
+    <p class="hint">É a partir daqui que a IA monta a sua semana. Prefira ser realista: um plano de 6 dias
+      que você só cumpre em 3 atrapalha mais do que ajuda.</p>
+    <div class="freq-row" id="bike-freq-row"></div>
+    <label class="fld" style="margin-top:18px">Em quais dias?</label>
+    <p class="aca-hint" style="margin-top:6px">Já deixamos os dias mais bem distribuídos marcados. Se os seus
+      são outros, é só clicar e trocar — a IA respeita exatamente o que estiver marcado aqui.</p>
+    <div class="dia-row" id="bike-dias-row"></div>
+    <div class="aca-auto-tip" id="bike-resumo"></div>
+    <button type="button" id="btn-bike" onclick="salvarBike()">Salvar dias de treino</button>
+    <div id="st-bike" class="status"></div>
   </div>
 
   <!-- ── Metas calóricas (nutricionista) ── -->
@@ -2616,6 +2681,20 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
     <button type="button" id="btn-academia" onclick="salvarAcademia()" style="margin-top:18px">Salvar configuração de academia</button>
     <div id="st-academia" class="status"></div>
   </div>
+
+  <!-- ── Aparência ── -->
+  <div class="section-title">🎨 Aparência</div>
+  <div class="card">
+    <h2>🌗 Tema do portal</h2>
+    <p class="hint">Escolha entre o tema claro ou escuro. A preferência fica salva no dispositivo.</p>
+    <div class="theme-toggle">
+      <button type="button" id="tema-claro" class="theme-opt" onclick="setTema('light')">☀️ Claro</button>
+      <button type="button" id="tema-escuro" class="theme-opt" onclick="setTema('dark')">🌙 Escuro</button>
+    </div>
+  </div>
+
+  </div>
+  <div class="col">
 
   <!-- ── Zonas de FC ── -->
   <div class="section-title">❤️ Zonas de frequência cardíaca</div>
@@ -2737,15 +2816,7 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- ── Aparência ── -->
-  <div class="section-title">🎨 Aparência</div>
-  <div class="card">
-    <h2>🌗 Tema do portal</h2>
-    <p class="hint">Escolha entre o tema claro ou escuro. A preferência fica salva no dispositivo.</p>
-    <div class="theme-toggle">
-      <button type="button" id="tema-claro" class="theme-opt" onclick="setTema('light')">☀️ Claro</button>
-      <button type="button" id="tema-escuro" class="theme-opt" onclick="setTema('dark')">🌙 Escuro</button>
-    </div>
+  </div>
   </div>
 </main>
 <script>
@@ -2815,6 +2886,84 @@ async function salvarNutri(ev){
   }catch(e){ st.className='status err'; st.textContent='❌ '+e.message; }
   finally{ btn.disabled=false; btn.textContent='Salvar metas'; }
 }
+
+// ── Dias de treino (bike) ──
+const _DIAS_CURTOS = ['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'];
+// Espelha _DIAS_POR_FREQUENCIA do gerador: espaça os dias e pega o fim de semana
+// cedo (é onde cabe o longão).
+const _DIAS_POR_FREQ = {1:[5], 2:[2,5], 3:[1,3,5], 4:[1,3,5,6], 5:[1,2,3,5,6], 6:[0,1,2,3,4,5], 7:[0,1,2,3,4,5,6]};
+let _bikeDias = {{BIKE_DIAS_JSON}};
+let _bikeFreq = parseInt('{{BIKE_FREQ}}') || 0;
+// Quem nunca configurou vê o que o gerador já usa hoje: seg–sáb.
+if (!_bikeDias.length) _bikeDias = (_DIAS_POR_FREQ[_bikeFreq] || _DIAS_POR_FREQ[6]).slice();
+_bikeFreq = _bikeDias.length;
+
+function renderBike() {
+  const fr = document.getElementById('bike-freq-row');
+  fr.innerHTML = '';
+  for (let n = 1; n <= 7; n++) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'freq-btn' + (n === _bikeFreq ? ' freq-active' : '');
+    b.textContent = n + 'x';
+    b.onclick = () => setBikeFreq(n);
+    fr.appendChild(b);
+  }
+  const dr = document.getElementById('bike-dias-row');
+  dr.innerHTML = '';
+  for (let d = 0; d < 7; d++) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'dia-btn' + (_bikeDias.includes(d) ? ' dia-active' : '');
+    b.textContent = _DIAS_CURTOS[d];
+    b.onclick = () => toggleBikeDia(d);
+    dr.appendChild(b);
+  }
+  const resumo = document.getElementById('bike-resumo');
+  resumo.textContent = _bikeDias.length
+    ? `🚴 ${_bikeDias.length}x por semana: ${_bikeDias.map(d => _DIAS_CURTOS[d]).join(', ')}.`
+    : '⚠️ Marque pelo menos um dia — sem dia de treino não há o que planejar.';
+}
+
+function setBikeFreq(n) {
+  _bikeFreq = n;
+  _bikeDias = (_DIAS_POR_FREQ[n] || []).slice();
+  renderBike();
+}
+
+function toggleBikeDia(d) {
+  _bikeDias = _bikeDias.includes(d)
+    ? _bikeDias.filter(x => x !== d)
+    : _bikeDias.concat(d).sort((a, b) => a - b);
+  _bikeFreq = _bikeDias.length;
+  renderBike();
+}
+
+async function salvarBike() {
+  const st = document.getElementById('st-bike'), btn = document.getElementById('btn-bike');
+  if (!_bikeDias.length) {
+    st.className = 'status err'; st.textContent = '⚠️ Marque pelo menos um dia de treino.';
+    return;
+  }
+  btn.disabled = true; btn.textContent = 'Salvando…';
+  const body = new URLSearchParams({
+    idade: document.getElementById('idade').value || '0',
+    peso_kg: document.getElementById('peso_kg').value || '0',
+    altura_cm: document.getElementById('altura_cm').value || '0',
+    sexo: document.getElementById('sexo').value,
+    objetivo: document.getElementById('objetivo').value,
+    bike_freq: String(_bikeFreq),
+    bike_dias: _bikeDias.join(','),
+  });
+  try {
+    const r = await fetch('/workout/perfil', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body});
+    if (!r.ok) throw new Error('Erro ao salvar');
+    st.className = 'status ok';
+    st.textContent = '✅ Salvo! A IA usa esses dias na próxima semana que gerar.';
+  } catch(e) { st.className = 'status err'; st.textContent = '❌ ' + e.message; }
+  finally { btn.disabled = false; btn.textContent = 'Salvar dias de treino'; }
+}
+renderBike();
 
 // ── Zonas de FC ──
 const CORES = ['z1','z2','z3','z4','z5'];

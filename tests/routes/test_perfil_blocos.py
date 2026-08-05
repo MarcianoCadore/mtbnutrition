@@ -1,5 +1,5 @@
-"""A página de perfil tem três formulários (perfil, academia, nutrição) e todos
-postam em POST /workout/perfil, cada um mandando só o seu bloco.
+"""A página de perfil tem quatro formulários (perfil, dias de treino, academia,
+nutrição) e todos postam em POST /workout/perfil, cada um mandando só o seu bloco.
 
 Gravar todos os campos sempre fazia "Salvar perfil" apagar a configuração de
 academia inteira e as metas de nutrição — o que não vinha no form virava
@@ -70,6 +70,52 @@ class TestBlocosIndependentes:
         assert u["academia"]["nivel"] == "intermediario"
         assert u["academia"]["treina"] is True
         assert u["nutricao"]["basal_metabolico"] == 1900
+
+
+class TestDiasDeTreino:
+    """Bloco 'Disponibilidade para treinar' — é o que manda no gerador."""
+
+    def test_salva_dias_e_frequencia(self, user_com_academia, fake_db, run):
+        client, uid = user_com_academia
+
+        r = client.post("/workout/perfil", data={
+            **BASE, "bike_freq": "3", "bike_dias": "1,3,5"})
+        assert r.status_code == 200
+
+        u = run(fake_db.users.find_one({"_id": ObjectId(uid)}))
+        assert u["preferencias"]["dias_treino"] == [1, 3, 5]
+        assert u["preferencias"]["frequencia_semanal"] == 3
+
+    def test_salvar_perfil_nao_apaga_dias_de_treino(self, user_com_academia, fake_db, run):
+        client, uid = user_com_academia
+        client.post("/workout/perfil", data={
+            **BASE, "bike_freq": "3", "bike_dias": "1,3,5"})
+
+        client.post("/workout/perfil", data=BASE)
+
+        u = run(fake_db.users.find_one({"_id": ObjectId(uid)}))
+        assert u["preferencias"]["dias_treino"] == [1, 3, 5]
+
+    def test_dias_vazios_nao_zeram_a_configuracao(self, user_com_academia, fake_db, run):
+        client, uid = user_com_academia
+        client.post("/workout/perfil", data={
+            **BASE, "bike_freq": "3", "bike_dias": "1,3,5"})
+
+        client.post("/workout/perfil", data={
+            **BASE, "bike_freq": "0", "bike_dias": ""})
+
+        u = run(fake_db.users.find_one({"_id": ObjectId(uid)}))
+        assert u["preferencias"]["dias_treino"] == [1, 3, 5]
+
+    def test_dias_invalidos_sao_descartados(self, user_com_academia, fake_db, run):
+        client, uid = user_com_academia
+
+        client.post("/workout/perfil", data={
+            **BASE, "bike_freq": "9", "bike_dias": "0,9,x,,6,6"})
+
+        u = run(fake_db.users.find_one({"_id": ObjectId(uid)}))
+        assert u["preferencias"]["dias_treino"] == [0, 6]
+        assert u["preferencias"]["frequencia_semanal"] == 2   # freq inválida → nº de dias
 
 
 class TestNivel:
