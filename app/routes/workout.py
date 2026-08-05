@@ -2484,6 +2484,12 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
   .tab-btn:hover:not(.active) { border-color:var(--green); color:var(--green); }
   .metodo-desc { font-size:.85rem; color:#374151; line-height:1.6; background:#f9fafb; border-radius:9px; padding:11px 13px; border-left:3px solid var(--green); }
   .metodo-desc b { color:var(--text); }
+  /* As três formas de preencher zonas moram no mesmo card — são a mesma tarefa,
+     não três assuntos. Separadas por um fio, não por três cabeçalhos. */
+  .metodo-bloco { border-top:1px solid var(--border); padding-top:15px; margin-top:15px; }
+  .metodo-bloco:first-of-type { border-top:none; padding-top:0; margin-top:0; }
+  .metodo-nome { font-size:.92rem; font-weight:700; color:var(--text); margin-bottom:8px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .metodo-sub { font-size:.83rem; color:var(--muted); line-height:1.5; }
   .garmin-badge { display:inline-flex; align-items:center; gap:5px; background:#e8f5e9; color:#2e7d32; border-radius:20px; padding:3px 10px; font-size:.75rem; font-weight:700; }
   .garmin-warn { background:#fef3c7; border:1.5px solid #fbbf24; border-radius:9px; padding:10px 13px; font-size:.84rem; color:#92400e; margin-bottom:12px; }
   .garmin-warn a { color:#b45309; font-weight:700; text-decoration:none; }
@@ -2556,12 +2562,13 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
 </nav>
 <main>
   <h1>Meu perfil</h1>
-  <p class="sub">Dados pessoais, objetivo de treino e zonas de frequência cardíaca.</p>
+  <p class="sub">À esquerda, quem você é e como você treina. À direita, os números que a IA usa para prescrever.</p>
 
   <div class="cols">
   <div class="col">
 
   <!-- ── Dados pessoais ── -->
+  <div class="section-title">👤 Seus dados</div>
   <div class="card">
     <form id="form" onsubmit="salvarPerfil(event)">
       <div class="duo">
@@ -2618,30 +2625,6 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
     <div id="st-bike" class="status"></div>
   </div>
 
-  <!-- ── Metas calóricas (nutricionista) ── -->
-  <div class="section-title">🍽️ Metas calóricas</div>
-  <div class="card">
-    <h2>📋 Dados da nutricionista</h2>
-    <p class="hint">Preencha os valores definidos pela sua nutricionista. Quando preenchidos, substituem o cálculo automático de Mifflin-St Jeor.</p>
-    <form id="form-nutri" onsubmit="salvarNutri(event)">
-      <div class="duo">
-        <div>
-          <label class="fld">Basal metabólico (kcal/dia)</label>
-          <input id="basal_metabolico" type="number" min="1000" max="4000" step="1" placeholder="ex: 1922" value="{{BASAL_METABOLICO}}">
-        </div>
-        <div>
-          <label class="fld">Meta calórica diária (kcal/dia)</label>
-          <input id="meta_calorica_diaria" type="number" min="1000" max="4000" step="1" placeholder="ex: 1800" value="{{META_CALORICA}}">
-        </div>
-      </div>
-      <p style="font-size:.82rem;color:#6b7280;margin-top:10px;line-height:1.5">
-        A <b>meta calórica diária</b> é usada como base nos cardápios. O gasto do treino é somado por cima automaticamente em dias de treino.
-      </p>
-      <button type="submit" id="btn-nutri">Salvar metas</button>
-      <div id="st-nutri" class="status"></div>
-    </form>
-  </div>
-
   <!-- ── Academia ── -->
   <div class="section-title">🏋️ Academia / Musculação</div>
   <div class="card">
@@ -2682,15 +2665,28 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
     <div id="st-academia" class="status"></div>
   </div>
 
-  <!-- ── Aparência ── -->
-  <div class="section-title">🎨 Aparência</div>
+  <!-- ── Metas calóricas (nutricionista) ── -->
+  <div class="section-title">🍽️ Metas calóricas</div>
   <div class="card">
-    <h2>🌗 Tema do portal</h2>
-    <p class="hint">Escolha entre o tema claro ou escuro. A preferência fica salva no dispositivo.</p>
-    <div class="theme-toggle">
-      <button type="button" id="tema-claro" class="theme-opt" onclick="setTema('light')">☀️ Claro</button>
-      <button type="button" id="tema-escuro" class="theme-opt" onclick="setTema('dark')">🌙 Escuro</button>
-    </div>
+    <h2>📋 Dados da nutricionista</h2>
+    <p class="hint">Preencha os valores definidos pela sua nutricionista. Quando preenchidos, substituem o cálculo automático de Mifflin-St Jeor.</p>
+    <form id="form-nutri" onsubmit="salvarNutri(event)">
+      <div class="duo">
+        <div>
+          <label class="fld">Basal metabólico (kcal/dia)</label>
+          <input id="basal_metabolico" type="number" min="1000" max="4000" step="1" placeholder="ex: 1922" value="{{BASAL_METABOLICO}}">
+        </div>
+        <div>
+          <label class="fld">Meta calórica diária (kcal/dia)</label>
+          <input id="meta_calorica_diaria" type="number" min="1000" max="4000" step="1" placeholder="ex: 1800" value="{{META_CALORICA}}">
+        </div>
+      </div>
+      <p style="font-size:.82rem;color:#6b7280;margin-top:10px;line-height:1.5">
+        A <b>meta calórica diária</b> é usada como base nos cardápios. O gasto do treino é somado por cima automaticamente em dias de treino.
+      </p>
+      <button type="submit" id="btn-nutri">Salvar metas</button>
+      <div id="st-nutri" class="status"></div>
+    </form>
   </div>
 
   </div>
@@ -2718,58 +2714,60 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
   </div>
 
   <div class="card">
-    <h2>⚙️ Como calcular suas zonas?</h2>
-    <p class="hint">Existem dois métodos. Não sabe qual usar? Comece pelo <b>% FC Máxima</b> — é o mais simples.</p>
-    <div class="metodo-tabs">
-      <button class="tab-btn" id="tab-fcmax" onclick="setMetodo('fcmax')">% FC Máxima</button>
-      <button class="tab-btn" id="tab-ll" onclick="setMetodo('ll')">% Limiar Lático (LL)</button>
-    </div>
-    <div id="desc-fcmax" class="metodo-desc">
-      <b>Simples e popular</b> — usa o maior batimento cardíaco que seu coração consegue atingir.
-      Ideal para quem está começando. Estimativa rápida: <b>220 − sua idade</b>. Para medir de verdade:
-      faça um sprint de 3 min no limite e anote a FC mais alta que aparecer.
-    </div>
-    <div id="desc-ll" class="metodo-desc" style="display:none">
-      <b>Mais preciso</b> — usa o ponto onde seu corpo começa a acumular ácido lático e você
-      fica ofegante sem conseguir manter o ritmo por muito tempo.
-      <b>Como medir:</b> pedala em ritmo forte e constante por 30 min e anota a FC média dos <em>últimos 20 min</em>.
-      Não sabe? Estime como <b>90% da sua FC máxima</b>.
-    </div>
-    <div class="duo" style="margin-top:14px">
-      <div>
-        <label class="fld">FC Máxima (bpm)</label>
-        <input type="number" id="fc_max" min="100" max="230" placeholder="ex: 185">
-      </div>
-      <div id="ll-field" style="display:none">
-        <label class="fld">Limiar Lático (bpm)</label>
-        <input type="number" id="limiar" min="100" max="210" placeholder="ex: 165">
-      </div>
-    </div>
-    <button class="sec" onclick="calcularZonasAuto()" style="margin-top:12px">⚡ Calcular zonas automaticamente</button>
-    <div id="st-calc" class="status"></div>
-  </div>
+    <h2>🎯 Como preencher suas zonas</h2>
+    <p class="hint">Três caminhos para os mesmos números — use o que for mais fácil pra você.
+      Dá para editar tudo à mão depois, no card abaixo.</p>
 
-  <div class="card">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-      <h2 style="margin-bottom:0">📥 Importar do Garmin</h2>
-      <span id="garmin-badge" class="garmin-badge" style="display:none">✓ Conectado</span>
+    <div class="metodo-bloco">
+      <p class="metodo-nome">1. Calcular a partir da sua FC</p>
+      <div class="metodo-tabs">
+        <button class="tab-btn" id="tab-fcmax" onclick="setMetodo('fcmax')">% FC Máxima</button>
+        <button class="tab-btn" id="tab-ll" onclick="setMetodo('ll')">% Limiar Lático (LL)</button>
+      </div>
+      <div id="desc-fcmax" class="metodo-desc">
+        <b>Simples e popular</b> — o maior batimento que seu coração atinge. Estimativa rápida:
+        <b>220 − sua idade</b>. Para medir de verdade, faça um sprint de 3 min no limite e anote a FC mais alta.
+      </div>
+      <div id="desc-ll" class="metodo-desc" style="display:none">
+        <b>Mais preciso</b> — o ponto em que você fica ofegante e não segura mais o ritmo.
+        Pedale forte e constante por 30 min e anote a FC média dos <em>últimos 20 min</em>.
+        Não sabe? Estime como <b>90% da FC máxima</b>.
+      </div>
+      <div class="duo" style="margin-top:12px">
+        <div>
+          <label class="fld" style="margin-top:0">FC Máxima (bpm)</label>
+          <input type="number" id="fc_max" min="100" max="230" placeholder="ex: 185">
+        </div>
+        <div id="ll-field" style="display:none">
+          <label class="fld" style="margin-top:0">Limiar Lático (bpm)</label>
+          <input type="number" id="limiar" min="100" max="210" placeholder="ex: 165">
+        </div>
+      </div>
+      <button class="sec" onclick="calcularZonasAuto()" style="margin-top:12px">⚡ Calcular zonas</button>
+      <div id="st-calc" class="status"></div>
     </div>
-    <p class="hint">Puxa as zonas oficiais do seu perfil de ciclismo direto da conta Garmin — sem print, sem IA.</p>
-    <div id="garmin-warn" class="garmin-warn" style="display:none">
-      ⚠️ Garmin não conectado. <a href="/workout/integracao">Conectar agora →</a>
-    </div>
-    <button id="btnGarmin" onclick="importarGarmin()">📥 Importar zonas do Garmin</button>
-    <div id="stGarmin" class="status"></div>
-  </div>
 
-  <div class="card">
-    <h2>📷 Ler de uma imagem</h2>
-    <p class="hint">Tire um print da tela de zonas no app/relógio Garmin e envie — a IA preenche os campos.</p>
-    <div class="upload-row">
-      <input type="file" id="img" accept="image/*">
-      <button class="sec" id="btnLer" style="width:auto;padding:11px 16px;margin-top:0" onclick="lerImagem()">🤖 Ler zonas</button>
+    <div class="metodo-bloco">
+      <p class="metodo-nome">2. Importar do Garmin
+        <span id="garmin-badge" class="garmin-badge" style="display:none">✓ Conectado</span>
+      </p>
+      <p class="metodo-sub">As zonas oficiais do seu perfil de ciclismo, direto da conta — sem print, sem IA.</p>
+      <div id="garmin-warn" class="garmin-warn" style="display:none">
+        ⚠️ Garmin não conectado. <a href="/workout/integracao">Conectar agora →</a>
+      </div>
+      <button class="sec" id="btnGarmin" onclick="importarGarmin()" style="margin-top:10px">📥 Importar zonas do Garmin</button>
+      <div id="stGarmin" class="status"></div>
     </div>
-    <div id="stImg" class="status"></div>
+
+    <div class="metodo-bloco">
+      <p class="metodo-nome">3. Ler de um print</p>
+      <p class="metodo-sub">Tire um print da tela de zonas no app/relógio Garmin — a IA preenche os campos.</p>
+      <div class="upload-row" style="margin-top:10px">
+        <input type="file" id="img" accept="image/*">
+        <button class="sec" id="btnLer" style="width:auto;padding:11px 16px;margin-top:0" onclick="lerImagem()">🤖 Ler zonas</button>
+      </div>
+      <div id="stImg" class="status"></div>
+    </div>
   </div>
 
   <div class="card">
@@ -2780,8 +2778,10 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
     <div id="st-zonas" class="status"></div>
   </div>
 
+  <!-- ── Potência ── -->
+  <div class="section-title">⚡ Potência (watts)</div>
   <div class="card">
-    <h2>⚡ Potência (FTP)</h2>
+    <h2>🎯 Seu FTP</h2>
     <p class="hint">FTP = Functional Threshold Power — watts que você sustenta por ~1h. Base para calcular as 7 zonas de potência.</p>
 
     <div style="background:#f9fafb;border-radius:9px;padding:12px 14px;margin-bottom:14px">
@@ -2813,6 +2813,17 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
     <div id="zonas-pot-preview" style="display:none;margin-top:12px">
       <p style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:6px">ZONAS DE POTÊNCIA CALCULADAS</p>
       <div id="zonas-pot-lista"></div>
+    </div>
+  </div>
+
+  <!-- ── Aparência ── -->
+  <div class="section-title">🎨 Aparência</div>
+  <div class="card">
+    <h2>🌗 Tema do portal</h2>
+    <p class="hint">Escolha entre o tema claro ou escuro. A preferência fica salva no dispositivo.</p>
+    <div class="theme-toggle">
+      <button type="button" id="tema-claro" class="theme-opt" onclick="setTema('light')">☀️ Claro</button>
+      <button type="button" id="tema-escuro" class="theme-opt" onclick="setTema('dark')">🌙 Escuro</button>
     </div>
   </div>
 
