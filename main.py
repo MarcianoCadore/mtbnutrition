@@ -412,19 +412,26 @@ def _link_assinatura(u: dict) -> str:
     est = assinatura_service.estado(u)
     dias = est.get("dias")
 
+    # Quem opera a plataforma não paga por ela — nada a cobrar, nada a mostrar.
+    if est["status"] == "cortesia":
+        return ""
+
     if est["em_trial"]:
-        rotulo = f"🎁 Teste · {dias}d" if dias else "🎁 Teste"
+        rotulo = f"🎁 {dias}d" if dias else "🎁 Teste"
+        titulo = f"Teste grátis — {dias} dia(s) restante(s)" if dias else "Teste grátis"
         cor = "#ffd479"
     elif not est["acesso"]:
         rotulo = "⏳ Assinar"
+        titulo = "Seu acesso venceu — renovar"
         cor = "#ff9b9b"
     else:
         ate = est.get("pago_ate")
-        rotulo = f"💚 Ativa até {ate.strftime('%d/%m')}" if ate else "💚 Assinatura"
+        rotulo = "💚 Assinatura"
+        titulo = f"Assinatura ativa até {ate.strftime('%d/%m/%Y')}" if ate else "Assinatura ativa"
         cor = "inherit"
 
     return (f'<a href="/assinar" class="assinatura-nav-link" style="color:{cor}" '
-            f'title="Ver assinatura e pagamento">{rotulo}</a>')
+            f'title="{titulo}">{rotulo}</a>')
 
 
 _AVISO_NUTRICAO = (

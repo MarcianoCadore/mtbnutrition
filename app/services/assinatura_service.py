@@ -45,7 +45,29 @@ AVISOS_DIAS = (3, 1)
 """Dias restantes que disparam aviso no WhatsApp. O dia 0 (venceu) tem
 mensagem própria."""
 
-STATUS_COM_ACESSO = ("trial", "ativa")
+STATUS_COM_ACESSO = ("trial", "ativa", "cortesia")
+
+LOGIN_ADMIN = "marciano"
+"""Quem opera a plataforma não paga assinatura para usar o próprio trabalho.
+
+A regra é **por login e automática**, não um campo que alguém precisa lembrar
+de marcar: se dependesse de configuração, um erro de migração ou um script mal
+rodado trancaria o dono para fora do próprio app — e ele descobriria isso na
+hora em que fosse liberar o pagamento de outra pessoa.
+"""
+
+
+def e_cortesia(u: dict | None) -> bool:
+    """Conta que não paga: o admin, ou alguém marcado como cortesia.
+
+    Cortesia serve para sócio, parceiro, colaborador e conta de demonstração —
+    acesso completo, sem vencimento, e fora da conta de receita.
+    """
+    if not u:
+        return False
+    if (u.get("login") or "").strip().lower() == LOGIN_ADMIN:
+        return True
+    return (u.get("assinatura") or {}).get("status") == "cortesia"
 
 
 # ─── Leitura do estado ───────────────────────────────────────────────────────
@@ -110,9 +132,14 @@ def estado(u: dict | None, ref: datetime | None = None) -> dict:
     job diário pode não ter rodado (servidor reiniciado, hora errada) e ninguém
     deve continuar entrando por causa disso.
     """
+    ref = ref or datetime.now(timezone.utc)
+
+    if e_cortesia(u):
+        return {"status": "cortesia", "acesso": True, "em_trial": False,
+                "dias": None, "pago_ate": None, "trial_fim": None}
+
     a = _bloco(u)
     status = a.get("status", "expirada")
-    ref = ref or datetime.now(timezone.utc)
 
     vencida = False
     if status == "trial":
@@ -148,7 +175,10 @@ async def estado_por_id(user_id) -> dict | None:
         oid = user_id if isinstance(user_id, ObjectId) else ObjectId(str(user_id))
     except Exception:
         return None
-    u = await db.users.find_one({"_id": oid}, {"assinatura": 1})
+    # `login` é obrigatório na projeção: é por ele que a cortesia do admin é
+    # reconhecida. Sem o campo, `e_cortesia` não teria como decidir e o dono da
+    # plataforma cairia no paywall.
+    u = await db.users.find_one({"_id": oid}, {"assinatura": 1, "login": 1})
     if u is None:
         return None
     return estado(u)
@@ -202,6 +232,24 @@ async def marcar_expirada(user_id) -> None:
 async def cancelar(user_id) -> None:
     """Desliga a assinatura à mão (inadimplência, pedido do usuário, abuso)."""
     await _set(user_id, {"assinatura.status": "cancelada"})
+
+
+async def dar_cortesia(user_id, motivo: str = "") -> dict:
+    """Acesso permanente sem pagamento — sócio, parceiro, demonstração.
+
+    Diferente de "ativa por 30 dias": não vence, não recebe aviso de cobrança e
+    não entra na conta de receita do painel.
+    """
+    bloco = {
+        "status": "cortesia",
+        "trial_inicio": None, "trial_fim": None, "pago_ate": None,
+        "confirmado_em": datetime.now(timezone.utc),
+        "motivo": motivo or None,
+        "avisos_enviados": [],
+    }
+    await _set(user_id, {"assinatura": bloco})
+    logger.info("Cortesia concedida a %s (%s)", user_id, motivo or "sem motivo")
+    return bloco
 
 
 async def reabrir_trial(user_id, dias: int = TRIAL_DIAS) -> dict:

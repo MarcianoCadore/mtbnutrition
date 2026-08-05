@@ -145,7 +145,9 @@ function statusAss(u) { return (u.assinatura || {}).status || 'expirada'; }
 function renderStats() {
   const total     = USERS.length;
   const emTrial   = USERS.filter(u => statusAss(u) === 'trial').length;
+  // Cortesia não é receita: o admin e quem foi liberado de graça não pagam.
   const assinando = USERS.filter(u => statusAss(u) === 'ativa').length;
+  const cortesia  = USERS.filter(u => statusAss(u) === 'cortesia').length;
   const perdidos  = USERS.filter(u => ['expirada','cancelada'].includes(statusAss(u))).length;
   const mrr       = (assinando * 24.99).toFixed(2).replace('.', ',');
   document.getElementById('stats').innerHTML = `
@@ -153,6 +155,7 @@ function renderStats() {
     <div class="stat"><div class="val">${assinando}</div><div class="lbl">Assinantes</div></div>
     <div class="stat"><div class="val">R$ ${mrr}</div><div class="lbl">Receita/mês</div></div>
     <div class="stat"><div class="val">${emTrial}</div><div class="lbl">Em teste</div></div>
+    <div class="stat"><div class="val">${cortesia}</div><div class="lbl">Cortesia</div></div>
     <div class="stat"><div class="val">${perdidos}</div><div class="lbl">Vencidos</div></div>`;
 }
 
@@ -195,14 +198,23 @@ function renderCard(u) {
   const rotulos = {
     trial:     `<span class="badge pend">🎁 Teste — ${dias != null ? dias + 'd' : ''}</span>`,
     ativa:     `<span class="badge on">💚 Ativa até ${ass.ate || '—'}</span>`,
+    cortesia:  '<span class="badge on">♾️ Cortesia</span>',
     expirada:  '<span class="badge off">⏳ Vencida</span>',
     cancelada: '<span class="badge off">✕ Cancelada</span>',
   };
   const badgeAss = rotulos[st] || rotulos.expirada;
-  const btnsAss = st === 'ativa'
-    ? `<button class="btn-sm btn-bloquear" onclick="setAssinatura('${u.id}','expirar')">Encerrar</button>`
-    : `<button class="btn-sm btn-habilitar" onclick="setAssinatura('${u.id}','renovar')">+30 dias</button>
-       <button class="btn-sm btn-chat-on" onclick="setAssinatura('${u.id}','trial')">+14d teste</button>`;
+
+  // O admin é cortesia por regra de login — não há o que alterar no cartão dele.
+  let btnsAss;
+  if (u.admin) {
+    btnsAss = '<span style="font-size:.75rem;color:var(--muted)">conta que opera a plataforma</span>';
+  } else if (st === 'ativa' || st === 'cortesia') {
+    btnsAss = `<button class="btn-sm btn-bloquear" onclick="setAssinatura('${u.id}','expirar')">Encerrar</button>`;
+  } else {
+    btnsAss = `<button class="btn-sm btn-habilitar" onclick="setAssinatura('${u.id}','renovar')">+30 dias</button>
+       <button class="btn-sm btn-chat-on" onclick="setAssinatura('${u.id}','trial')">+14d teste</button>
+       <button class="btn-sm btn-chat-on" onclick="setAssinatura('${u.id}','cortesia')">♾️ Cortesia</button>`;
+  }
 
   return `<div class="user-card" id="row-${u.id}">
     <div class="user-head">
@@ -359,14 +371,17 @@ async function carregarCusto() {
       return;
     }
 
-    const receita = d.usuarios.length * d.mensalidade_brl;
+    // Receita conta só quem paga — cortesia entra como custo, não como perda.
+    const receita = d.pagantes * d.mensalidade_brl;
     const linhas = d.usuarios.map(u => {
-      const cls = u.margem_brl < 0 ? 'margem-ruim' : 'margem-ok';
+      const margem = u.cortesia
+        ? '<span style="color:var(--muted)">cortesia</span>'
+        : `<span class="${u.margem_brl < 0 ? 'margem-ruim' : 'margem-ok'}">${brl(u.margem_brl)}</span>`;
       return `<tr>
-        <td>${u.login}</td>
+        <td>${u.login}${u.cortesia ? ' ♾️' : ''}</td>
         <td class="num">${u.chamadas}</td>
         <td class="num">${brl(u.custo_brl)}</td>
-        <td class="num ${cls}">${brl(u.margem_brl)}</td>
+        <td class="num">${margem}</td>
       </tr>`;
     }).join('');
 
@@ -460,6 +475,7 @@ async def admin_page(request: Request):
             "telefone_verificado": bool(u.get("telefone_verificado", False)),
             "pagamento_confirmado": bool(u.get("pagamento_confirmado", False)),
             "assinatura": _ass(u),
+            "admin": u.get("login") == _ADMIN_LOGIN,
             "features": u.get("features", {}),
             "criado_em": u["criado_em"].strftime("%d/%m/%Y %H:%M") if u.get("criado_em") else "",
         }
@@ -494,26 +510,37 @@ async def custo_ia(request: Request, mes: str | None = None):
     # Nome do usuário junto do custo — um ObjectId não diz nada ao admin.
     db = get_db()
     ids = [ObjectId(uid) for uid in por_usuario if uid != "sem_usuario"]
-    nomes = {}
+    perfis = {}
     if ids:
-        cursor = db.users.find({"_id": {"$in": ids}}, {"login": 1, "nome": 1})
-        nomes = {str(u["_id"]): (u.get("login") or u.get("nome") or "?")
-                 async for u in cursor}
+        cursor = db.users.find({"_id": {"$in": ids}},
+                               {"login": 1, "nome": 1, "assinatura": 1})
+        perfis = {str(u["_id"]): u async for u in cursor}
 
-    usuarios = sorted(
-        [{"user_id": uid, "login": nomes.get(uid, uid[:8]), **dados}
-         for uid, dados in por_usuario.items()],
-        key=lambda x: x["custo_brl"], reverse=True,
-    )
-    for u in usuarios:
-        # Positivo = sobra. Um assinante no vermelho aparece com margem negativa.
-        u["margem_brl"] = round(_MENSALIDADE_BRL - u["custo_brl"], 2)
+    usuarios = []
+    for uid, dados in por_usuario.items():
+        perfil = perfis.get(uid, {})
+        cortesia = assinatura_service.e_cortesia(perfil)
+        usuarios.append({
+            "user_id":  uid,
+            "login":    perfil.get("login") or perfil.get("nome") or uid[:8],
+            "cortesia": cortesia,
+            # Margem só faz sentido para quem paga. Para cortesia o número
+            # relevante é o custo puro — é o que a operação gasta, não prejuízo.
+            "margem_brl": None if cortesia else round(_MENSALIDADE_BRL - dados["custo_brl"], 2),
+            **dados,
+        })
+    usuarios.sort(key=lambda x: x["custo_brl"], reverse=True)
+
+    pagantes = [u for u in usuarios if not u["cortesia"]]
+    custo_cortesia = round(sum(u["custo_brl"] for u in usuarios if u["cortesia"]), 2)
 
     return JSONResponse({
         "mes": mes,
         "mensalidade_brl": _MENSALIDADE_BRL,
         "total": total,
         "usuarios": usuarios,
+        "pagantes": len(pagantes),
+        "custo_cortesia_brl": custo_cortesia,
         "features": por_feature,
     })
 
@@ -591,12 +618,24 @@ async def alterar_assinatura(request: Request):
     user_id = body.get("user_id")
     acao = body.get("acao")
 
-    if not user_id or acao not in ("trial", "expirar", "renovar"):
+    if not user_id or acao not in ("trial", "expirar", "renovar", "cortesia"):
         return JSONResponse({"erro": "Parâmetros inválidos."}, status_code=400)
     try:
-        ObjectId(user_id)
+        oid = ObjectId(user_id)
     except Exception:
         return JSONResponse({"erro": "user_id inválido."}, status_code=400)
+
+    # A cortesia do admin vem do login e não é editável: um clique errado aqui
+    # trancaria o dono para fora da própria plataforma.
+    alvo = await get_db().users.find_one({"_id": oid}, {"login": 1})
+    if (alvo or {}).get("login") == _ADMIN_LOGIN:
+        return JSONResponse(
+            {"erro": "A conta que opera a plataforma tem acesso permanente."},
+            status_code=400)
+
+    if acao == "cortesia":
+        await assinatura_service.dar_cortesia(user_id, motivo="liberado pelo admin")
+        return JSONResponse({"ok": True, "status": "cortesia"})
 
     if acao == "trial":
         dias = body.get("dias")

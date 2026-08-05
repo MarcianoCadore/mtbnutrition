@@ -29,8 +29,13 @@ HTML = """<!DOCTYPE html>
     nav .logo { font-size: 1.35rem; font-weight: 700; }
     nav .sub  { font-size: 0.8rem; opacity: .8; }
     nav > div:first-of-type { flex-shrink: 0; }
-    nav .nav-links { margin-left: auto; display: flex; gap: 16px; align-items: center; }
+    /* flex-wrap + justify-end: com muitos itens (nutrição habilitada + admin +
+       assinatura) a barra passava a empurrar o layout em vez de quebrar. */
+    nav .nav-links { margin-left: auto; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px 14px; align-items: center; }
     nav .nav-links a { color: #fff; text-decoration: none; font-size: 0.88rem; opacity: .85; white-space: nowrap; }
+    /* Status de conexão é ícone: ocupa o espaço de um emoji e o rótulo vive no
+       tooltip. Um texto de 17 caracteres no header não paga o que informa. */
+    nav .nav-links a.nav-icone { font-size: 1.05rem; opacity: .95; }
     nav .nav-links a:hover { opacity: 1; text-decoration: underline; }
     nav .nav-toggle { display: none; margin-left: auto; background: rgba(255,255,255,.15); border: none; color: #fff; font-size: 1.4rem; line-height: 1; width: 42px; height: 42px; border-radius: 8px; cursor: pointer; }
     nav .nav-user { color: rgba(255,255,255,.75); font-size: 0.85rem; font-weight: 600; white-space: nowrap; }
@@ -2052,21 +2057,28 @@ async def portal(request: Request):
         except Exception:
             pass
 
+    # Rótulos curtos: são 5 links de nutrição e, somados a Evolução, Provas,
+    # Perfil, Garmin, nome, admin e assinatura, o header passava de 12 itens.
     nav_nutri = (
-        '<a href="/nutrition/config">⏰ Horários</a>\n'
+        '<a href="/nutrition/guia">🥗 Nutrição</a>\n'
         '    <a href="/nutrition/alimentos">🍽️ Alimentos</a>\n'
-        '    <a href="/nutrition/guia">🥗 Nutrição</a>\n'
-        '    <a href="/nutrition/ajuste">🍔 Fuga do plano</a>\n'
-        '    <a href="/nutrition/chat">💬 Ajustar cardápio</a>'
+        '    <a href="/nutrition/chat">💬 Cardápio</a>\n'
+        '    <a href="/nutrition/ajuste">🍔 Fuga</a>\n'
+        '    <a href="/nutrition/config" class="nav-icone" title="Horários das refeições">⏰</a>'
     ) if perder_peso else ""
 
-    nav_user = f'<span class="nav-user">👤 {nome}</span>' if nome else ""
+    # Só o primeiro nome, e sem o 👤 — que já é o ícone do link "Perfil" ao
+    # lado. O nome inteiro é o item mais largo da barra e informa o mesmo.
+    primeiro_nome = (nome or "").split(" ")[0]
+    nav_user = f'<span class="nav-user" title="{nome}">{primeiro_nome}</span>' if primeiro_nome else ""
 
     nutricao_on_js = "true" if perder_peso else "false"
 
     garmin_conectado = bool(((u.get("integracao") or {}).get("garmin") or {}).get("email"))
+    # Conectado é status, não ação: vira ícone com tooltip. Desconectado
+    # continua com texto — aí é uma pendência que o atleta precisa resolver.
     garmin_nav = (
-        '<a href="/workout/integracao">✅ Garmin conectado</a>'
+        '<a href="/workout/integracao" class="nav-icone" title="Garmin conectado — ver integração">⌚</a>'
         if garmin_conectado else
         '<a href="/workout/integracao">⌚ Conectar Garmin</a>'
     )

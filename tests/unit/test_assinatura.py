@@ -60,6 +60,54 @@ class TestAssinaturaPaga:
         assert asg.estado(_user(status="cancelada"), AGORA)["acesso"] is False
 
 
+class TestCortesia:
+    def test_admin_tem_acesso_permanente(self):
+        est = asg.estado({"login": "marciano"}, AGORA)
+        assert est["status"] == "cortesia"
+        assert est["acesso"] is True
+        assert est["dias"] is None
+
+    def test_admin_ignora_assinatura_vencida_no_banco(self):
+        """A regra é por login: um erro de migração não pode trancar o dono."""
+        u = {"login": "marciano",
+             "assinatura": {"status": "expirada", "pago_ate": AGORA - timedelta(days=90)}}
+        assert asg.estado(u, AGORA)["acesso"] is True
+
+    def test_login_do_admin_e_case_insensitive(self):
+        assert asg.e_cortesia({"login": "Marciano"}) is True
+        assert asg.e_cortesia({"login": " marciano "}) is True
+
+    def test_cortesia_explicita_tem_acesso_sem_vencer(self):
+        est = asg.estado({"login": "socio", "assinatura": {"status": "cortesia"}}, AGORA)
+        assert est["acesso"] is True
+        assert est["dias"] is None
+
+    def test_atleta_comum_nao_e_cortesia(self):
+        assert asg.e_cortesia({"login": "stefani"}) is False
+
+    def test_cortesia_nao_entra_na_faixa_de_aviso(self):
+        """`dias is None` mantém a conta fora de AVISOS_DIAS — ninguém recebe
+        cobrança de algo que não paga."""
+        est = asg.estado({"login": "marciano"}, AGORA)
+        assert est["dias"] not in asg.AVISOS_DIAS
+
+
+@pytest.mark.asyncio
+class TestDarCortesia:
+    async def test_concede_acesso_permanente(self, fake_db):
+        from bson import ObjectId
+        oid = ObjectId()
+        await fake_db.users.insert_one({"_id": oid, "login": "parceiro"})
+
+        await asg.dar_cortesia(str(oid), motivo="parceria")
+
+        u = await fake_db.users.find_one({"_id": oid})
+        est = asg.estado(u)
+        assert est["status"] == "cortesia"
+        assert est["acesso"] is True
+        assert u["assinatura"]["motivo"] == "parceria"
+
+
 class TestContasLegadas:
     def test_conta_sem_bloco_de_assinatura_mantem_acesso(self):
         """Migração é responsabilidade do script — não trancar ninguém fora."""
