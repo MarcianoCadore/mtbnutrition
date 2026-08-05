@@ -22,6 +22,11 @@ os.makedirs(UPLOADS_DIR, exist_ok=True)
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+_DIAS_PROVA_RECENTE = 30
+"""Janela em que uma prova já corrida ainda aparece no painel. Some depois:
+o card é sobre o que vem pela frente, e o histórico completo fica em
+/workout/calendario."""
+
 
 class TreinoSemana(BaseModel):
     data: str
@@ -1498,22 +1503,30 @@ async def proxima_prova_rt(request: Request):
             itens = novos
             await salvar_focos(prova["_id"], novos)
 
-    # Provas seguintes: o atleta que tem calendário quer ver o que vem depois.
-    # Vão sem focos de propósito — gerar focos por IA para cada prova futura
-    # multiplicaria o custo para informar o que só importa quando ela chegar.
+    # As demais provas do calendário. Inclui as recém-realizadas: o atleta que
+    # correu no domingo passado espera ver a prova ali — sumir com ela no dia
+    # seguinte dá a impressão de que o cadastro se perdeu.
     from app.services.prova_service import listar_provas
     hoje = hoje_local().isoformat()
-    seguintes = [
-        {
+    seguintes, recentes = [], []
+
+    for p in await listar_provas(user_id):
+        if not p.get("data") or p["_id"] == prova["_id"]:
+            continue
+        d = dias_ate(p["data"])
+        linha = {
             "id": p["_id"], "nome": p.get("nome"), "data": p.get("data"),
             "local": p.get("local"), "distancia_km": p.get("distancia_km"),
             "altimetria_m": p.get("altimetria_m"), "terreno": p.get("terreno"),
-            "dias_restantes": dias_ate(p["data"]),
-            "fase_label": FASE_LABEL.get(fase_periodizacao(semanas_ate(p["data"]))),
+            "dias_restantes": d,
         }
-        for p in await listar_provas(user_id)
-        if p.get("data") and p["data"] >= hoje and p["_id"] != prova["_id"]
-    ]
+        if p["data"] >= hoje:
+            linha["fase_label"] = FASE_LABEL.get(fase_periodizacao(semanas_ate(p["data"])))
+            seguintes.append(linha)
+        elif d >= -_DIAS_PROVA_RECENTE:
+            recentes.append(linha)
+
+    recentes.sort(key=lambda x: x["data"], reverse=True)
 
     return {
         "prova": prova,
@@ -1523,6 +1536,7 @@ async def proxima_prova_rt(request: Request):
         "fase_label": FASE_LABEL.get(fase, fase),
         "focos": itens or [],
         "seguintes": seguintes,
+        "recentes": recentes,
     }
 
 

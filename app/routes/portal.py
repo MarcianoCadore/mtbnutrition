@@ -73,6 +73,10 @@ HTML = """<!DOCTYPE html>
     .prova-panel .ps-nome small { opacity: .75; font-weight: 400; font-size: .8rem; }
     .prova-panel .ps-dias { opacity: .85; white-space: nowrap; flex-shrink: 0; }
     .prova-panel .ps-fase { background: rgba(255,255,255,.16); border-radius: 20px; padding: 2px 9px; font-size: .68rem; font-weight: 700; white-space: nowrap; flex-shrink: 0; }
+    /* Prova já corrida continua visível, mas apagada: informa sem competir
+       com a que ainda exige preparo. */
+    .prova-panel .ps-linha.ps-passada { opacity: .62; }
+    .prova-panel .ps-fase.ps-feita { background: rgba(255,255,255,.1); font-weight: 600; }
     @media (max-width: 640px) {
       .prova-panel .ps-linha { flex-wrap: wrap; gap: 4px 8px; }
       .prova-panel .ps-nome { flex-basis: 100%; order: 3; }
@@ -1996,28 +2000,42 @@ async function carregarProva() {
   const focos = (d.focos || []).map(f => `<li><span>🎯</span><span>${esc(f)}</span></li>`).join('');
   const focosHTML = focos ? `<div class="pp-focos"><div class="pf-titulo">Focos até a prova</div><ul>${focos}</ul></div>` : '';
 
-  // Provas seguintes em lista compacta: dar o mesmo destaque a uma prova daqui
+  // Demais provas em lista compacta: dar o mesmo destaque a uma prova daqui
   // 25 dias e a outra daqui 4 meses esconderia a que exige ação agora.
+  const linhaProva = (s, feita) => {
+    const [, sm, sd] = (s.data || '').split('-');
+    const sDataFmt = sd ? (sd + '/' + sm) : (s.data || '');
+    const dias = s.dias_restantes;
+    const quando = feita
+      ? (dias === 0 ? 'hoje' : (dias === -1 ? 'ontem' : 'há ' + Math.abs(dias) + ' dias'))
+      : (dias <= 0 ? 'hoje' : (dias === 1 ? '1 dia' : dias + ' dias'));
+    const det = [];
+    if (s.local) det.push(esc(s.local));
+    if (s.distancia_km) det.push(s.distancia_km + ' km');
+    const tag = feita
+      ? '<span class="ps-fase ps-feita">✓ realizada</span>'
+      : `<span class="ps-fase">${esc(s.fase_label || '')}</span>`;
+    return `<div class="ps-linha${feita ? ' ps-passada' : ''}">
+      <span class="ps-data">${sDataFmt}</span>
+      <span class="ps-nome">${esc(s.nome)}${det.length ? ` <small>${det.join(' · ')}</small>` : ''}</span>
+      <span class="ps-dias">${quando}</span>
+      ${tag}
+    </div>`;
+  };
+
   const seguintes = d.seguintes || [];
-  const seguintesHTML = seguintes.length ? `
-    <div class="pp-seguintes">
+  const recentes  = d.recentes  || [];
+  let seguintesHTML = '';
+  if (seguintes.length) {
+    seguintesHTML += `<div class="pp-seguintes">
       <div class="pf-titulo">Depois dessa (${seguintes.length})</div>
-      ${seguintes.map(s => {
-        const [sy, sm, sd] = (s.data || '').split('-');
-        const sDataFmt = sd ? (sd + '/' + sm) : (s.data || '');
-        const sDias = s.dias_restantes;
-        const sCount = sDias <= 0 ? 'hoje' : (sDias === 1 ? '1 dia' : sDias + ' dias');
-        const det = [];
-        if (s.local) det.push(esc(s.local));
-        if (s.distancia_km) det.push(s.distancia_km + ' km');
-        return `<div class="ps-linha">
-          <span class="ps-data">${sDataFmt}</span>
-          <span class="ps-nome">${esc(s.nome)}${det.length ? ` <small>${det.join(' · ')}</small>` : ''}</span>
-          <span class="ps-dias">${sCount}</span>
-          <span class="ps-fase">${esc(s.fase_label || '')}</span>
-        </div>`;
-      }).join('')}
-    </div>` : '';
+      ${seguintes.map(s => linhaProva(s, false)).join('')}</div>`;
+  }
+  if (recentes.length) {
+    seguintesHTML += `<div class="pp-seguintes">
+      <div class="pf-titulo">Já realizada${recentes.length > 1 ? 's' : ''}</div>
+      ${recentes.map(s => linhaProva(s, true)).join('')}</div>`;
+  }
 
   panel.innerHTML = `<div class="prova-panel">
     <div class="pp-top">
