@@ -18,6 +18,7 @@ import anthropic
 import pytz
 
 from config.settings import settings
+from app.services import custo_ia_service
 from app.services.mongo_service import get_db
 from app.services.user_service import get_por_id
 
@@ -283,10 +284,11 @@ REGRAS:
 - Se o histórico for curto/vazio, diga isso no estado_forma e recomende progressão conservadora."""
 
 
-async def _chamar_parecer_ia(prompt: str) -> tuple[dict, str]:
+async def _chamar_parecer_ia(prompt: str, user_id: str | None = None) -> tuple[dict, str]:
     """Opus (fisiologista) com fallback para Sonnet em erro de cota.
 
     Retorna (parecer, nome_do_modelo). Levanta exceção se ambos falharem.
+    É a chamada mais cara da plataforma — daí o registro de custo.
     """
     try:
         response = await _client.messages.create(
@@ -296,6 +298,8 @@ async def _chamar_parecer_ia(prompt: str) -> tuple[dict, str]:
             messages=[{"role": "user", "content": prompt}],
         )
         modelo = "claude-opus"
+        await custo_ia_service.registrar(user_id, "parecer_fisiologico",
+                                         _MODEL_PARECER, response)
     except Exception as e:
         if not _is_quota_error(e):
             raise
@@ -306,6 +310,8 @@ async def _chamar_parecer_ia(prompt: str) -> tuple[dict, str]:
             messages=[{"role": "user", "content": prompt}],
         )
         modelo = "claude-sonnet"
+        await custo_ia_service.registrar(user_id, "parecer_fisiologico",
+                                         _MODEL_PARECER_FALLBACK, response)
 
     raw = _extrair_texto(response).strip().replace("```json", "").replace("```", "").strip()
     return json.loads(raw), modelo
@@ -353,7 +359,7 @@ async def gerar_parecer_fisiologico(user_id: str, semana_atual: str) -> dict:
 
     prompt = _montar_prompt(atleta, historico, metricas)
     try:
-        parecer_ia, modelo = await _chamar_parecer_ia(prompt)
+        parecer_ia, modelo = await _chamar_parecer_ia(prompt, user_id)
     except Exception as e:
         logger.warning("Parecer via IA falhou (%s) — usando determinístico", e)
         parecer_ia, modelo = _parecer_deterministico(metricas), "deterministico"

@@ -162,7 +162,7 @@ class TestGerarParecer:
     async def test_usa_parecer_da_ia_quando_disponivel(self, fake_db, monkeypatch):
         import app.services.fisiologia_service as fs
 
-        async def _ia_ok(prompt):
+        async def _ia_ok(prompt, user_id=None):
             return ({"estado_forma": "Boa absorção de carga.",
                      "nivel_fadiga": "baixa", "ajuste_carga": "aumentar",
                      "pontos_atencao": [], "recomendacoes": ["Progredir o longão"]},

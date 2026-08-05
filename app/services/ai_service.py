@@ -4,6 +4,7 @@ import json
 import re
 from config.settings import settings
 from app.models.models import Treino, TipoTreino, PlanoAlimentar
+from app.services import custo_ia_service
 from datetime import datetime
 
 _client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
@@ -603,6 +604,7 @@ Responda APENAS em JSON válido, sem markdown, sem texto extra:
             max_tokens=600,
             messages=[{"role": "user", "content": prompt}]
         )
+        await custo_ia_service.registrar(user_id, "analise_pos_treino", _MODEL_ANALISE, resp)
         raw = resp.content[0].text.strip().replace("```json", "").replace("```", "").strip()
         data = json.loads(raw)
         return {

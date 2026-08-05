@@ -8,12 +8,15 @@ import time
 from datetime import datetime, timezone, timedelta
 
 from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
 from contextlib import asynccontextmanager
 
 from app.tasks.scheduler import start_scheduler, stop_scheduler
-from app.routes import workout, nutrition, whatsapp, portal, landing, chat as chat_router, admin as admin_router
-from app.services import user_service
+from app.routes import (
+    workout, nutrition, whatsapp, portal, landing, legal,
+    chat as chat_router, admin as admin_router, assinatura as assinatura_router,
+)
+from app.services import user_service, assinatura_service, custo_ia_service
 from app.services.whatsapp_service import send_message
 from app.services.mongo_service import get_db
 from app import pix
@@ -43,6 +46,7 @@ async def lifespan(app: FastAPI):
     # Garante índices únicos em db.users ao iniciar
     try:
         await user_service.garantir_indices()
+        await custo_ia_service.garantir_indices()
         logger.info("Índices de usuários verificados/criados com sucesso.")
     except Exception as exc:
         logger.error("Falha ao garantir índices de usuários: %s", exc)
@@ -74,9 +78,28 @@ _PUBLIC_PATHS = {
     "/signup",
     "/verificar",
     "/reenviar-codigo",
+    "/termos",
+    "/privacidade",
     "/whatsapp/webhook",
     "/workout/strava/callback",
 }
+
+# ─── Gate de assinatura ──────────────────────────────────────────────────────
+# Quem está em trial ou em dia acessa tudo. Quem venceu cai em "modo leitura":
+# consegue rever o que já treinou, mas não gera semana, não conversa com a IA e
+# não baixa nada. Trancar o histórico junto só gera raiva — o histórico é
+# justamente o que faz a pessoa voltar e pagar.
+
+# Sempre liberados, em qualquer estado: a tela que resolve o vencimento, a saída
+# e o painel do admin (que tem autenticação própria por login).
+_ASSINATURA_LIVRE = ("/assinar", "/logout", "/admin", "/health")
+
+# Em modo leitura, só GET e só sob estes prefixos.
+_LEITURA_PREFIXOS = ("/portal", "/workout")
+
+# Exceções dentro dos prefixos acima: entregam valor novo (arquivo de treino,
+# sincronização, IA) e por isso ficam atrás do paywall mesmo sendo GET.
+_LEITURA_BLOQUEADA = ("/workout/zwo", "/workout/erg", "/workout/garmin")
 
 
 # ─── Widget de chat flutuante ────────────────────────────────────────────────
@@ -310,6 +333,41 @@ def _set_auth_cookie(resp, token: str) -> None:
 
 # ─── Middleware de autenticação ───────────────────────────────────────────────
 
+def _quer_html(request: Request) -> bool:
+    """Navegação de página (redireciona) vs. fetch do portal (JSON 402)."""
+    if request.headers.get("x-requested-with") == "XMLHttpRequest":
+        return False
+    return "text/html" in request.headers.get("accept", "")
+
+
+async def _bloqueio_assinatura(request: Request, user_id: str):
+    """None se pode seguir; a resposta de bloqueio se a assinatura não permite."""
+    path = request.url.path
+    if path.startswith(_ASSINATURA_LIVRE):
+        return None
+
+    est = await assinatura_service.estado_por_id(user_id)
+    if est is None or est["acesso"]:
+        return None
+
+    leitura = (
+        request.method == "GET"
+        and path.startswith(_LEITURA_PREFIXOS)
+        and not path.startswith(_LEITURA_BLOQUEADA)
+    )
+    if leitura:
+        request.state.somente_leitura = True
+        return None
+
+    if _quer_html(request):
+        return RedirectResponse(url="/assinar", status_code=303)
+    return JSONResponse(
+        {"erro": "Seu acesso venceu. Renove a assinatura para continuar.",
+         "assinatura": est["status"], "redirect": "/assinar"},
+        status_code=402,
+    )
+
+
 @app.middleware("http")
 async def auth(request: Request, call_next):
     """Protege todo o portal por cookie de sessão baseado em user_id."""
@@ -321,6 +379,9 @@ async def auth(request: Request, call_next):
 
     if user_id:
         request.state.user_id = user_id
+        bloqueio = await _bloqueio_assinatura(request, user_id)
+        if bloqueio is not None:
+            return bloqueio
         response = await call_next(request)
         # renova a janela de inatividade (sempre usa PORTAL_SESSAO_MIN, ignora TTL original)
         inatividade = settings.PORTAL_SESSAO_MIN * 60
@@ -334,6 +395,57 @@ async def auth(request: Request, call_next):
 # ─── Middleware: injeta widget de chat em páginas HTML autenticadas ──────────
 
 _ADMIN_NAV_LINK = '<a href="/admin" class="admin-nav-link">⚙ Admin</a>'
+
+_FAIXA_CSS = (
+    "display:block;padding:9px 16px;text-align:center;font-size:.84rem;"
+    "font-weight:600;text-decoration:none;line-height:1.4;"
+)
+
+
+_AVISO_NUTRICAO = (
+    '<div style="max-width:760px;margin:26px auto 34px;padding:12px 16px;'
+    'border-radius:10px;background:rgba(148,163,184,.12);border:1px solid rgba(148,163,184,.28);'
+    'font-size:.78rem;line-height:1.55;color:#64748b;text-align:center">'
+    '⚕️ Cardápios e quantidades são gerados por inteligência artificial a partir dos dados do '
+    'seu perfil e têm caráter informativo. <b>Não substituem a avaliação de um nutricionista '
+    '(CFN/CRN) nem acompanhamento médico</b> — especialmente em caso de doença crônica, '
+    'restrição alimentar, gestação ou uso de medicação contínua. '
+    '<a href="/termos" style="color:inherit;text-decoration:underline">Termos de uso</a>.'
+    '</div>'
+)
+
+
+def _faixa_assinatura(u: dict) -> str:
+    """Barra no topo com os dias restantes. Vazia para quem está em dia.
+
+    Fica no topo de toda página em vez de só no portal porque o atleta passa a
+    maior parte do tempo no calendário e na nutrição — um aviso escondido no
+    dashboard não é visto por quem está prestes a perder o acesso.
+    """
+    est = assinatura_service.estado(u)
+
+    if est["em_trial"]:
+        dias = est["dias"] or 0
+        if dias > 7:
+            return ""      # sem urgência ainda: não vale poluir a tela
+        quanto = "último dia" if dias <= 1 else f"faltam {dias} dias"
+        return (f'<a href="/assinar" style="{_FAIXA_CSS}background:#fff8e1;color:#8a5a00;'
+                f'border-bottom:1px solid #f0d9a0">🎁 Teste grátis — {quanto}. '
+                "Assine por R$ 24,99 e não perca sua semana →</a>")
+
+    if not est["acesso"]:
+        return (f'<a href="/assinar" style="{_FAIXA_CSS}background:#fdecea;color:#a01d1d;'
+                f'border-bottom:1px solid #f3c0bb">⏳ Seu acesso venceu — você está vendo '
+                "apenas o histórico. Renove por R$ 24,99 para voltar a treinar →</a>")
+
+    dias = est["dias"]
+    if dias is not None and dias <= 3:
+        quanto = "hoje" if dias <= 1 else f"em {dias} dias"
+        return (f'<a href="/assinar" style="{_FAIXA_CSS}background:#e3f2fd;color:#0d47a1;'
+                f'border-bottom:1px solid #bbdefb">🔔 Sua assinatura vence {quanto}. '
+                "Renove para não parar no meio da semana →</a>")
+
+    return ""
 
 @app.middleware("http")
 async def inject_chat(request: Request, call_next):
@@ -349,19 +461,32 @@ async def inject_chat(request: Request, call_next):
 
     db = get_db()
     from bson import ObjectId
-    u = await db.users.find_one({"_id": ObjectId(user_id)}, {"login": 1, "features": 1})
+    u = await db.users.find_one({"_id": ObjectId(user_id)},
+                                {"login": 1, "features": 1, "assinatura": 1})
     if not u:
         return response
 
     is_admin = u.get("login") == "marciano"
     chat_ativo = u.get("features", {}).get("chat") is not False
+    faixa = _faixa_assinatura(u)
+    # Toda tela que prescreve comida carrega o aviso de que a IA não é
+    # nutricionista. Fica aqui, e não em cada template, para que uma tela nova
+    # de nutrição não nasça sem ele.
+    avisar_nutricao = request.url.path.startswith("/nutrition")
 
-    # Nada a injetar: não é admin e chat está desativado
-    if not is_admin and not chat_ativo:
+    # Nada a injetar
+    if not is_admin and not chat_ativo and not faixa and not avisar_nutricao:
         return response
 
     body = b"".join([chunk async for chunk in response.body_iterator])
     html = body.decode("utf-8", errors="replace")
+
+    if faixa and "<body" in html:
+        # Depois da tag <body ...>, não antes: injetar fora do body quebra o
+        # layout de páginas que usam flex no body (login, assinatura).
+        fim = html.find(">", html.find("<body"))
+        if fim != -1:
+            html = html[:fim + 1] + faixa + html[fim + 1:]
 
     # Injeta link Admin antes do "Sair" (ou antes de </nav> como fallback)
     if is_admin and not request.url.path.startswith("/admin"):
@@ -370,6 +495,12 @@ async def inject_chat(request: Request, call_next):
             html = html.replace(_LOGOUT_ANCHOR, _ADMIN_NAV_LINK + _LOGOUT_ANCHOR, 1)
         elif "</nav>" in html:
             html = html.replace("</nav>", _ADMIN_NAV_LINK + "</nav>", 1)
+
+    if avisar_nutricao:
+        if "</main>" in html:
+            html = html.replace("</main>", _AVISO_NUTRICAO + "</main>", 1)
+        elif "</body>" in html:
+            html = html.replace("</body>", _AVISO_NUTRICAO + "</body>", 1)
 
     # Injeta widget de chat
     if chat_ativo and "</body>" in html:
@@ -386,6 +517,8 @@ app.include_router(nutrition.router,       prefix="/nutrition", tags=["Nutriçã
 app.include_router(whatsapp.router,        prefix="/whatsapp",  tags=["WhatsApp"])
 app.include_router(chat_router.router,     prefix="/chat",      tags=["Chat"])
 app.include_router(admin_router.router,    prefix="/admin",     tags=["Admin"])
+app.include_router(assinatura_router.router, prefix="/assinar", tags=["Assinatura"])
+app.include_router(legal.router,                                tags=["Legal"])
 
 
 # ─── Health ───────────────────────────────────────────────────────────────────
@@ -476,13 +609,19 @@ SIGNUP_HTML = """<!DOCTYPE html>
     .err { background:#fdecea; color:#c62828; border-radius:9px; padding:10px 12px; font-size:.85rem; font-weight:600; margin-bottom:14px; text-align:center; }
     .login-link { text-align:center; margin-top:14px; font-size:.88rem; color:var(--muted); }
     .login-link a { color:var(--green); text-decoration:none; font-weight:600; }
+    .aceite { align-items:flex-start; margin-bottom:10px; }
+    .aceite input { margin-top:3px; flex-shrink:0; }
+    .aceite label { font-size:.82rem; line-height:1.5; color:#444; }
+    .aceite a { color:var(--green); font-weight:600; }
+    .aviso-saude { font-size:.76rem; line-height:1.5; color:var(--muted); background:#f7f9f8; border-radius:8px; padding:10px 12px; margin-bottom:14px; }
+    .trial-nota { text-align:center; font-size:.78rem; color:var(--muted); margin-top:8px; }
   </style>
 </head>
 <body>
 <form class="card" method="post" action="/signup">
   <div class="card-head">
     <div class="logo">🚵 MTB Nutrition</div>
-    <div class="sub">Criar nova conta</div>
+    <div class="sub">14 dias grátis — sua primeira semana sai pronta hoje</div>
   </div>
   <div class="card-body">
     {{ERRO}}
@@ -551,7 +690,18 @@ SIGNUP_HTML = """<!DOCTYPE html>
       </select>
     </fieldset>
 
-    <button class="btn" type="submit">Criar conta</button>
+    <div class="check-row aceite">
+      <input type="checkbox" id="aceite" name="aceite" value="1" required>
+      <label for="aceite">Li e aceito os <a href="/termos" target="_blank">Termos de uso</a> e a
+      <a href="/privacidade" target="_blank">Política de Privacidade</a>, incluindo o tratamento
+      dos meus dados de treino e saúde.</label>
+    </div>
+    <p class="aviso-saude">⚕️ Os treinos e cardápios são gerados por inteligência artificial e têm
+    caráter informativo. Não substituem avaliação médica, nutricionista ou educador físico.
+    Consulte um profissional antes de iniciar.</p>
+
+    <button class="btn" type="submit">Começar teste grátis de 14 dias</button>
+    <p class="trial-nota">Sem cartão, sem cobrança automática. Você usa 14 dias e decide depois.</p>
     <div class="login-link"><a href="/login">Já tenho conta — Entrar</a></div>
   </div>
 </form>
@@ -718,11 +868,10 @@ async def login_submit(request: Request):
     if not u or not user_service.verificar_senha(senha, u.get("senha_hash", "")):
         return RedirectResponse(url="/login?erro=1", status_code=303)
 
-    # Conta ainda não verificou o telefone
-    if not u.get("telefone_verificado"):
-        tel = u.get("telefone", "")
-        return RedirectResponse(url=f"/verificar?tel={tel}", status_code=303)
-
+    # `telefone_verificado` deixou de barrar o login: hoje ele significa apenas
+    # "pode receber WhatsApp". Quem decide o acesso é o gate de assinatura no
+    # middleware — quem venceu entra e cai em /assinar, em vez de levar um
+    # "usuário ou senha incorretos" que não explica nada.
     token = _gerar_token(str(u["_id"]))
     resp = RedirectResponse(url="/", status_code=303)
     _set_auth_cookie(resp, token)
@@ -769,12 +918,23 @@ async def signup_submit(request: Request):
     perder_peso = bool(form.get("perder_peso"))
     integracao_tipo = str(form.get("integracao_tipo", "none"))
 
+    if not form.get("aceite"):
+        erro_html = "<div class='err'>É preciso aceitar os termos de uso para criar a conta.</div>"
+        return HTMLResponse(SIGNUP_HTML.replace("{{ERRO}}", erro_html))
+
     dados = {
         "login": login,
         "senha": senha,
         "nome": nome,
         "telefone": telefone,
         "telefone_verificado": False,
+        # Prova de consentimento: sem data e versão, o aceite não vale nada
+        # numa discussão de LGPD.
+        "aceite_termos": {
+            "em": datetime.now(timezone.utc),
+            "versao": legal.VERSAO_TERMOS,
+            "ip": (request.client.host if request.client else None),
+        },
         "perfil": perfil,
         "preferencias": {
             "objetivo": objetivo,
@@ -796,7 +956,7 @@ async def signup_submit(request: Request):
         return HTMLResponse(SIGNUP_HTML.replace("{{ERRO}}", erro_html))
 
     try:
-        await user_service.criar_usuario(dados)
+        novo = await user_service.criar_usuario(dados)
     except ValueError as exc:
         return _erro_signup(str(exc))
     except Exception as exc:
@@ -810,24 +970,34 @@ async def signup_submit(request: Request):
         logger.error("Erro ao criar usuário: %s", exc)
         return _erro_signup("Erro interno ao criar conta. Tente novamente.")
 
-    # Gera e envia OTP
-    await _enviar_otp(telefone)
+    # Entra direto no trial de 14 dias. Não há OTP nem tela de pagamento no
+    # caminho: o produto convence mostrando a semana pronta, e cobrar (ou pedir
+    # código) antes de mostrar qualquer coisa é a fricção que mata a conversão.
+    # A liberação do pagamento continua manual, via comprovante no WhatsApp.
+    user_id = str(novo["_id"])
+    logger.info("Novo cadastro em trial: %s (%s)", login, user_id)
 
-    return RedirectResponse(url=f"/verificar?tel={telefone}", status_code=303)
+    resp = RedirectResponse(url="/workout/integracao", status_code=303)
+    _set_auth_cookie(resp, _gerar_token(user_id))
+    return resp
 
 
 # ─── Verificação OTP ──────────────────────────────────────────────────────────
 
 @app.get("/verificar", include_in_schema=False)
-async def verificar_form(tel: str = "", erro: int = 0):
-    msg = ""
-    if erro == 1:
-        msg = "Código incorreto. Tente novamente."
-    elif erro == 2:
-        msg = "Código expirado. Solicite um novo código."
-    elif erro == 3:
-        msg = "Muitas tentativas incorretas. Solicite um novo código."
-    return HTMLResponse(_render_verificar(tel, msg))
+async def verificar_form(request: Request, tel: str = "", erro: int = 0):
+    """Rota legada: o cadastro deixou de passar por aqui.
+
+    Antes esta tela era o funil inteiro — mostrava o Pix e mandava o usuário
+    esperar liberação. Hoje quem se cadastra entra direto no trial, e quem
+    precisa pagar vai para /assinar, que sabe o estado da assinatura. Mantida
+    apenas para não quebrar links antigos (e o POST de OTP abaixo, caso a
+    verificação por código seja religada).
+    """
+    token = request.cookies.get(_COOKIE, "")
+    user_id, _ = _token_valido(token) if token else (None, None)
+    destino = "/assinar" if user_id else "/login"
+    return RedirectResponse(url=destino, status_code=303)
 
 
 @app.post("/verificar", include_in_schema=False)

@@ -211,13 +211,19 @@ async def get_ftp(user_id: str) -> tuple[int | None, str]:
     return ftp, modo
 
 
-async def salvar_ftp(user_id: str, ftp: int, modo: str = "indoor") -> dict:
+async def salvar_ftp(user_id: str, ftp: int, modo: str = "indoor",
+                     origem: str = "teste") -> dict:
     """Salva o FTP e o modo de uso de potência. Retorna as zonas calculadas.
 
     modo:
       "indoor"  — alvos de watts só em VO2MAX/TIROS/TEMPO/FORCA (feitos no rolo)
       "sempre"  — todos os workouts com watts (medidor na bike de rua/MTB também)
       "nunca"   — FTP salvo só para análise; workouts usam apenas FC
+
+    origem="estimado" é o eFTP calculado da curva de potência. Ele NÃO conta
+    como teste: `ultimo_teste_ftp` continua apontando para o último teste de
+    verdade, senão o alerta de "hora de testar seu FTP" nunca mais dispararia
+    para quem só recebe estimativas.
     """
     from app.services.user_service import atualizar_usuario
     from datetime import date
@@ -225,11 +231,10 @@ async def salvar_ftp(user_id: str, ftp: int, modo: str = "indoor") -> dict:
         raise ValueError(f"FTP inválido: {ftp}W. Use um valor entre 50 e 700W.")
     if modo not in ("indoor", "sempre", "nunca"):
         modo = "indoor"
-    await atualizar_usuario(user_id, {
-        "ftp": ftp,
-        "potencia_modo": modo,
-        "ultimo_teste_ftp": date.today().isoformat(),
-    })
+    campos = {"ftp": ftp, "potencia_modo": modo, "ftp_origem": origem}
+    if origem != "estimado":
+        campos["ultimo_teste_ftp"] = date.today().isoformat()
+    await atualizar_usuario(user_id, campos)
     return {"ftp": ftp, "potencia_modo": modo, "zonas": calc_zonas_potencia(ftp)}
 
 

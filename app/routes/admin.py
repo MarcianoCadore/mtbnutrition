@@ -2,11 +2,13 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from bson import ObjectId
 
+from app.services import assinatura_service, custo_ia_service
 from app.services.mongo_service import get_db
 
 router = APIRouter()
 
 _ADMIN_LOGIN = "marciano"
+_MENSALIDADE_BRL = 24.99
 
 _HTML = """<!DOCTYPE html>
 <html lang="pt-BR">
@@ -31,6 +33,21 @@ _HTML = """<!DOCTYPE html>
     .sub-title { color:var(--muted); font-size:.85rem; margin-bottom:20px; }
 
     /* Stats */
+    .custo-box { background:var(--card); border-radius:12px; padding:16px 18px; margin-bottom:22px; box-shadow:0 1px 4px rgba(0,0,0,.08); }
+    .custo-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; }
+    .custo-head h2 { font-size:1rem; color:var(--text); }
+    .custo-head span { font-weight:400; color:var(--muted); font-size:.85rem; }
+    .custo-total { display:flex; gap:18px; flex-wrap:wrap; padding:10px 0 14px; border-bottom:1px solid var(--border); margin-bottom:12px; }
+    .custo-total div { font-size:.8rem; color:var(--muted); }
+    .custo-total b { display:block; font-size:1.25rem; color:var(--text); font-weight:800; }
+    .custo-tab { width:100%; border-collapse:collapse; font-size:.82rem; }
+    .custo-tab th { text-align:left; color:var(--muted); font-weight:700; font-size:.7rem; text-transform:uppercase; letter-spacing:.5px; padding:6px 8px; }
+    .custo-tab td { padding:6px 8px; border-top:1px solid var(--border); }
+    .custo-tab td.num { text-align:right; font-variant-numeric:tabular-nums; }
+    .margem-ok { color:#1b7a3d; font-weight:700; }
+    .margem-ruim { color:#c0392b; font-weight:800; }
+    .custo-sub { font-size:.72rem; color:var(--muted); margin:14px 0 6px; text-transform:uppercase; letter-spacing:.5px; font-weight:700; }
+    .custo-vazio { font-size:.85rem; color:var(--muted); }
     .stats { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:20px; }
     .stat { background:var(--card); border-radius:10px; padding:12px 14px; box-shadow:0 1px 4px rgba(0,0,0,.08); }
     .stat .val { font-size:1.6rem; font-weight:800; color:var(--green); }
@@ -98,6 +115,15 @@ _HTML = """<!DOCTYPE html>
 
   <div id="pending-banner" class="pending-banner"></div>
   <div class="stats" id="stats"></div>
+
+  <section class="custo-box">
+    <div class="custo-head">
+      <h2>Custo de IA <span id="custo-mes"></span></h2>
+      <button class="btn-sm btn-chat-on" onclick="carregarCusto()">Atualizar</button>
+    </div>
+    <div id="custo-corpo"><p class="custo-vazio">Carregando…</p></div>
+  </section>
+
   <div class="user-list" id="user-list"></div>
 </main>
 <div class="toast" id="toast"></div>
@@ -114,19 +140,20 @@ function iniciais(u) {
   return n.split(' ').map(p => p[0]).slice(0,2).join('').toUpperCase();
 }
 
+function statusAss(u) { return (u.assinatura || {}).status || 'expirada'; }
+
 function renderStats() {
-  const total    = USERS.length;
-  const ativos   = USERS.filter(acessoAtivo).length;
-  const pend     = total - ativos;
-  const comChat  = USERS.filter(chatAtivo).length;
-  const pagos    = USERS.filter(pagamentoOk).length;
-  const pendPag  = total - pagos;
+  const total     = USERS.length;
+  const emTrial   = USERS.filter(u => statusAss(u) === 'trial').length;
+  const assinando = USERS.filter(u => statusAss(u) === 'ativa').length;
+  const perdidos  = USERS.filter(u => ['expirada','cancelada'].includes(statusAss(u))).length;
+  const mrr       = (assinando * 24.99).toFixed(2).replace('.', ',');
   document.getElementById('stats').innerHTML = `
     <div class="stat"><div class="val">${total}</div><div class="lbl">Usuários</div></div>
-    <div class="stat"><div class="val">${pagos}</div><div class="lbl">Pagamento OK</div></div>
-    <div class="stat"><div class="val">${pendPag}</div><div class="lbl">Pagto. pendente</div></div>
-    <div class="stat"><div class="val">${ativos}</div><div class="lbl">Com acesso</div></div>
-    <div class="stat"><div class="val">${comChat}</div><div class="lbl">Chat ativo</div></div>`;
+    <div class="stat"><div class="val">${assinando}</div><div class="lbl">Assinantes</div></div>
+    <div class="stat"><div class="val">R$ ${mrr}</div><div class="lbl">Receita/mês</div></div>
+    <div class="stat"><div class="val">${emTrial}</div><div class="lbl">Em teste</div></div>
+    <div class="stat"><div class="val">${perdidos}</div><div class="lbl">Vencidos</div></div>`;
 }
 
 function renderCard(u) {
@@ -156,6 +183,22 @@ function renderCard(u) {
     `<option value="${n}" ${lim === n ? 'selected' : ''}>${n}/semana</option>`).join('');
   const selLimite = `<select class="sel-limite" onchange="setLimite('${u.id}', this.value, this)">
     <option value="" ${!lim ? 'selected' : ''}>Ilimitado</option>${opcoes}</select>`;
+
+  const ass = u.assinatura || {};
+  const st = statusAss(u);
+  const dias = ass.dias;
+  const rotulos = {
+    trial:     `<span class="badge pend">🎁 Teste — ${dias != null ? dias + 'd' : ''}</span>`,
+    ativa:     `<span class="badge on">💚 Ativa até ${ass.ate || '—'}</span>`,
+    expirada:  '<span class="badge off">⏳ Vencida</span>',
+    cancelada: '<span class="badge off">✕ Cancelada</span>',
+  };
+  const badgeAss = rotulos[st] || rotulos.expirada;
+  const btnsAss = st === 'ativa'
+    ? `<button class="btn-sm btn-bloquear" onclick="setAssinatura('${u.id}','expirar')">Encerrar</button>`
+    : `<button class="btn-sm btn-habilitar" onclick="setAssinatura('${u.id}','renovar')">+30 dias</button>
+       <button class="btn-sm btn-chat-on" onclick="setAssinatura('${u.id}','trial')">+14d teste</button>`;
+
   return `<div class="user-card" id="row-${u.id}">
     <div class="user-head">
       <div class="user-avatar">${iniciais(u)}</div>
@@ -168,11 +211,15 @@ function renderCard(u) {
     </div>
     <div class="user-rows">
       <div class="user-row">
+        <span class="user-row-label">Assinatura</span>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${badgeAss}${btnsAss}</div>
+      </div>
+      <div class="user-row">
         <span class="user-row-label">Pagamento</span>
         <div style="display:flex;align-items:center;gap:8px">${badgePagamento}${btnPagamento}</div>
       </div>
       <div class="user-row">
-        <span class="user-row-label">Acesso</span>
+        <span class="user-row-label">WhatsApp</span>
         <div style="display:flex;align-items:center;gap:8px">${badgeAcesso}${btnAcesso}</div>
       </div>
       <div class="user-row">
@@ -201,6 +248,24 @@ function renderAll() {
   }
 }
 
+async function setAssinatura(id, acao) {
+  const res = await fetch('/admin/assinatura', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({user_id: id, acao})
+  });
+  if (!res.ok) { showToast('Erro ao alterar assinatura.'); return; }
+  const d = await res.json();
+  const u = USERS.find(x => x.id === id);
+  u.assinatura = {status: d.status, ate: d.ate || null,
+                  dias: d.status === 'trial' ? 14 : (d.status === 'ativa' ? 30 : 0)};
+  if (d.status === 'ativa') u.pagamento_confirmado = true;
+  document.getElementById('row-' + id).outerHTML = renderCard(u);
+  renderStats();
+  showToast({trial:'Teste concedido até ' + (d.ate || ''),
+             ativa:'Acesso liberado até ' + (d.ate || ''),
+             expirada:'Assinatura encerrada.'}[d.status] || 'Assinatura atualizada.');
+}
+
 async function toggleAcesso(id, currentAtivo) {
   const btn = document.getElementById('ba-' + id);
   btn.disabled = true;
@@ -227,11 +292,15 @@ async function togglePagamento(id, currentPago) {
     body: JSON.stringify({user_id: id, pago: novoPago})
   });
   if (res.ok) {
+    const d = await res.json();
     const u = USERS.find(x => x.id === id);
     u.pagamento_confirmado = novoPago;
+    u.assinatura = novoPago
+      ? {status:'ativa', ate: d.pago_ate, dias: 30}
+      : {status:'cancelada'};
     document.getElementById('row-' + id).outerHTML = renderCard(u);
     renderStats();
-    showToast(novoPago ? 'Pagamento confirmado.' : 'Pagamento marcado como pendente.');
+    showToast(novoPago ? `Acesso liberado até ${d.pago_ate}.` : 'Assinatura cancelada.');
   } else { btn.disabled = false; showToast('Erro ao atualizar pagamento.'); }
 }
 
@@ -270,6 +339,61 @@ async function setLimite(id, valor, sel) {
   } else { showToast('Erro ao salvar limite.'); }
 }
 
+function brl(v) { return 'R$ ' + Number(v).toFixed(2).replace('.', ','); }
+
+async function carregarCusto() {
+  const corpo = document.getElementById('custo-corpo');
+  try {
+    const r = await fetch('/admin/custo-ia');
+    if (!r.ok) throw new Error('http');
+    const d = await r.json();
+    document.getElementById('custo-mes').textContent = '— ' + d.mes;
+
+    if (!d.usuarios.length) {
+      corpo.innerHTML = '<p class="custo-vazio">Nenhuma chamada de IA registrada neste mês.</p>';
+      return;
+    }
+
+    const receita = d.usuarios.length * d.mensalidade_brl;
+    const linhas = d.usuarios.map(u => {
+      const cls = u.margem_brl < 0 ? 'margem-ruim' : 'margem-ok';
+      return `<tr>
+        <td>${u.login}</td>
+        <td class="num">${u.chamadas}</td>
+        <td class="num">${brl(u.custo_brl)}</td>
+        <td class="num ${cls}">${brl(u.margem_brl)}</td>
+      </tr>`;
+    }).join('');
+
+    const feats = d.features.map(f => `<tr>
+        <td>${f.feature}</td>
+        <td class="num">${f.chamadas}</td>
+        <td class="num">${(f.tokens/1000).toFixed(1)}k</td>
+        <td class="num">${brl(f.custo_brl)}</td>
+      </tr>`).join('');
+
+    corpo.innerHTML = `
+      <div class="custo-total">
+        <div>Custo total<b>${brl(d.total.custo_brl)}</b></div>
+        <div>Chamadas<b>${d.total.chamadas}</b></div>
+        <div>Custo médio/usuário<b>${brl(d.total.custo_brl / d.usuarios.length)}</b></div>
+        <div>Margem sobre ${brl(receita)}<b class="${receita - d.total.custo_brl < 0 ? 'margem-ruim' : 'margem-ok'}">${brl(receita - d.total.custo_brl)}</b></div>
+      </div>
+      <div class="custo-sub">Por usuário (margem = ${brl(d.mensalidade_brl)} − custo)</div>
+      <table class="custo-tab">
+        <thead><tr><th>Usuário</th><th class="num">Chamadas</th><th class="num">Custo</th><th class="num">Margem</th></tr></thead>
+        <tbody>${linhas}</tbody>
+      </table>
+      <div class="custo-sub">Por funcionalidade</div>
+      <table class="custo-tab">
+        <thead><tr><th>Funcionalidade</th><th class="num">Chamadas</th><th class="num">Tokens</th><th class="num">Custo</th></tr></thead>
+        <tbody>${feats}</tbody>
+      </table>`;
+  } catch (e) {
+    corpo.innerHTML = '<p class="custo-vazio">Não consegui carregar o custo de IA.</p>';
+  }
+}
+
 function showToast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -278,6 +402,7 @@ function showToast(msg) {
 }
 
 renderAll();
+carregarCusto();
 </script>
 </body>
 </html>"""
@@ -305,12 +430,22 @@ async def admin_page(request: Request):
         {},
         {
             "login": 1, "nome": 1, "telefone": 1, "telefone_verificado": 1,
-            "features": 1, "criado_em": 1, "pagamento_confirmado": 1,
+            "features": 1, "criado_em": 1, "pagamento_confirmado": 1, "assinatura": 1,
         },
     )
     usuarios = await cursor.to_list(length=None)
 
     import json
+
+    def _ass(u: dict) -> dict:
+        est = assinatura_service.estado(u)
+        ate = est.get("pago_ate") if est["status"] == "ativa" else est.get("trial_fim")
+        return {
+            "status": est["status"],
+            "dias":   est["dias"],
+            "ate":    ate.strftime("%d/%m/%Y") if ate else None,
+        }
+
     dados = [
         {
             "id": str(u["_id"]),
@@ -319,16 +454,63 @@ async def admin_page(request: Request):
             "tel": u.get("telefone", ""),
             "telefone_verificado": bool(u.get("telefone_verificado", False)),
             "pagamento_confirmado": bool(u.get("pagamento_confirmado", False)),
+            "assinatura": _ass(u),
             "features": u.get("features", {}),
             "criado_em": u["criado_em"].strftime("%d/%m/%Y %H:%M") if u.get("criado_em") else "",
         }
         for u in usuarios
     ]
-    # Pagamento pendente primeiro, depois acesso pendente, depois por data de cadastro
-    dados.sort(key=lambda x: (x["pagamento_confirmado"], x["telefone_verificado"], x["criado_em"]))
+    # Quem precisa de ação primeiro: trial acabando e vencidos no topo, depois
+    # pagamento pendente, depois o resto por data de cadastro.
+    _URGENCIA = {"expirada": 0, "trial": 1, "cancelada": 2, "ativa": 3}
+    dados.sort(key=lambda x: (_URGENCIA.get(x["assinatura"]["status"], 9),
+                              x["assinatura"]["dias"] if x["assinatura"]["dias"] is not None else 999,
+                              x["criado_em"]))
     users_json = json.dumps(dados, ensure_ascii=False)
     html = _HTML.replace("__USERS_JSON__", users_json)
     return HTMLResponse(html)
+
+
+@router.get("/custo-ia")
+async def custo_ia(request: Request, mes: str | None = None):
+    """Margem: quanto cada assinante custa em IA contra os R$ 24,99 que paga.
+
+    Sem isto o primeiro sinal de margem negativa seria a fatura da Anthropic.
+    """
+    admin = await _require_admin(request)
+    if not admin:
+        return JSONResponse({"erro": "Acesso negado."}, status_code=403)
+
+    mes = mes or custo_ia_service.mes_atual()
+    por_usuario = await custo_ia_service.custo_por_usuario(mes)
+    por_feature = await custo_ia_service.custo_por_feature(mes)
+    total = await custo_ia_service.total_do_mes(mes)
+
+    # Nome do usuário junto do custo — um ObjectId não diz nada ao admin.
+    db = get_db()
+    ids = [ObjectId(uid) for uid in por_usuario if uid != "sem_usuario"]
+    nomes = {}
+    if ids:
+        cursor = db.users.find({"_id": {"$in": ids}}, {"login": 1, "nome": 1})
+        nomes = {str(u["_id"]): (u.get("login") or u.get("nome") or "?")
+                 async for u in cursor}
+
+    usuarios = sorted(
+        [{"user_id": uid, "login": nomes.get(uid, uid[:8]), **dados}
+         for uid, dados in por_usuario.items()],
+        key=lambda x: x["custo_brl"], reverse=True,
+    )
+    for u in usuarios:
+        # Positivo = sobra. Um assinante no vermelho aparece com margem negativa.
+        u["margem_brl"] = round(_MENSALIDADE_BRL - u["custo_brl"], 2)
+
+    return JSONResponse({
+        "mes": mes,
+        "mensalidade_brl": _MENSALIDADE_BRL,
+        "total": total,
+        "usuarios": usuarios,
+        "features": por_feature,
+    })
 
 
 @router.post("/toggle-acesso")
@@ -356,6 +538,12 @@ async def toggle_acesso(request: Request):
 
 @router.post("/toggle-pagamento")
 async def toggle_pagamento(request: Request):
+    """Confere o comprovante do Pix: libera 30 dias, ou desfaz a liberação.
+
+    "Marcar pago" deixou de ser um selo visual — agora move a assinatura para
+    `ativa` com vencimento em 30 dias. Se ainda houver saldo (trial em curso ou
+    renovação antecipada), os dias restantes são somados.
+    """
     admin = await _require_admin(request)
     if not admin:
         return JSONResponse({"erro": "Acesso negado."}, status_code=403)
@@ -374,7 +562,50 @@ async def toggle_pagamento(request: Request):
 
     db = get_db()
     await db.users.update_one({"_id": oid}, {"$set": {"pagamento_confirmado": pago}})
-    return JSONResponse({"ok": True, "pago": pago})
+
+    if pago:
+        info = await assinatura_service.confirmar_pagamento(user_id)
+        pago_ate = info["pago_ate"].strftime("%d/%m/%Y")
+    else:
+        # Desmarcar é correção de erro do admin (comprovante falso, valor
+        # errado): cancela o acesso em vez de deixar 30 dias soltos.
+        await assinatura_service.cancelar(user_id)
+        pago_ate = None
+
+    return JSONResponse({"ok": True, "pago": pago, "pago_ate": pago_ate})
+
+
+@router.post("/assinatura")
+async def alterar_assinatura(request: Request):
+    """Ações manuais de suporte: conceder trial, expirar ou reativar."""
+    admin = await _require_admin(request)
+    if not admin:
+        return JSONResponse({"erro": "Acesso negado."}, status_code=403)
+
+    body = await request.json()
+    user_id = body.get("user_id")
+    acao = body.get("acao")
+
+    if not user_id or acao not in ("trial", "expirar", "renovar"):
+        return JSONResponse({"erro": "Parâmetros inválidos."}, status_code=400)
+    try:
+        ObjectId(user_id)
+    except Exception:
+        return JSONResponse({"erro": "user_id inválido."}, status_code=400)
+
+    if acao == "trial":
+        dias = body.get("dias")
+        bloco = await assinatura_service.reabrir_trial(
+            user_id, int(dias) if isinstance(dias, int) and dias > 0 else assinatura_service.TRIAL_DIAS)
+        return JSONResponse({"ok": True, "status": "trial",
+                             "ate": bloco["trial_fim"].strftime("%d/%m/%Y")})
+    if acao == "expirar":
+        await assinatura_service.marcar_expirada(user_id)
+        return JSONResponse({"ok": True, "status": "expirada"})
+
+    info = await assinatura_service.confirmar_pagamento(user_id)
+    return JSONResponse({"ok": True, "status": "ativa",
+                         "ate": info["pago_ate"].strftime("%d/%m/%Y")})
 
 
 @router.post("/toggle-chat")

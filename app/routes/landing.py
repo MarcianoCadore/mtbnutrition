@@ -10,9 +10,9 @@ LANDING_HTML = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MTB Nutrition — Treino de ciclismo gerado por IA, no piloto automático</title>
-<meta name="description" content="Sua semana de bike e academia gerada por IA — MTB, estrada, gravel ou rolo. Vai direto para o Garmin, baixa em .zwo para MyWhoosh e Zwift, e a análise pós-treino sai sozinha. Assine por R$ 24,99/mês.">
+<meta name="description" content="TrainingPeaks e Intervals te dão a planilha; aqui a IA monta a semana inteira, manda pro Garmin ou pro rolo em .zwo, analisa cada pedalada e recalibra a próxima. 14 dias grátis, depois R$ 24,99/mês.">
 <meta property="og:title" content="MTB Nutrition — Treino de ciclismo gerado por IA, no piloto automático">
-<meta property="og:description" content="A IA monta sua semana de bike e academia, manda para o Garmin ou para o rolo em .zwo, e analisa cada pedalada. R$ 24,99/mês.">
+<meta property="og:description" content="As outras plataformas mostram o que você fez. Esta decide o que você faz amanhã: semana montada por IA, no Garmin ou no rolo, com nutrição junto. 14 dias grátis.">
 <meta property="og:type" content="website">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -190,6 +190,19 @@ h2{font-size:clamp(1.7rem,3.4vw,2.4rem);font-weight:800;text-align:center;margin
 
 /* ── Como funciona ──────────────────────────────────── */
 #como{background:linear-gradient(180deg,var(--bg),var(--bg2) 50%,var(--bg))}
+.comp-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:16px;background:var(--card)}
+.comp{width:100%;border-collapse:collapse;font-size:.93rem;min-width:640px}
+.comp th,.comp td{padding:13px 16px;text-align:left;border-bottom:1px solid var(--border)}
+.comp thead th{font-size:.78rem;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:700}
+.comp tbody tr:last-child td{border-bottom:none}
+.comp td:first-child{color:var(--muted)}
+.comp .comp-nos{background:rgba(45,212,168,.07);color:var(--text)}
+.comp thead .comp-nos{color:var(--green-hi);font-weight:800;font-size:.82rem}
+.comp .comp-nos b{color:var(--green-hi)}
+.comp-mais{display:block;font-size:.78rem;color:var(--muted)}
+.comp-nota{max-width:44em;margin:22px auto 0;text-align:center;color:var(--muted);font-size:.95rem;line-height:1.65}
+.comp-nota b{color:var(--text)}
+@media(max-width:760px){.comp th,.comp td{padding:10px 12px;font-size:.86rem}}
 .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;counter-reset:passo}
 .step{position:relative;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:34px 26px 28px}
 .step::before{
@@ -286,12 +299,13 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
     <div class="nav-links">
       <a href="#recursos">Recursos</a>
       <a href="#como">Como funciona</a>
+      <a href="#comparativo">Comparativo</a>
       <a href="#preco">Preço</a>
       <a href="#faq">FAQ</a>
     </div>
     <div class="nav-cta">
       <a class="btn btn-ghost" href="/login">Entrar</a>
-      <a class="btn btn-primary" href="/signup">Criar conta</a>
+      <a class="btn btn-primary" href="/signup">Testar grátis</a>
     </div>
   </div>
 </nav>
@@ -300,13 +314,13 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
   <div class="wrap hero-grid">
     <div>
       <span class="badge"><span class="dot"></span> Garmin + Inteligência Artificial</span>
-      <h1>Sua semana de treino, <span class="grad">pensada por IA</span> enquanto você descansa</h1>
-      <p class="lead">MTB, estrada, gravel ou rolo. Bike e academia. A inteligência artificial desenha cada sessão do zero, joga direto no seu Garmin — ou no seu rolo, via MyWhoosh e Zwift — e disseca o treino assim que você termina. A sua parte é só uma: treinar.</p>
+      <h1>As outras plataformas te dão a planilha. <span class="grad">Aqui a semana chega pronta.</span></h1>
+      <p class="lead">TrainingPeaks e Intervals.icu mostram o que você fez — mas quem decide o treino de amanhã ainda é você, ou um treinador de R$ 300 por mês. Aqui a IA monta a semana inteira, manda pro seu Garmin (ou pro rolo, em .zwo), analisa cada pedalada e recalibra a próxima. Sua parte é uma só: treinar.</p>
       <div class="hero-cta">
-        <a class="btn btn-primary btn-lg" href="/signup">Assinar por R$ 24,99/mês</a>
+        <a class="btn btn-primary btn-lg" href="/signup">Testar 14 dias grátis</a>
         <a class="btn btn-ghost btn-lg" href="#recursos">Ver recursos</a>
       </div>
-      <p class="hero-note">Pagamento no <strong>Pix</strong>, mês a mês — sem fidelidade e sem cartão salvo.</p>
+      <p class="hero-note">Sem cartão. Depois, <strong>R$ 24,99/mês no Pix</strong> — mês a mês, sem fidelidade.</p>
     </div>
 
     <div class="mock reveal">
@@ -429,8 +443,8 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
     <p class="sec-sub">Configuração única de 5 minutos. Depois disso, o sistema trabalha por você.</p>
     <div class="steps">
       <div class="step reveal">
-        <h3>Pix pago, acesso liberado</h3>
-        <p>No fim do cadastro aparece o QR code Pix. Pagou, manda o comprovante no WhatsApp e a gente libera seu acesso. Aí é só contar quem você é: idade, peso, FTP, zonas e seus dias de academia.</p>
+        <h3>Conecte o Garmin</h3>
+        <p>Cadastro feito, você já está dentro — 14 dias grátis, sem cartão. Conecte o Garmin e a gente importa seus últimos 90 dias: o app já nasce com o seu histórico, e o seu FTP sai da sua melhor pedalada, sem você fazer teste nenhum.</p>
       </div>
       <div class="step reveal">
         <h3>Sua semana aparece pronta</h3>
@@ -441,6 +455,38 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
         <p>Fechou o treino, a IA disseca a atividade, aponta a evolução e recalibra a carga — inclusive o peso que você vai levantar na próxima. Chegando a prova, a estratégia de nutrição chega junto.</p>
       </div>
     </div>
+  </div>
+</section>
+
+<section id="comparativo">
+  <div class="wrap">
+    <span class="sec-tag">Comparativo</span>
+    <h2>Planilha inteligente <span class="grad">não é treinador</span></h2>
+    <p class="sec-sub">As plataformas de referência são excelentes no que fazem — analisar. Nenhuma delas decide o seu treino de amanhã.</p>
+    <div class="comp-wrap reveal">
+      <table class="comp">
+        <thead>
+          <tr>
+            <th></th>
+            <th class="comp-nos">MTB Nutrition</th>
+            <th>TrainingPeaks</th>
+            <th>Intervals.icu</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Monta a sua semana sozinho</td><td class="comp-nos"><b>Sim, com IA</b></td><td>Não — coach ou plano à parte</td><td>Não — você monta</td></tr>
+          <tr><td>Manda o treino pro Garmin</td><td class="comp-nos">Sim</td><td>Sim</td><td>Sim</td></tr>
+          <tr><td>Analisa cada pedalada</td><td class="comp-nos">Sim, com nota e leitura</td><td>Sim, números</td><td>Sim, números</td></tr>
+          <tr><td>Recalibra a próxima semana</td><td class="comp-nos"><b>Automático</b></td><td>Só com coach</td><td>Não</td></tr>
+          <tr><td>Academia junto do pedal</td><td class="comp-nos">Sim, com carga progressiva</td><td>Parcial</td><td>Não</td></tr>
+          <tr><td>O que comer em cada dia</td><td class="comp-nos"><b>Sim, periodizado</b></td><td>Não</td><td>Não</td></tr>
+          <tr><td>Fala com você no WhatsApp</td><td class="comp-nos">Sim</td><td>Não</td><td>Não</td></tr>
+          <tr><td>Em português, pagando em real</td><td class="comp-nos">Sim, no Pix</td><td>Não</td><td>Não</td></tr>
+          <tr><td>Preço por mês</td><td class="comp-nos"><b>R$ 24,99</b></td><td>~R$ 110 <span class="comp-mais">+ coach</span></td><td>Grátis</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="comp-nota">O Intervals.icu é gratuito e tecnicamente excelente — se o que você quer é <b>estudar</b> os seus números, use ele. Se o que você quer é <b>não ter que decidir</b> o treino de amanhã, é aqui.</p>
   </div>
 </section>
 
@@ -468,8 +514,8 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
           <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Download em .zwo para MyWhoosh, Zwift e TrainerRoad</li>
           <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Assistente IA com o seu histórico — 5 perguntas por semana</li>
         </ul>
-        <a class="btn btn-primary btn-lg" href="/signup" style="width:100%">Começar agora</a>
-        <p class="price-cancel">Sem cartão salvo e sem cobrança automática: o QR code Pix aparece no fim do cadastro, você manda o comprovante no WhatsApp e liberamos seu acesso. Ao assinar você concorda com os termos de uso.</p>
+        <a class="btn btn-primary btn-lg" href="/signup" style="width:100%">Começar 14 dias grátis</a>
+        <p class="price-cancel">Comece com <b>14 dias grátis</b> — sem cartão, sem cobrança automática. Depois do teste, o QR code Pix fica no portal: você paga, manda o comprovante no WhatsApp e o acesso é liberado. Ao assinar você concorda com os <a href="/termos" style="color:var(--green-hi)">termos de uso</a> e a <a href="/privacidade" style="color:var(--green-hi)">política de privacidade</a>.</p>
       </div>
     </div>
   </div>
@@ -510,8 +556,16 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
         <div class="faq-body">Sim. O plano é montado a partir do seu perfil e evolui com você: iniciantes recebem mais base e técnica; quem já compete recebe periodização focada nas provas do calendário. Na academia vale o mesmo — a carga de entrada respeita o seu nível e sobe a partir do que você levantou de verdade.</div>
       </details>
       <details class="reveal">
+        <summary>Como funciona o teste grátis?</summary>
+        <div class="faq-body">Você se cadastra e entra na hora — 14 dias com tudo liberado, sem cartão e sem cobrança automática. São 14 e não 7 de propósito: o que essa plataforma faz de diferente é <b>recalibrar a semana seguinte</b> a partir do que você executou, e isso só acontece na virada da semana. Em 7 dias você decidiria antes de ver a parte que importa.</div>
+      </details>
+      <details class="reveal">
         <summary>Como funciona o pagamento?</summary>
-        <div class="faq-body">Só por Pix. Ao terminar o cadastro aparece o QR code (e o código copia-e-cola) de R$ 24,99. Você paga, envia o comprovante pelo WhatsApp e a gente libera seu acesso — normalmente no mesmo dia. Não pedimos cartão em momento nenhum.</div>
+        <div class="faq-body">Só por Pix. Terminado o teste, o QR code (e o código copia-e-cola) de R$ 24,99 fica no portal, em <b>Assinatura</b>. Você paga, envia o comprovante pelo WhatsApp e a gente libera 30 dias de acesso — normalmente no mesmo dia. Não pedimos cartão em momento nenhum.<br><br>Pagando antes do teste acabar, os dias que sobraram entram de bônus: você não perde nada por assinar cedo.</div>
+      </details>
+      <details class="reveal">
+        <summary>E se eu não assinar depois do teste?</summary>
+        <div class="faq-body">Nada é apagado. Você continua conseguindo ver no portal tudo que já treinou — o que para é a parte que gera coisa nova: montar a semana, mandar pro Garmin, baixar o .zwo e conversar com o assistente. Assinou depois, volta tudo exatamente de onde parou.</div>
       </details>
       <details class="reveal">
         <summary>Posso cancelar quando quiser?</summary>
@@ -525,8 +579,8 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
   <div class="wrap">
     <div class="final reveal">
       <h2>A sua melhor temporada começa numa <span class="grad">segunda-feira</span></h2>
-      <p>Bike e academia planejadas por IA, sincronizadas com o relógio ou com o rolo, e analisadas sozinhas — por menos de R$ 0,85 por dia.</p>
-      <a class="btn btn-primary btn-lg" href="/signup">Assinar por R$ 24,99/mês</a>
+      <p>Bike e academia planejadas por IA, sincronizadas com o relógio ou com o rolo, e analisadas sozinhas. Teste 14 dias — se não valer os R$ 24,99, é só não pagar.</p>
+      <a class="btn btn-primary btn-lg" href="/signup">Começar 14 dias grátis</a>
     </div>
   </div>
 </section>
@@ -535,7 +589,12 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
   <div class="wrap foot">
     <a class="brand" href="/"><span class="bike">🚵</span> MTB Nutrition</a>
     <div>Treino inteligente gerado por IA para ciclistas — bike e academia, do MTB ao rolo.</div>
-    <div><a href="/login" style="color:var(--green-hi)">Entrar</a> · <a href="/signup" style="color:var(--green-hi)">Criar conta</a></div>
+    <div><a href="/login" style="color:var(--green-hi)">Entrar</a> · <a href="/signup" style="color:var(--green-hi)">Criar conta</a> · <a href="/termos" style="color:var(--green-hi)">Termos de uso</a> · <a href="/privacidade" style="color:var(--green-hi)">Privacidade</a></div>
+    <div style="font-size:.78rem;opacity:.75;max-width:640px;margin:6px auto 0;line-height:1.55">
+      ⚕️ Os treinos e cardápios são gerados por inteligência artificial e têm caráter informativo.
+      Não substituem avaliação médica, nutricionista (CFN) nem profissional de educação física (CREF).
+      Consulte um profissional antes de iniciar.
+    </div>
   </div>
 </footer>
 
