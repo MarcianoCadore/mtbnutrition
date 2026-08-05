@@ -985,15 +985,19 @@ async def signup_submit(request: Request):
 # ─── Verificação OTP ──────────────────────────────────────────────────────────
 
 @app.get("/verificar", include_in_schema=False)
-async def verificar_form(tel: str = "", erro: int = 0):
-    msg = ""
-    if erro == 1:
-        msg = "Código incorreto. Tente novamente."
-    elif erro == 2:
-        msg = "Código expirado. Solicite um novo código."
-    elif erro == 3:
-        msg = "Muitas tentativas incorretas. Solicite um novo código."
-    return HTMLResponse(_render_verificar(tel, msg))
+async def verificar_form(request: Request, tel: str = "", erro: int = 0):
+    """Rota legada: o cadastro deixou de passar por aqui.
+
+    Antes esta tela era o funil inteiro — mostrava o Pix e mandava o usuário
+    esperar liberação. Hoje quem se cadastra entra direto no trial, e quem
+    precisa pagar vai para /assinar, que sabe o estado da assinatura. Mantida
+    apenas para não quebrar links antigos (e o POST de OTP abaixo, caso a
+    verificação por código seja religada).
+    """
+    token = request.cookies.get(_COOKIE, "")
+    user_id, _ = _token_valido(token) if token else (None, None)
+    destino = "/assinar" if user_id else "/login"
+    return RedirectResponse(url=destino, status_code=303)
 
 
 @app.post("/verificar", include_in_schema=False)
