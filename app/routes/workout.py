@@ -1277,6 +1277,57 @@ async def garmin_conectar(
     return {"status": "conectado"}
 
 
+@router.post("/backfill")
+async def backfill_historico(request: Request, dias: int = 90):
+    """Importa o histórico da plataforma conectada (Garmin ou Strava).
+
+    É o que faz o assinante novo abrir o portal e encontrar o que já pedalou em
+    vez de sete quadrados vazios — e é o que dá ao parecer fisiológico carga
+    real para calibrar a primeira semana em vez de chutar.
+    """
+    from app.services.backfill_service import importar_historico
+
+    user_id = request.state.user_id
+    dias = max(7, min(int(dias or 90), 180))
+
+    resultado = await importar_historico(user_id, dias)
+    if resultado.get("erro") and not resultado.get("importadas"):
+        raise HTTPException(status_code=400, detail=resultado["erro"])
+
+    # A curva de potência do histórico costuma render um FTP melhor que o
+    # cadastro manual — informa para o atleta ver de onde veio o número.
+    ftp_novo = None
+    try:
+        from app.services.potencia_service import talvez_atualizar_ftp
+        ftp_novo = await talvez_atualizar_ftp(user_id)
+    except Exception as exc:
+        logger.warning("backfill: eFTP não recalculado para %s — %s", user_id, exc)
+
+    return {"importadas": resultado.get("importadas", 0), "dias": dias, "ftp": ftp_novo}
+
+
+@router.get("/curva-potencia")
+async def curva_potencia(request: Request):
+    """Melhores esforços dos últimos 90 dias + o FTP que sai deles."""
+    from app.services.config_service import get_ftp
+    from app.services.potencia_service import estimar_ftp, get_curva
+
+    user_id = request.state.user_id
+    curva = await get_curva(user_id)
+    estimado, como = estimar_ftp(curva)
+    ftp_atual, _ = await get_ftp(user_id)
+
+    return {
+        "curva": [
+            {"duracao_s": dur, "watts": dados["watts"], "data": dados.get("data")}
+            for dur, dados in sorted(curva.items())
+        ],
+        "ftp_estimado": estimado,
+        "ftp_estimado_de": como,
+        "ftp_atual": ftp_atual,
+    }
+
+
 
 @router.post("/garmin/desconectar")
 async def garmin_desconectar(request: Request):
@@ -2137,6 +2188,30 @@ _PAGINA_INTEGRACAO = """<!DOCTYPE html>
   function iso(d) { return d.toISOString().split('T')[0]; }
   function segundaAtualISO() { return iso(getMonday(new Date())); }
 
+  // Importa 90 dias de histórico. Demora (baixa e analisa um .fit por sessão),
+  // então a mensagem explica o que está acontecendo em vez de deixar a tela
+  // parada — e uma falha aqui nunca desfaz a conexão que acabou de dar certo.
+  async function importarHistorico(st) {
+    st.className = 'status info';
+    st.textContent = '📥 Importando seus últimos 90 dias… isso pode levar um minuto.';
+    try {
+      const r = await fetch('/workout/backfill?dias=90', { method: 'POST' });
+      if (!r.ok) throw new Error('backfill');
+      const d = await r.json();
+      let msg = d.importadas
+        ? `✅ ${d.importadas} treino${d.importadas > 1 ? 's' : ''} importado${d.importadas > 1 ? 's' : ''} do seu histórico.`
+        : '✅ Conectado! Não encontrei treinos anteriores para importar.';
+      if (d.ftp && d.ftp.ftp) {
+        msg += ` Seu FTP foi estimado em ${d.ftp.ftp}W (${d.ftp.origem}).`;
+      }
+      st.className = 'status ok';
+      st.textContent = msg;
+    } catch (e) {
+      st.className = 'status ok';
+      st.textContent = '✅ Conectado! (não consegui importar o histórico agora — dá para tentar depois)';
+    }
+  }
+
   async function conectarGarmin(ev) {
     ev.preventDefault();
     const btn = document.getElementById('btnGarminConn');
@@ -2153,7 +2228,8 @@ _PAGINA_INTEGRACAO = """<!DOCTYPE html>
       st.className='status ok'; st.textContent='✅ Conectado! Sincronizando seus treinos…';
       // Sync inicial best-effort
       try { await fetch('/workout/garmin/sync/' + segundaAtualISO(), { method:'POST' }); } catch(e) {}
-      setTimeout(() => location.reload(), 1200);
+      await importarHistorico(st);
+      setTimeout(() => location.reload(), 1500);
     } catch(e) {
       st.className='status err'; st.textContent='❌ ' + e.message;
     } finally {

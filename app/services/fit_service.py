@@ -210,6 +210,51 @@ def tempo_em_zonas_potencia(caminho: str, zonas: list[dict]) -> dict | None:
     return contagem
 
 
+# ── Curva de potência ────────────────────────────────────────────────────────
+# Durações que o ciclista reconhece: pico de sprint, capacidade anaeróbia,
+# VO2max e limiar. A de 1200s (20min) é a que estima o FTP.
+DURACOES_CURVA = (5, 15, 60, 300, 600, 1200)
+
+
+def melhores_esforcos(power_values: list[int],
+                      duracoes: tuple[int, ...] = DURACOES_CURVA) -> dict[int, int]:
+    """Melhor potência média sustentada em cada janela, em watts.
+
+    Soma móvel em O(n) por duração — um treino de 4h tem ~14 mil amostras e
+    isto roda no sync, então força bruta não serve.
+
+    Assume 1 amostra por segundo, que é o que o Garmin grava. Um arquivo com
+    "smart recording" (amostragem variável) superestima um pouco a janela; é
+    aceitável para estimar FTP e é como o resto do mercado trata o caso.
+    """
+    if not power_values:
+        return {}
+
+    n = len(power_values)
+    saida: dict[int, int] = {}
+    for dur in duracoes:
+        if n < dur:
+            continue
+        soma = sum(power_values[:dur])
+        melhor = soma
+        for i in range(dur, n):
+            soma += power_values[i] - power_values[i - dur]
+            if soma > melhor:
+                melhor = soma
+        saida[dur] = round(melhor / dur)
+    return saida
+
+
+def curva_de_potencia(caminho: str) -> dict[int, int]:
+    """Melhores esforços de um arquivo .fit. {} se não houver potência."""
+    valores = []
+    for msg in FitFile(caminho).get_messages("record"):
+        pw = msg.get_value("power")
+        if pw is not None:
+            valores.append(int(pw))
+    return melhores_esforcos(valores)
+
+
 def ptss(norm_power: float | None, ftp: int, duracao_min: int | None) -> int | None:
     """Power TSS = (duracao_h × NP × IF) / (FTP × 3600) × 10000, onde IF = NP/FTP.
     Equivalente a: (duracao_s × IF²) / 3600 × 100.
