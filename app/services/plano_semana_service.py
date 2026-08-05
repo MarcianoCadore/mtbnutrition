@@ -9,6 +9,7 @@ import anthropic
 
 from config.settings import settings
 from app.utils import hoje_local
+from app.services import custo_ia_service
 from app.services.mongo_service import get_db
 from app.services.user_service import get_por_id
 
@@ -26,7 +27,11 @@ def _extrair_texto(response) -> str:
 _TIPOS_VALIDOS = {"Z2_LONGO", "TIROS", "VO2MAX", "TEMPO", "FORCA", "ACADEMIA", "RECUPERACAO", "DESCANSO", "TESTE_FTP"}
 
 
-async def _chamar_gemini(prompt: str, sistema: str | None = None) -> str:
+_MODEL_GEMINI = "gemini-2.0-flash"
+
+
+async def _chamar_gemini(prompt: str, sistema: str | None = None,
+                         user_id: str | None = None, feature: str = "gerar_semana") -> str:
     """Chama Gemini Flash (gratuito) como fallback quando Claude está sem cota."""
     from google import genai
     from google.genai import types as gtypes
@@ -37,13 +42,16 @@ async def _chamar_gemini(prompt: str, sistema: str | None = None) -> str:
 
     client = genai.Client(api_key=api_key)
     resp = await client.aio.models.generate_content(
-        model="gemini-2.0-flash",
+        model=_MODEL_GEMINI,
         contents=prompt,
         config=gtypes.GenerateContentConfig(
             system_instruction=sistema,
             response_mime_type="application/json",
         ),
     )
+    # A cota gratuita não é infinita: contabilizar pelo preço de tabela mostra
+    # quanto o fallback custaria se ela acabasse.
+    await custo_ia_service.registrar(user_id, feature, _MODEL_GEMINI, resp)
     return resp.text
 
 
@@ -1136,13 +1144,14 @@ RESTRIÇÕES DE AGENDA (OBRIGATÓRIAS):
             }],
             messages=[{"role": "user", "content": prompt}],
         )
+        await custo_ia_service.registrar(user_id, "gerar_semana", _MODEL_PLANO, response)
         raw = _extrair_texto(response).strip().replace("```json", "").replace("```", "").strip()
         data = json.loads(raw)
     except Exception as e:
         if _is_quota_error(e) and settings.GEMINI_API_KEY:
             logger.warning("Claude com cota esgotada (%s) — tentando Gemini Flash", e)
             try:
-                raw = await _chamar_gemini(prompt, _SISTEMA_PLANO)
+                raw = await _chamar_gemini(prompt, _SISTEMA_PLANO, user_id, "gerar_semana")
                 raw = raw.strip().replace("```json", "").replace("```", "").strip()
                 data = json.loads(raw)
                 modelo_usado = "gemini"
@@ -1424,6 +1433,7 @@ Responda APENAS JSON válido, sem markdown:
             max_tokens=8192,
             messages=[{"role": "user", "content": prompt}],
         )
+        await custo_ia_service.registrar(user_id, "primeira_semana", _MODEL_PLANO, response)
         raw = _extrair_texto(response).strip().replace("```json", "").replace("```", "").strip()
         data = json.loads(raw)
         desc_por_data = {

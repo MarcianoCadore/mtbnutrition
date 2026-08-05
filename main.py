@@ -16,7 +16,7 @@ from app.routes import (
     workout, nutrition, whatsapp, portal, landing, legal,
     chat as chat_router, admin as admin_router, assinatura as assinatura_router,
 )
-from app.services import user_service, assinatura_service
+from app.services import user_service, assinatura_service, custo_ia_service
 from app.services.whatsapp_service import send_message
 from app.services.mongo_service import get_db
 from app import pix
@@ -46,6 +46,7 @@ async def lifespan(app: FastAPI):
     # Garante índices únicos em db.users ao iniciar
     try:
         await user_service.garantir_indices()
+        await custo_ia_service.garantir_indices()
         logger.info("Índices de usuários verificados/criados com sucesso.")
     except Exception as exc:
         logger.error("Falha ao garantir índices de usuários: %s", exc)

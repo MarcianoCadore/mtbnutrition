@@ -5,6 +5,7 @@ from datetime import datetime, timezone, timedelta
 import pytz
 
 from config.settings import settings
+from app.services import custo_ia_service
 from app.services.mongo_service import get_db
 
 logger = logging.getLogger(__name__)
@@ -632,6 +633,8 @@ async def responder(user_id: str, mensagem: str) -> tuple[str, bool]:
         except Exception:
             resposta = "Não consegui processar sua mensagem agora. Tente novamente em instantes."
             break
+
+        await custo_ia_service.registrar(user_id, "chat", _MODEL, resp)
 
         if resp.stop_reason == "tool_use":
             ferramentas_usadas = True

@@ -2,12 +2,13 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from bson import ObjectId
 
-from app.services import assinatura_service
+from app.services import assinatura_service, custo_ia_service
 from app.services.mongo_service import get_db
 
 router = APIRouter()
 
 _ADMIN_LOGIN = "marciano"
+_MENSALIDADE_BRL = 24.99
 
 _HTML = """<!DOCTYPE html>
 <html lang="pt-BR">
@@ -32,6 +33,21 @@ _HTML = """<!DOCTYPE html>
     .sub-title { color:var(--muted); font-size:.85rem; margin-bottom:20px; }
 
     /* Stats */
+    .custo-box { background:var(--card); border-radius:12px; padding:16px 18px; margin-bottom:22px; box-shadow:0 1px 4px rgba(0,0,0,.08); }
+    .custo-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; }
+    .custo-head h2 { font-size:1rem; color:var(--text); }
+    .custo-head span { font-weight:400; color:var(--muted); font-size:.85rem; }
+    .custo-total { display:flex; gap:18px; flex-wrap:wrap; padding:10px 0 14px; border-bottom:1px solid var(--border); margin-bottom:12px; }
+    .custo-total div { font-size:.8rem; color:var(--muted); }
+    .custo-total b { display:block; font-size:1.25rem; color:var(--text); font-weight:800; }
+    .custo-tab { width:100%; border-collapse:collapse; font-size:.82rem; }
+    .custo-tab th { text-align:left; color:var(--muted); font-weight:700; font-size:.7rem; text-transform:uppercase; letter-spacing:.5px; padding:6px 8px; }
+    .custo-tab td { padding:6px 8px; border-top:1px solid var(--border); }
+    .custo-tab td.num { text-align:right; font-variant-numeric:tabular-nums; }
+    .margem-ok { color:#1b7a3d; font-weight:700; }
+    .margem-ruim { color:#c0392b; font-weight:800; }
+    .custo-sub { font-size:.72rem; color:var(--muted); margin:14px 0 6px; text-transform:uppercase; letter-spacing:.5px; font-weight:700; }
+    .custo-vazio { font-size:.85rem; color:var(--muted); }
     .stats { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:20px; }
     .stat { background:var(--card); border-radius:10px; padding:12px 14px; box-shadow:0 1px 4px rgba(0,0,0,.08); }
     .stat .val { font-size:1.6rem; font-weight:800; color:var(--green); }
@@ -99,6 +115,15 @@ _HTML = """<!DOCTYPE html>
 
   <div id="pending-banner" class="pending-banner"></div>
   <div class="stats" id="stats"></div>
+
+  <section class="custo-box">
+    <div class="custo-head">
+      <h2>Custo de IA <span id="custo-mes"></span></h2>
+      <button class="btn-sm btn-chat-on" onclick="carregarCusto()">Atualizar</button>
+    </div>
+    <div id="custo-corpo"><p class="custo-vazio">Carregando…</p></div>
+  </section>
+
   <div class="user-list" id="user-list"></div>
 </main>
 <div class="toast" id="toast"></div>
@@ -314,6 +339,61 @@ async function setLimite(id, valor, sel) {
   } else { showToast('Erro ao salvar limite.'); }
 }
 
+function brl(v) { return 'R$ ' + Number(v).toFixed(2).replace('.', ','); }
+
+async function carregarCusto() {
+  const corpo = document.getElementById('custo-corpo');
+  try {
+    const r = await fetch('/admin/custo-ia');
+    if (!r.ok) throw new Error('http');
+    const d = await r.json();
+    document.getElementById('custo-mes').textContent = '— ' + d.mes;
+
+    if (!d.usuarios.length) {
+      corpo.innerHTML = '<p class="custo-vazio">Nenhuma chamada de IA registrada neste mês.</p>';
+      return;
+    }
+
+    const receita = d.usuarios.length * d.mensalidade_brl;
+    const linhas = d.usuarios.map(u => {
+      const cls = u.margem_brl < 0 ? 'margem-ruim' : 'margem-ok';
+      return `<tr>
+        <td>${u.login}</td>
+        <td class="num">${u.chamadas}</td>
+        <td class="num">${brl(u.custo_brl)}</td>
+        <td class="num ${cls}">${brl(u.margem_brl)}</td>
+      </tr>`;
+    }).join('');
+
+    const feats = d.features.map(f => `<tr>
+        <td>${f.feature}</td>
+        <td class="num">${f.chamadas}</td>
+        <td class="num">${(f.tokens/1000).toFixed(1)}k</td>
+        <td class="num">${brl(f.custo_brl)}</td>
+      </tr>`).join('');
+
+    corpo.innerHTML = `
+      <div class="custo-total">
+        <div>Custo total<b>${brl(d.total.custo_brl)}</b></div>
+        <div>Chamadas<b>${d.total.chamadas}</b></div>
+        <div>Custo médio/usuário<b>${brl(d.total.custo_brl / d.usuarios.length)}</b></div>
+        <div>Margem sobre ${brl(receita)}<b class="${receita - d.total.custo_brl < 0 ? 'margem-ruim' : 'margem-ok'}">${brl(receita - d.total.custo_brl)}</b></div>
+      </div>
+      <div class="custo-sub">Por usuário (margem = ${brl(d.mensalidade_brl)} − custo)</div>
+      <table class="custo-tab">
+        <thead><tr><th>Usuário</th><th class="num">Chamadas</th><th class="num">Custo</th><th class="num">Margem</th></tr></thead>
+        <tbody>${linhas}</tbody>
+      </table>
+      <div class="custo-sub">Por funcionalidade</div>
+      <table class="custo-tab">
+        <thead><tr><th>Funcionalidade</th><th class="num">Chamadas</th><th class="num">Tokens</th><th class="num">Custo</th></tr></thead>
+        <tbody>${feats}</tbody>
+      </table>`;
+  } catch (e) {
+    corpo.innerHTML = '<p class="custo-vazio">Não consegui carregar o custo de IA.</p>';
+  }
+}
+
 function showToast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -322,6 +402,7 @@ function showToast(msg) {
 }
 
 renderAll();
+carregarCusto();
 </script>
 </body>
 </html>"""
@@ -388,6 +469,48 @@ async def admin_page(request: Request):
     users_json = json.dumps(dados, ensure_ascii=False)
     html = _HTML.replace("__USERS_JSON__", users_json)
     return HTMLResponse(html)
+
+
+@router.get("/custo-ia")
+async def custo_ia(request: Request, mes: str | None = None):
+    """Margem: quanto cada assinante custa em IA contra os R$ 24,99 que paga.
+
+    Sem isto o primeiro sinal de margem negativa seria a fatura da Anthropic.
+    """
+    admin = await _require_admin(request)
+    if not admin:
+        return JSONResponse({"erro": "Acesso negado."}, status_code=403)
+
+    mes = mes or custo_ia_service.mes_atual()
+    por_usuario = await custo_ia_service.custo_por_usuario(mes)
+    por_feature = await custo_ia_service.custo_por_feature(mes)
+    total = await custo_ia_service.total_do_mes(mes)
+
+    # Nome do usuário junto do custo — um ObjectId não diz nada ao admin.
+    db = get_db()
+    ids = [ObjectId(uid) for uid in por_usuario if uid != "sem_usuario"]
+    nomes = {}
+    if ids:
+        cursor = db.users.find({"_id": {"$in": ids}}, {"login": 1, "nome": 1})
+        nomes = {str(u["_id"]): (u.get("login") or u.get("nome") or "?")
+                 async for u in cursor}
+
+    usuarios = sorted(
+        [{"user_id": uid, "login": nomes.get(uid, uid[:8]), **dados}
+         for uid, dados in por_usuario.items()],
+        key=lambda x: x["custo_brl"], reverse=True,
+    )
+    for u in usuarios:
+        # Positivo = sobra. Um assinante no vermelho aparece com margem negativa.
+        u["margem_brl"] = round(_MENSALIDADE_BRL - u["custo_brl"], 2)
+
+    return JSONResponse({
+        "mes": mes,
+        "mensalidade_brl": _MENSALIDADE_BRL,
+        "total": total,
+        "usuarios": usuarios,
+        "features": por_feature,
+    })
 
 
 @router.post("/toggle-acesso")
