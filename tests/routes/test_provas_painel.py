@@ -1,8 +1,7 @@
 """Quais provas o painel mostra além da próxima.
 
-O caso que motivou: o atleta tinha duas provas cadastradas e via só uma —
-a outra havia sido corrida 4 dias antes, e o filtro de "futuras" a escondia.
-Sumir com a prova no dia seguinte dá a impressão de que o cadastro se perdeu.
+Só provas futuras, por decisão de produto: o card é sobre o que vem pela
+frente. Prova já corrida fica no histórico, em /workout/calendario.
 """
 from datetime import date, datetime, timedelta
 
@@ -37,25 +36,18 @@ def _com_provas(client, fake_db, run, provas):
 
 
 class TestPainelDeProvas:
-    def test_prova_corrida_dias_atras_continua_visivel(self, client, fake_db, run):
+    @pytest.mark.parametrize("dias_atras", [1, 4, 30, 120])
+    def test_prova_ja_corrida_nao_aparece(self, client, fake_db, run, dias_atras):
+        """O card é sobre o que vem pela frente — passada fica no calendário."""
         c = _com_provas(client, fake_db, run, [
-            {"nome": "Carcará XCO", "data": _hoje(-4)},
-            {"nome": "Sananduva",   "data": _hoje(25)},
+            {"nome": "Já corrida", "data": _hoje(-dias_atras)},
+            {"nome": "Sananduva",  "data": _hoje(25)},
         ])
         d = c.get("/workout/provas/proxima").json()
 
         assert d["prova"]["nome"] == "Sananduva"
-        assert [p["nome"] for p in d["recentes"]] == ["Carcará XCO"]
-        assert d["recentes"][0]["dias_restantes"] == -4
-
-    def test_prova_antiga_sai_do_painel(self, client, fake_db, run):
-        """O card é sobre o que vem pela frente — o histórico fica no calendário."""
-        c = _com_provas(client, fake_db, run, [
-            {"nome": "Antiga",    "data": _hoje(-120)},
-            {"nome": "Sananduva", "data": _hoje(25)},
-        ])
-        d = c.get("/workout/provas/proxima").json()
-        assert d["recentes"] == []
+        assert d["seguintes"] == []
+        assert all(p["nome"] != "Já corrida" for p in d["seguintes"])
 
     def test_provas_futuras_vem_na_ordem_da_data(self, client, fake_db, run):
         c = _com_provas(client, fake_db, run, [
@@ -83,7 +75,8 @@ class TestPainelDeProvas:
     def test_a_propria_prova_em_destaque_nao_se_repete_na_lista(self, client, fake_db, run):
         c = _com_provas(client, fake_db, run, [{"nome": "Única", "data": _hoje(20)}])
         d = c.get("/workout/provas/proxima").json()
-        assert d["seguintes"] == [] and d["recentes"] == []
+        assert d["prova"]["nome"] == "Única"
+        assert d["seguintes"] == []
 
     def test_prova_de_outro_atleta_nao_vaza(self, client, fake_db, run):
         outro = ObjectId()

@@ -1,0 +1,129 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  :root{--bg:#07100d;--green:#128c7e;--green-hi:#2dd4a8;--text:#eaf6f1}
+  html,body{width:1080px;height:1920px}
+  body{
+    background:var(--bg);
+    font-family:'Helvetica Neue','Avenir Next',-apple-system,Arial,sans-serif;
+    color:var(--text);-webkit-font-smoothing:antialiased;overflow:hidden;
+  }
+  .stage{
+    position:relative;width:1080px;height:1920px;
+    padding:230px 76px 250px;              /* zonas seguras do Instagram */
+    display:flex;flex-direction:column;
+    background:
+      radial-gradient(880px 720px at 88% 4%, rgba(45,212,168,.22), transparent 62%),
+      radial-gradient(760px 700px at -12% 96%, rgba(18,140,126,.20), transparent 62%),
+      linear-gradient(170deg,#07100d 0%,#0a1712 52%,#06100c 100%);
+  }
+  .grid{
+    position:absolute;inset:0;opacity:.55;
+    background-image:linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),
+                     linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px);
+    background-size:68px 68px;
+    -webkit-mask-image:radial-gradient(720px 900px at 50% 46%,#000 22%,transparent 76%);
+  }
+  .stage > *{position:relative}
+
+  .brand{display:flex;align-items:center;gap:16px}
+  .mark{
+    width:64px;height:64px;border-radius:19px;display:grid;place-items:center;
+    background:linear-gradient(135deg,var(--green-hi),var(--green));
+    box-shadow:0 10px 30px rgba(45,212,168,.3);
+  }
+  .bname{font-size:29px;font-weight:700;letter-spacing:.15em}
+  .btag{font-size:15px;font-weight:600;letter-spacing:.19em;color:#9db8ae;margin-top:6px}
+
+  h1{margin-top:48px;font-size:88px;line-height:1.02;font-weight:700;letter-spacing:-.042em}
+  h1 .grad{background:linear-gradient(96deg,#2dd4a8 6%,#7ff0cd 94%);
+           -webkit-background-clip:text;background-clip:text;color:transparent}
+  .sub{margin-top:28px;font-size:31px;line-height:1.36;color:#b9d2c9;letter-spacing:-.01em}
+  .sub b{color:var(--text);font-weight:600}
+
+  /* mock da semana */
+  .card{
+    margin-top:46px;background:rgba(255,255,255,.045);
+    border:1px solid rgba(255,255,255,.10);border-radius:34px;padding:28px 30px 22px;
+    box-shadow:0 30px 70px rgba(0,0,0,.35);
+  }
+  .card-h{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:0 6px 18px;border-bottom:1px solid rgba(255,255,255,.09);
+  }
+  .card-t{font-size:25px;font-weight:700;letter-spacing:.1em;color:#8ea79e}
+  .card-b{font-size:22px;font-weight:700;color:var(--green-hi);
+          background:rgba(45,212,168,.12);border-radius:99px;padding:9px 18px}
+  .row{display:flex;align-items:center;gap:22px;padding:12px 6px}
+  .row + .row{border-top:1px solid rgba(255,255,255,.055)}
+  .dow{font-size:24px;font-weight:700;letter-spacing:.1em;color:#8ea79e;width:78px}
+  .bar{width:8px;height:34px;border-radius:99px;flex:none}
+  .tname{font-size:33px;font-weight:600;letter-spacing:-.015em;flex:1}
+  .tdur{font-size:28px;color:#9db8ae;font-weight:500}
+  .rest{opacity:.45}
+
+  .feats{margin-top:44px;display:flex;flex-direction:column;gap:18px}
+  .f{display:flex;align-items:center;gap:18px;font-size:30px;font-weight:600;letter-spacing:-.015em}
+  .f svg{flex:none}
+
+  .cta{margin-top:auto;padding-top:34px;text-align:center}
+  .free{
+    display:inline-block;background:linear-gradient(135deg,var(--green-hi),var(--green));
+    color:#04211a;border-radius:22px;padding:26px 46px;
+    font-size:46px;font-weight:700;letter-spacing:-.025em;
+    box-shadow:0 16px 44px rgba(45,212,168,.3);
+  }
+  .fine{margin-top:24px;font-size:28px;color:#a9c5bb;letter-spacing:-.01em}
+  .fine b{color:var(--text);font-weight:600}
+  .swipe{margin-top:30px;font-size:26px;font-weight:700;letter-spacing:.13em;color:#7f9b92}
+</style>
+<div class="stage">
+  <div class="grid"></div>
+
+  <div class="brand">
+    <div class="mark">
+      <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="#04211a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/>
+        <path d="M15 17.5h-6l6-9h-4"/><path d="M12 8.5h4l2.5 9"/><circle cx="17" cy="4.5" r="1.4" fill="#04211a"/>
+      </svg>
+    </div>
+    <div>
+      <div class="bname">MTB NUTRITION</div>
+      <div class="btag">MTB · ESTRADA · GRAVEL · ROLO</div>
+    </div>
+  </div>
+
+  <h1>Sua semana<br>de treino<br><span class="grad">chega pronta.</span></h1>
+
+  <p class="sub">A IA monta, <b>manda pro Garmin</b> e pro rolo, analisa cada pedalada e refaz a semana seguinte.</p>
+
+  <div class="card">
+    <div class="card-h"><div class="card-t">SUA SEMANA</div><div class="card-b">GERADA POR IA</div></div>
+    <div class="row"><div class="dow">TER</div><div class="bar" style="background:#6a1b9a"></div><div class="tname">VO2max — 5×4min</div><div class="tdur">1h05</div></div>
+    <div class="row"><div class="dow">QUA</div><div class="bar" style="background:#2e7d32"></div><div class="tname">Academia</div><div class="tdur">50min</div></div>
+    <div class="row"><div class="dow">QUI</div><div class="bar" style="background:#e65100"></div><div class="tname">Tempo em subida</div><div class="tdur">1h15</div></div>
+    <div class="row"><div class="dow">SÁB</div><div class="bar" style="background:#1565c0"></div><div class="tname">Longão Z2</div><div class="tdur">3h00</div></div>
+    <div class="row rest"><div class="dow">DOM</div><div class="bar" style="background:#607d8b"></div><div class="tname">Descanso</div><div class="tdur">—</div></div>
+  </div>
+
+  <div class="feats">
+    <div class="f">
+      <svg width="38" height="38" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.16)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Treino no relógio, sem digitar nada
+    </div>
+    <div class="f">
+      <svg width="38" height="38" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.16)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Rolo em .zwo + nutrição por treino
+    </div>
+    <div class="f">
+      <svg width="38" height="38" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.16)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      FTP automático, sem teste de 20min
+    </div>
+  </div>
+
+  <div class="cta">
+    <div class="free">14 dias grátis</div>
+    <div class="swipe">MTBNUTRITION.COM.BR</div>
+  </div>
+</div>
