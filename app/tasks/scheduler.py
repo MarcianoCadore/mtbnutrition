@@ -17,12 +17,23 @@ TZ = pytz.timezone("America/Sao_Paulo")
 scheduler = AsyncIOScheduler(timezone=TZ)
 logger = logging.getLogger(__name__)
 
+def com_assinatura(usuarios: list[dict]) -> list[dict]:
+    """Filtra quem está em trial ou em dia.
+
+    Todo job que gasta dinheiro (IA, Twilio, chamada ao Garmin) passa por aqui.
+    Sem isto o paywall só valeria para o portal, e quem parou de pagar
+    continuaria consumindo cota de IA e mensagem de WhatsApp indefinidamente.
+    """
+    from app.services import assinatura_service
+    return [u for u in usuarios if assinatura_service.estado(u)["acesso"]]
+
+
 async def _usuarios_ativos() -> list[dict]:
-    """Usuários com telefone e WhatsApp ativo (aptos a receber notificações)."""
+    """Usuários com telefone, WhatsApp ativo e assinatura válida."""
     from app.services.user_service import listar_usuarios
     todos = await listar_usuarios()
-    return [u for u in todos
-            if u.get("telefone") and (u.get("whatsapp") or {}).get("ativo")]
+    return com_assinatura([u for u in todos
+                           if u.get("telefone") and (u.get("whatsapp") or {}).get("ativo")])
 
 
 def _quer_nutricao(u: dict) -> bool:
@@ -220,7 +231,7 @@ async def job_gerar_semana_vigente():
 
     print(f"[{datetime.now()}] Auto-geração semana vigente ({seg})...")
     gerados = 0
-    for u in await listar_usuarios():
+    for u in com_assinatura(await listar_usuarios()):
         user_id = str(u["_id"])
         try:
             existing = await db.semanas.find_one({"semana_inicio": seg, "user_id": user_id})
@@ -255,11 +266,11 @@ async def job_garmin_sync():
     from app.services.user_service import listar_usuarios
 
     todos = await listar_usuarios()
-    # Filtra apenas quem tem Garmin configurado
-    com_garmin = [
+    # Filtra quem tem Garmin configurado E assinatura válida
+    com_garmin = com_assinatura([
         u for u in todos
         if (u.get("integracao") or {}).get("tipo") == "garmin"
-    ]
+    ])
 
     if not com_garmin:
         # Nenhum usuário com Garmin — sai sem log de erro
@@ -347,7 +358,97 @@ async def job_alerta_prova():
     print(f"[{datetime.now()}] Alertas de prova enviados para {enviados} usuário(s).")
 
 
+async def job_assinaturas():
+    """Roda 9h — expira quem venceu e avisa quem está perto de vencer.
+
+    O gate do middleware já recalcula o vencimento na leitura, então ninguém
+    entra indevidamente se este job falhar. Ele existe para (a) deixar o status
+    gravado coerente com a realidade, o que o admin lê, e (b) avisar antes de
+    cortar — cortar sem avisar é o jeito mais rápido de perder um assinante que
+    só esqueceu de pagar.
+    """
+    from app.services import assinatura_service as asg
+    from app.services.user_service import listar_usuarios
+
+    print(f"[{datetime.now()}] Verificando assinaturas...")
+    avisados = expirados = 0
+
+    for u in await listar_usuarios():
+        user_id = str(u["_id"])
+        try:
+            est = asg.estado(u)
+            gravado = (u.get("assinatura") or {}).get("status")
+
+            if not est["acesso"]:
+                if gravado in ("trial", "ativa"):
+                    await asg.marcar_expirada(user_id)
+                    expirados += 1
+                    await _avisar_assinatura(u, est, "venceu")
+                continue
+
+            dias = est["dias"]
+            if dias in asg.AVISOS_DIAS:
+                marcador = f"{est['status']}:{dias}"
+                if marcador not in ((u.get("assinatura") or {}).get("avisos_enviados") or []):
+                    if await _avisar_assinatura(u, est, "faltam"):
+                        await asg.registrar_aviso(user_id, marcador)
+                        avisados += 1
+        except Exception as e:
+            logger.error("job_assinaturas p/ %s: %s", u.get("login"), e)
+
+    print(f"[{datetime.now()}] Assinaturas: {expirados} expirada(s), {avisados} aviso(s).")
+
+
+async def _avisar_assinatura(u: dict, est: dict, momento: str) -> bool:
+    """Avisa o atleta por WhatsApp. Retorna True se enviou."""
+    from app.services.user_service import telefone_notificavel
+    telefone = await telefone_notificavel(u["_id"])
+    if not telefone:
+        return False
+
+    nome = (u.get("nome") or "").split(" ")[0]
+    ola = f"Fala, {nome}!" if nome else "Fala!"
+
+    if momento == "venceu":
+        if est["status"] == "trial" or (u.get("assinatura") or {}).get("status") == "trial":
+            texto = (f"{ola} Seus 14 dias de teste no MTB Nutrition terminaram. 🚵\n\n"
+                     "Seu histórico, suas zonas e tudo que você treinou continuam salvos — "
+                     "e voltam no lugar assim que você assinar.\n\n"
+                     "R$ 24,99 por 30 dias, no Pix. É só acessar *Assinatura* no portal, "
+                     "pagar e me mandar o comprovante aqui.")
+        else:
+            texto = (f"{ola} Seu acesso ao MTB Nutrition venceu hoje.\n\n"
+                     "Renove por R$ 24,99 (Pix) e volta tudo de onde parou — "
+                     "manda o comprovante aqui que eu libero.")
+    else:
+        dias = est["dias"]
+        quanto = "1 dia" if dias == 1 else f"{dias} dias"
+        if est["status"] == "trial":
+            texto = (f"{ola} Faltam *{quanto}* do seu teste grátis no MTB Nutrition. 🚵\n\n"
+                     "Se quiser seguir com a IA montando sua semana, é R$ 24,99 por 30 dias "
+                     "no Pix — e os dias que sobrarem do teste entram de bônus, você não "
+                     "perde nada por assinar antes.\n\n"
+                     "O QR code está em *Assinatura*, no portal.")
+        else:
+            texto = (f"{ola} Seu acesso ao MTB Nutrition vence em *{quanto}*.\n\n"
+                     "Pra não parar no meio da semana, renove por R$ 24,99 no Pix e me manda "
+                     "o comprovante. O que você pagar antes do vencimento é somado, não perde.")
+
+    texto += "\n\n_MTB Nutrition Bot 🤖_"
+    await send_message(telefone, texto)
+    await asyncio.sleep(1)   # throttle Twilio
+    return True
+
+
 def start_scheduler():
+    scheduler.add_job(
+        job_assinaturas,
+        CronTrigger(hour=9, minute=0, timezone=TZ),
+        id="assinaturas",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
     scheduler.add_job(
         job_plano_diario,
         CronTrigger(hour=8, minute=0, timezone=TZ),

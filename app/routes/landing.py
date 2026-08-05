@@ -469,7 +469,7 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
           <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Assistente IA com o seu histórico — 5 perguntas por semana</li>
         </ul>
         <a class="btn btn-primary btn-lg" href="/signup" style="width:100%">Começar agora</a>
-        <p class="price-cancel">Sem cartão salvo e sem cobrança automática: o QR code Pix aparece no fim do cadastro, você manda o comprovante no WhatsApp e liberamos seu acesso. Ao assinar você concorda com os termos de uso.</p>
+        <p class="price-cancel">Comece com <b>14 dias grátis</b> — sem cartão, sem cobrança automática. Depois do teste, o QR code Pix fica no portal: você paga, manda o comprovante no WhatsApp e o acesso é liberado. Ao assinar você concorda com os <a href="/termos" style="color:var(--green-hi)">termos de uso</a> e a <a href="/privacidade" style="color:var(--green-hi)">política de privacidade</a>.</p>
       </div>
     </div>
   </div>
@@ -535,7 +535,12 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
   <div class="wrap foot">
     <a class="brand" href="/"><span class="bike">🚵</span> MTB Nutrition</a>
     <div>Treino inteligente gerado por IA para ciclistas — bike e academia, do MTB ao rolo.</div>
-    <div><a href="/login" style="color:var(--green-hi)">Entrar</a> · <a href="/signup" style="color:var(--green-hi)">Criar conta</a></div>
+    <div><a href="/login" style="color:var(--green-hi)">Entrar</a> · <a href="/signup" style="color:var(--green-hi)">Criar conta</a> · <a href="/termos" style="color:var(--green-hi)">Termos de uso</a> · <a href="/privacidade" style="color:var(--green-hi)">Privacidade</a></div>
+    <div style="font-size:.78rem;opacity:.75;max-width:640px;margin:6px auto 0;line-height:1.55">
+      ⚕️ Os treinos e cardápios são gerados por inteligência artificial e têm caráter informativo.
+      Não substituem avaliação médica, nutricionista (CFN) nem profissional de educação física (CREF).
+      Consulte um profissional antes de iniciar.
+    </div>
   </div>
 </footer>
 

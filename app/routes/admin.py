@@ -2,6 +2,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from bson import ObjectId
 
+from app.services import assinatura_service
 from app.services.mongo_service import get_db
 
 router = APIRouter()
@@ -114,19 +115,20 @@ function iniciais(u) {
   return n.split(' ').map(p => p[0]).slice(0,2).join('').toUpperCase();
 }
 
+function statusAss(u) { return (u.assinatura || {}).status || 'expirada'; }
+
 function renderStats() {
-  const total    = USERS.length;
-  const ativos   = USERS.filter(acessoAtivo).length;
-  const pend     = total - ativos;
-  const comChat  = USERS.filter(chatAtivo).length;
-  const pagos    = USERS.filter(pagamentoOk).length;
-  const pendPag  = total - pagos;
+  const total     = USERS.length;
+  const emTrial   = USERS.filter(u => statusAss(u) === 'trial').length;
+  const assinando = USERS.filter(u => statusAss(u) === 'ativa').length;
+  const perdidos  = USERS.filter(u => ['expirada','cancelada'].includes(statusAss(u))).length;
+  const mrr       = (assinando * 24.99).toFixed(2).replace('.', ',');
   document.getElementById('stats').innerHTML = `
     <div class="stat"><div class="val">${total}</div><div class="lbl">Usuários</div></div>
-    <div class="stat"><div class="val">${pagos}</div><div class="lbl">Pagamento OK</div></div>
-    <div class="stat"><div class="val">${pendPag}</div><div class="lbl">Pagto. pendente</div></div>
-    <div class="stat"><div class="val">${ativos}</div><div class="lbl">Com acesso</div></div>
-    <div class="stat"><div class="val">${comChat}</div><div class="lbl">Chat ativo</div></div>`;
+    <div class="stat"><div class="val">${assinando}</div><div class="lbl">Assinantes</div></div>
+    <div class="stat"><div class="val">R$ ${mrr}</div><div class="lbl">Receita/mês</div></div>
+    <div class="stat"><div class="val">${emTrial}</div><div class="lbl">Em teste</div></div>
+    <div class="stat"><div class="val">${perdidos}</div><div class="lbl">Vencidos</div></div>`;
 }
 
 function renderCard(u) {
@@ -156,6 +158,22 @@ function renderCard(u) {
     `<option value="${n}" ${lim === n ? 'selected' : ''}>${n}/semana</option>`).join('');
   const selLimite = `<select class="sel-limite" onchange="setLimite('${u.id}', this.value, this)">
     <option value="" ${!lim ? 'selected' : ''}>Ilimitado</option>${opcoes}</select>`;
+
+  const ass = u.assinatura || {};
+  const st = statusAss(u);
+  const dias = ass.dias;
+  const rotulos = {
+    trial:     `<span class="badge pend">🎁 Teste — ${dias != null ? dias + 'd' : ''}</span>`,
+    ativa:     `<span class="badge on">💚 Ativa até ${ass.ate || '—'}</span>`,
+    expirada:  '<span class="badge off">⏳ Vencida</span>',
+    cancelada: '<span class="badge off">✕ Cancelada</span>',
+  };
+  const badgeAss = rotulos[st] || rotulos.expirada;
+  const btnsAss = st === 'ativa'
+    ? `<button class="btn-sm btn-bloquear" onclick="setAssinatura('${u.id}','expirar')">Encerrar</button>`
+    : `<button class="btn-sm btn-habilitar" onclick="setAssinatura('${u.id}','renovar')">+30 dias</button>
+       <button class="btn-sm btn-chat-on" onclick="setAssinatura('${u.id}','trial')">+14d teste</button>`;
+
   return `<div class="user-card" id="row-${u.id}">
     <div class="user-head">
       <div class="user-avatar">${iniciais(u)}</div>
@@ -168,11 +186,15 @@ function renderCard(u) {
     </div>
     <div class="user-rows">
       <div class="user-row">
+        <span class="user-row-label">Assinatura</span>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${badgeAss}${btnsAss}</div>
+      </div>
+      <div class="user-row">
         <span class="user-row-label">Pagamento</span>
         <div style="display:flex;align-items:center;gap:8px">${badgePagamento}${btnPagamento}</div>
       </div>
       <div class="user-row">
-        <span class="user-row-label">Acesso</span>
+        <span class="user-row-label">WhatsApp</span>
         <div style="display:flex;align-items:center;gap:8px">${badgeAcesso}${btnAcesso}</div>
       </div>
       <div class="user-row">
@@ -201,6 +223,24 @@ function renderAll() {
   }
 }
 
+async function setAssinatura(id, acao) {
+  const res = await fetch('/admin/assinatura', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({user_id: id, acao})
+  });
+  if (!res.ok) { showToast('Erro ao alterar assinatura.'); return; }
+  const d = await res.json();
+  const u = USERS.find(x => x.id === id);
+  u.assinatura = {status: d.status, ate: d.ate || null,
+                  dias: d.status === 'trial' ? 14 : (d.status === 'ativa' ? 30 : 0)};
+  if (d.status === 'ativa') u.pagamento_confirmado = true;
+  document.getElementById('row-' + id).outerHTML = renderCard(u);
+  renderStats();
+  showToast({trial:'Teste concedido até ' + (d.ate || ''),
+             ativa:'Acesso liberado até ' + (d.ate || ''),
+             expirada:'Assinatura encerrada.'}[d.status] || 'Assinatura atualizada.');
+}
+
 async function toggleAcesso(id, currentAtivo) {
   const btn = document.getElementById('ba-' + id);
   btn.disabled = true;
@@ -227,11 +267,15 @@ async function togglePagamento(id, currentPago) {
     body: JSON.stringify({user_id: id, pago: novoPago})
   });
   if (res.ok) {
+    const d = await res.json();
     const u = USERS.find(x => x.id === id);
     u.pagamento_confirmado = novoPago;
+    u.assinatura = novoPago
+      ? {status:'ativa', ate: d.pago_ate, dias: 30}
+      : {status:'cancelada'};
     document.getElementById('row-' + id).outerHTML = renderCard(u);
     renderStats();
-    showToast(novoPago ? 'Pagamento confirmado.' : 'Pagamento marcado como pendente.');
+    showToast(novoPago ? `Acesso liberado até ${d.pago_ate}.` : 'Assinatura cancelada.');
   } else { btn.disabled = false; showToast('Erro ao atualizar pagamento.'); }
 }
 
@@ -305,12 +349,22 @@ async def admin_page(request: Request):
         {},
         {
             "login": 1, "nome": 1, "telefone": 1, "telefone_verificado": 1,
-            "features": 1, "criado_em": 1, "pagamento_confirmado": 1,
+            "features": 1, "criado_em": 1, "pagamento_confirmado": 1, "assinatura": 1,
         },
     )
     usuarios = await cursor.to_list(length=None)
 
     import json
+
+    def _ass(u: dict) -> dict:
+        est = assinatura_service.estado(u)
+        ate = est.get("pago_ate") if est["status"] == "ativa" else est.get("trial_fim")
+        return {
+            "status": est["status"],
+            "dias":   est["dias"],
+            "ate":    ate.strftime("%d/%m/%Y") if ate else None,
+        }
+
     dados = [
         {
             "id": str(u["_id"]),
@@ -319,13 +373,18 @@ async def admin_page(request: Request):
             "tel": u.get("telefone", ""),
             "telefone_verificado": bool(u.get("telefone_verificado", False)),
             "pagamento_confirmado": bool(u.get("pagamento_confirmado", False)),
+            "assinatura": _ass(u),
             "features": u.get("features", {}),
             "criado_em": u["criado_em"].strftime("%d/%m/%Y %H:%M") if u.get("criado_em") else "",
         }
         for u in usuarios
     ]
-    # Pagamento pendente primeiro, depois acesso pendente, depois por data de cadastro
-    dados.sort(key=lambda x: (x["pagamento_confirmado"], x["telefone_verificado"], x["criado_em"]))
+    # Quem precisa de ação primeiro: trial acabando e vencidos no topo, depois
+    # pagamento pendente, depois o resto por data de cadastro.
+    _URGENCIA = {"expirada": 0, "trial": 1, "cancelada": 2, "ativa": 3}
+    dados.sort(key=lambda x: (_URGENCIA.get(x["assinatura"]["status"], 9),
+                              x["assinatura"]["dias"] if x["assinatura"]["dias"] is not None else 999,
+                              x["criado_em"]))
     users_json = json.dumps(dados, ensure_ascii=False)
     html = _HTML.replace("__USERS_JSON__", users_json)
     return HTMLResponse(html)
@@ -356,6 +415,12 @@ async def toggle_acesso(request: Request):
 
 @router.post("/toggle-pagamento")
 async def toggle_pagamento(request: Request):
+    """Confere o comprovante do Pix: libera 30 dias, ou desfaz a liberação.
+
+    "Marcar pago" deixou de ser um selo visual — agora move a assinatura para
+    `ativa` com vencimento em 30 dias. Se ainda houver saldo (trial em curso ou
+    renovação antecipada), os dias restantes são somados.
+    """
     admin = await _require_admin(request)
     if not admin:
         return JSONResponse({"erro": "Acesso negado."}, status_code=403)
@@ -374,7 +439,50 @@ async def toggle_pagamento(request: Request):
 
     db = get_db()
     await db.users.update_one({"_id": oid}, {"$set": {"pagamento_confirmado": pago}})
-    return JSONResponse({"ok": True, "pago": pago})
+
+    if pago:
+        info = await assinatura_service.confirmar_pagamento(user_id)
+        pago_ate = info["pago_ate"].strftime("%d/%m/%Y")
+    else:
+        # Desmarcar é correção de erro do admin (comprovante falso, valor
+        # errado): cancela o acesso em vez de deixar 30 dias soltos.
+        await assinatura_service.cancelar(user_id)
+        pago_ate = None
+
+    return JSONResponse({"ok": True, "pago": pago, "pago_ate": pago_ate})
+
+
+@router.post("/assinatura")
+async def alterar_assinatura(request: Request):
+    """Ações manuais de suporte: conceder trial, expirar ou reativar."""
+    admin = await _require_admin(request)
+    if not admin:
+        return JSONResponse({"erro": "Acesso negado."}, status_code=403)
+
+    body = await request.json()
+    user_id = body.get("user_id")
+    acao = body.get("acao")
+
+    if not user_id or acao not in ("trial", "expirar", "renovar"):
+        return JSONResponse({"erro": "Parâmetros inválidos."}, status_code=400)
+    try:
+        ObjectId(user_id)
+    except Exception:
+        return JSONResponse({"erro": "user_id inválido."}, status_code=400)
+
+    if acao == "trial":
+        dias = body.get("dias")
+        bloco = await assinatura_service.reabrir_trial(
+            user_id, int(dias) if isinstance(dias, int) and dias > 0 else assinatura_service.TRIAL_DIAS)
+        return JSONResponse({"ok": True, "status": "trial",
+                             "ate": bloco["trial_fim"].strftime("%d/%m/%Y")})
+    if acao == "expirar":
+        await assinatura_service.marcar_expirada(user_id)
+        return JSONResponse({"ok": True, "status": "expirada"})
+
+    info = await assinatura_service.confirmar_pagamento(user_id)
+    return JSONResponse({"ok": True, "status": "ativa",
+                         "ate": info["pago_ate"].strftime("%d/%m/%Y")})
 
 
 @router.post("/toggle-chat")

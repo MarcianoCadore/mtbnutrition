@@ -59,6 +59,7 @@ from typing import Any
 from bson import ObjectId
 from passlib.context import CryptContext
 
+from app.services import assinatura_service
 from app.services.mongo_service import get_db
 from app.services.nutricao_service import DEFAULT_HORARIOS
 
@@ -207,6 +208,10 @@ async def criar_usuario(dados: dict) -> dict:
             "ativo": bool(dados.get("whatsapp", {}).get("ativo", False)),
         },
         "pagamento_confirmado": bool(dados.get("pagamento_confirmado", False)),
+        # Todo cadastro nasce em trial: o produto se vende mostrando a semana
+        # pronta, não cobrando antes de mostrar qualquer coisa.
+        "assinatura": dados.get("assinatura") or assinatura_service.novo_trial(),
+        "aceite_termos": dados.get("aceite_termos"),
         "criado_em": datetime.now(timezone.utc),
     }
 

@@ -1,9 +1,14 @@
 """Fixtures para os smoke tests de rotas (TestClient + auth real + DB fake)."""
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from bson import ObjectId
 from fastapi.testclient import TestClient
 
 import main
+
+_LONGE = datetime.now(timezone.utc) + timedelta(days=365)
+_ONTEM = datetime.now(timezone.utc) - timedelta(days=1)
 
 
 @pytest.fixture
@@ -17,12 +22,27 @@ def auth_client(client):
     """Devolve (client, user_id) já autenticado com um token de sessão válido.
 
     O user_id é um ObjectId válido (necessário para o middleware inject_chat e
-    rotas que fazem ObjectId(user_id)).
+    rotas que fazem ObjectId(user_id)). Sem documento no banco, o gate de
+    assinatura deixa passar de propósito — ver `estado_por_id`.
     """
     user_id = str(ObjectId())
     token = main._gerar_token(user_id)
     client.cookies.set(main._COOKIE, token)
     return client, user_id
+
+
+@pytest.fixture
+def vencido_client(client, fake_db, run):
+    """(client, user_id) de quem deixou a assinatura vencer — para testar o gate."""
+    user_id = ObjectId()
+    run(fake_db.users.insert_one({
+        "_id": user_id,
+        "login": "atleta_vencido",
+        "assinatura": {"status": "expirada", "pago_ate": _ONTEM},
+    }))
+    token = main._gerar_token(str(user_id))
+    client.cookies.set(main._COOKIE, token)
+    return client, str(user_id)
 
 
 @pytest.fixture
