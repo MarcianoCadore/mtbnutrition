@@ -1498,6 +1498,23 @@ async def proxima_prova_rt(request: Request):
             itens = novos
             await salvar_focos(prova["_id"], novos)
 
+    # Provas seguintes: o atleta que tem calendário quer ver o que vem depois.
+    # Vão sem focos de propósito — gerar focos por IA para cada prova futura
+    # multiplicaria o custo para informar o que só importa quando ela chegar.
+    from app.services.prova_service import listar_provas
+    hoje = hoje_local().isoformat()
+    seguintes = [
+        {
+            "id": p["_id"], "nome": p.get("nome"), "data": p.get("data"),
+            "local": p.get("local"), "distancia_km": p.get("distancia_km"),
+            "altimetria_m": p.get("altimetria_m"), "terreno": p.get("terreno"),
+            "dias_restantes": dias_ate(p["data"]),
+            "fase_label": FASE_LABEL.get(fase_periodizacao(semanas_ate(p["data"]))),
+        }
+        for p in await listar_provas(user_id)
+        if p.get("data") and p["data"] >= hoje and p["_id"] != prova["_id"]
+    ]
+
     return {
         "prova": prova,
         "dias_restantes": dias,
@@ -1505,6 +1522,7 @@ async def proxima_prova_rt(request: Request):
         "fase": fase,
         "fase_label": FASE_LABEL.get(fase, fase),
         "focos": itens or [],
+        "seguintes": seguintes,
     }
 
 

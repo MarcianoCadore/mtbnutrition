@@ -7,7 +7,10 @@ from app.services.mongo_service import get_db
 
 router = APIRouter()
 
-_ADMIN_LOGIN = "marciano"
+# Fonte única do login de admin. Estava repetido aqui, em main.py e no
+# assinatura_service — mudar o login em um só lugar deixaria o dono com
+# cortesia mas sem painel (ou o contrário).
+_ADMIN_LOGIN = assinatura_service.LOGIN_ADMIN
 _MENSALIDADE_BRL = 24.99
 
 _HTML = """<!DOCTYPE html>
@@ -434,7 +437,9 @@ async def _require_admin(request: Request):
         return None
     db = get_db()
     u = await db.users.find_one({"_id": ObjectId(user_id)}, {"login": 1})
-    if not u or u.get("login") != _ADMIN_LOGIN:
+    # Mesma normalização da cortesia: sem ela, um login gravado com maiúscula
+    # teria acesso permanente mas levaria 403 no painel.
+    if not u or not assinatura_service.e_admin(u):
         return None
     return u
 

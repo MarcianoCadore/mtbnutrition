@@ -57,6 +57,16 @@ hora em que fosse liberar o pagamento de outra pessoa.
 """
 
 
+def e_admin(u: dict | None) -> bool:
+    """Conta que opera a plataforma. Fonte única — usada pelo painel e aqui.
+
+    Normaliza caixa e espaços: um login gravado como "Marciano" precisa dar o
+    mesmo resultado nos dois lugares, senão a conta teria acesso permanente mas
+    levaria 403 no painel.
+    """
+    return bool(u) and (u.get("login") or "").strip().lower() == LOGIN_ADMIN
+
+
 def e_cortesia(u: dict | None) -> bool:
     """Conta que não paga: o admin, ou alguém marcado como cortesia.
 
@@ -65,7 +75,7 @@ def e_cortesia(u: dict | None) -> bool:
     """
     if not u:
         return False
-    if (u.get("login") or "").strip().lower() == LOGIN_ADMIN:
+    if e_admin(u):
         return True
     return (u.get("assinatura") or {}).get("status") == "cortesia"
 

@@ -498,7 +498,7 @@ async def inject_chat(request: Request, call_next):
     if not u:
         return response
 
-    is_admin = u.get("login") == "marciano"
+    is_admin = assinatura_service.e_admin(u)
     chat_ativo = u.get("features", {}).get("chat") is not False
     faixa = _faixa_assinatura(u)
     # Toda tela que prescreve comida carrega o aviso de que a IA não é

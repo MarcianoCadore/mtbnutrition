@@ -63,6 +63,20 @@ HTML = """<!DOCTYPE html>
     .prova-panel .pp-focos ul { list-style: none; }
     .prova-panel .pp-focos li { font-size: .85rem; padding: 3px 0; display: flex; gap: 7px; align-items: flex-start; line-height: 1.35; }
     .prova-panel a.pp-link { color: #fff; text-decoration: underline; font-size: .82rem; opacity: .9; }
+    /* Provas seguintes: uma linha cada, mais discretas que a próxima — quem
+       exige ação agora é a primeira. */
+    .prova-panel .pp-seguintes { margin-top: 12px; border-top: 1px solid rgba(255,255,255,.22); padding-top: 10px; }
+    .prova-panel .ps-linha { display: flex; align-items: baseline; gap: 10px; padding: 5px 0; font-size: .85rem; }
+    .prova-panel .ps-linha + .ps-linha { border-top: 1px solid rgba(255,255,255,.1); }
+    .prova-panel .ps-data { font-weight: 800; font-variant-numeric: tabular-nums; opacity: .95; flex-shrink: 0; }
+    .prova-panel .ps-nome { font-weight: 600; flex: 1; min-width: 0; }
+    .prova-panel .ps-nome small { opacity: .75; font-weight: 400; font-size: .8rem; }
+    .prova-panel .ps-dias { opacity: .85; white-space: nowrap; flex-shrink: 0; }
+    .prova-panel .ps-fase { background: rgba(255,255,255,.16); border-radius: 20px; padding: 2px 9px; font-size: .68rem; font-weight: 700; white-space: nowrap; flex-shrink: 0; }
+    @media (max-width: 640px) {
+      .prova-panel .ps-linha { flex-wrap: wrap; gap: 4px 8px; }
+      .prova-panel .ps-nome { flex-basis: 100%; order: 3; }
+    }
     .prova-cta { background: #fff; border: 1.5px dashed var(--green); border-radius: 12px; padding: 14px 18px; margin-bottom: 20px; text-align: center; }
     .prova-cta a { color: var(--green); font-weight: 700; text-decoration: none; font-size: .92rem; }
     .section-label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin-bottom: 8px; }
@@ -1982,6 +1996,29 @@ async function carregarProva() {
   const focos = (d.focos || []).map(f => `<li><span>🎯</span><span>${esc(f)}</span></li>`).join('');
   const focosHTML = focos ? `<div class="pp-focos"><div class="pf-titulo">Focos até a prova</div><ul>${focos}</ul></div>` : '';
 
+  // Provas seguintes em lista compacta: dar o mesmo destaque a uma prova daqui
+  // 25 dias e a outra daqui 4 meses esconderia a que exige ação agora.
+  const seguintes = d.seguintes || [];
+  const seguintesHTML = seguintes.length ? `
+    <div class="pp-seguintes">
+      <div class="pf-titulo">Depois dessa (${seguintes.length})</div>
+      ${seguintes.map(s => {
+        const [sy, sm, sd] = (s.data || '').split('-');
+        const sDataFmt = sd ? (sd + '/' + sm) : (s.data || '');
+        const sDias = s.dias_restantes;
+        const sCount = sDias <= 0 ? 'hoje' : (sDias === 1 ? '1 dia' : sDias + ' dias');
+        const det = [];
+        if (s.local) det.push(esc(s.local));
+        if (s.distancia_km) det.push(s.distancia_km + ' km');
+        return `<div class="ps-linha">
+          <span class="ps-data">${sDataFmt}</span>
+          <span class="ps-nome">${esc(s.nome)}${det.length ? ` <small>${det.join(' · ')}</small>` : ''}</span>
+          <span class="ps-dias">${sCount}</span>
+          <span class="ps-fase">${esc(s.fase_label || '')}</span>
+        </div>`;
+      }).join('')}
+    </div>` : '';
+
   panel.innerHTML = `<div class="prova-panel">
     <div class="pp-top">
       <div>
@@ -1993,6 +2030,7 @@ async function carregarProva() {
     <div class="pp-count">${count}</div>
     <div class="pp-sub">${dataFmt}${sub.length ? '  ·  ' + sub.join('  ·  ') : ''}</div>
     ${focosHTML}
+    ${seguintesHTML}
     <div style="margin-top:10px"><a class="pp-link" href="/workout/calendario">Gerenciar provas →</a></div>
   </div>`;
 }
