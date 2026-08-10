@@ -118,126 +118,172 @@ def _aplicar_bpm(steps: list, zonas_bpm: dict) -> None:
             }
 
 
+# ── escala por duração ────────────────────────────────────────────────────────
+#
+# Todo builder DEVE devolver total == duracao_min * 60. O treino planejado vai pro
+# Garmin com esse total em `estimatedDurationInSecs` e o pull seguinte
+# (garmin_service.sync_treinos_planejados) lê esse campo de volta e regrava
+# `duracao_min` no banco. Se o builder ignorar a duração pedida, o round-trip
+# reescreve o plano com a duração do template — o atleta pede 110 min e o app
+# "volta sozinho" pros 70 min do molde.
+
+# Pontas nunca ficam abaixo disto: aquecer/desaquecer menos que 5 min não cumpre
+# o papel. Só duração irreal (< ~20 min de intervalado) estoura o tempo pedido.
+_MIN_AQUECIMENTO_S = 300
+_MIN_VOLTA_CALMA_S = 300
+# Sobra menor que isto não vira bloco próprio (vira aquecimento) — evita um step
+# solto de 40 segundos no relógio.
+_MIN_BLOCO_S = 300
+
+
+def _encolher_pontas(total_s: int, aquecimento_s: int, volta_calma_s: int,
+                     miolo_s: int) -> tuple[int, int]:
+    """Corta aquecimento/volta à calma (até os mínimos) para caber `miolo_s` no tempo
+    total. Corta proporcional à folga de cada ponta."""
+    falta = miolo_s - (total_s - aquecimento_s - volta_calma_s)
+    folga_aq = max(0, aquecimento_s - _MIN_AQUECIMENTO_S)
+    folga_vc = max(0, volta_calma_s - _MIN_VOLTA_CALMA_S)
+    if falta <= 0 or not (folga_aq + folga_vc):
+        return aquecimento_s, volta_calma_s
+    corte = min(falta, folga_aq + folga_vc)
+    corte_aq = min(folga_aq, round(corte * folga_aq / (folga_aq + folga_vc)))
+    corte_vc = min(folga_vc, corte - corte_aq)
+    corte_aq = min(folga_aq, corte - corte_vc)   # devolve à outra ponta o que sobrou
+    return aquecimento_s - corte_aq, volta_calma_s - corte_vc
+
+
+def _total_s(duracao_min: int | None) -> int:
+    return max(int(duracao_min or 0), 1) * 60
+
+
+def _continuo(duracao_min: int | None, *, zona_miolo: int, zona_pontas: int,
+              aquecimento_s: int, volta_calma_s: int) -> tuple[list, int]:
+    """Aquecimento + bloco único + volta à calma. O bloco absorve a duração pedida."""
+    total = _total_s(duracao_min)
+    aq, vc = _encolher_pontas(total, aquecimento_s, volta_calma_s, _MIN_BLOCO_S)
+    miolo = max(_MIN_BLOCO_S, total - aq - vc)
+    steps = [
+        create_warmup_step(aq, step_order=1, target_type=_hz(zona_pontas)),
+        create_interval_step(miolo, step_order=2, target_type=_hz(zona_miolo)),
+        create_cooldown_step(vc, step_order=3, target_type=_hz(zona_pontas)),
+    ]
+    return steps, aq + miolo + vc
+
+
+def _intervalado(duracao_min: int | None, *, intervalo_s: int, recuperacao_s: int,
+                 zona_intervalo: int, zona_recuperacao: int, zona_pontas: int,
+                 aquecimento_s: int, volta_calma_s: int,
+                 series_max: int) -> tuple[list, int]:
+    """Aquecimento + N séries + (rodagem Z2) + volta à calma.
+
+    A duração pedida é preenchida somando séries — o bloco (esforço + recuperação)
+    é a assinatura do tipo e não muda de tamanho. Acima de `series_max` a sessão
+    ficaria desproporcional, então o tempo restante vira rodagem Z2 antes da volta
+    à calma.
+    """
+    total = _total_s(duracao_min)
+    bloco = intervalo_s + recuperacao_s
+    aq, vc = _encolher_pontas(total, aquecimento_s, volta_calma_s, bloco)
+
+    series = max(1, min(series_max, (total - aq - vc) // bloco))
+    sobra = max(0, total - aq - vc - series * bloco)
+    if sobra < _MIN_BLOCO_S:
+        aq += sobra          # curta demais para um bloco: alonga o aquecimento
+        sobra = 0
+
+    inner = [
+        create_interval_step(intervalo_s, step_order=1, target_type=_hz(zona_intervalo)),
+        create_recovery_step(recuperacao_s, step_order=2, target_type=_hz(zona_recuperacao)),
+    ]
+    steps = [
+        create_warmup_step(aq, step_order=1, target_type=_hz(zona_pontas)),
+        create_repeat_group(series, inner, step_order=2),
+    ]
+    if sobra:
+        steps.append(create_interval_step(sobra, step_order=3, target_type=_hz(2)))
+    steps.append(create_cooldown_step(vc, step_order=len(steps) + 1, target_type=_hz(zona_pontas)))
+    return steps, aq + series * bloco + sobra + vc
+
+
 # ── builders por TipoTreino ───────────────────────────────────────────────────
 
 def _recuperacao(duracao_min: int = 55) -> tuple[list, int]:
     """Z1 contínuo — recuperação ativa."""
-    main_s = max(600, (duracao_min - 20) * 60)
-    steps = [
-        create_warmup_step(600, step_order=1, target_type=_hz(1)),
-        create_interval_step(main_s, step_order=2, target_type=_hz(1)),
-        create_cooldown_step(600, step_order=3, target_type=_hz(1)),
-    ]
-    total = 1200 + main_s
-    return steps, total
+    return _continuo(duracao_min, zona_miolo=1, zona_pontas=1,
+                     aquecimento_s=600, volta_calma_s=600)
 
 
 def _z2_longo(duracao_min: int = 120) -> tuple[list, int]:
     """Z2 sustentado — base aeróbica."""
-    main_s = max(1800, (duracao_min - 30) * 60)
-    steps = [
-        create_warmup_step(900, step_order=1, target_type=_hz(1)),
-        create_interval_step(main_s, step_order=2, target_type=_hz(2)),
-        create_cooldown_step(900, step_order=3, target_type=_hz(1)),
-    ]
-    total = 1800 + main_s
-    return steps, total
+    return _continuo(duracao_min, zona_miolo=2, zona_pontas=1,
+                     aquecimento_s=900, volta_calma_s=900)
 
 
 def _tempo(duracao_min: int = 70) -> tuple[list, int]:
-    """3x10 min Z3 com recuperação Z2 — esforço de limiar."""
-    reps = 3
-    interval_s = 600    # 10 min Z3
-    recovery_s = 300    # 5 min Z2
-    inner = [
-        create_interval_step(interval_s, step_order=1, target_type=_hz(3)),
-        create_recovery_step(recovery_s, step_order=2, target_type=_hz(2)),
-    ]
-    steps = [
-        create_warmup_step(900, step_order=1, target_type=_hz(2)),
-        create_repeat_group(reps, inner, step_order=2),
-        create_cooldown_step(600, step_order=3, target_type=_hz(2)),
-    ]
-    total = 900 + reps * (interval_s + recovery_s) + 600
-    return steps, total
+    """Blocos de 10 min Z3 com 5 min de recuperação Z2 — esforço de limiar."""
+    return _intervalado(duracao_min, intervalo_s=600, recuperacao_s=300,
+                        zona_intervalo=3, zona_recuperacao=2, zona_pontas=2,
+                        aquecimento_s=900, volta_calma_s=600, series_max=5)
 
 
 def _forca(duracao_min: int = 65) -> tuple[list, int]:
-    """4x6 min Z3 cadência baixa — força específica."""
-    reps = 4
-    interval_s = 360    # 6 min Z3 (cadência 50-60 rpm)
-    recovery_s = 240    # 4 min Z2
-    inner = [
-        create_interval_step(interval_s, step_order=1, target_type=_hz(3)),
-        create_recovery_step(recovery_s, step_order=2, target_type=_hz(2)),
-    ]
-    steps = [
-        create_warmup_step(900, step_order=1, target_type=_hz(2)),
-        create_repeat_group(reps, inner, step_order=2),
-        create_cooldown_step(600, step_order=3, target_type=_hz(2)),
-    ]
-    total = 900 + reps * (interval_s + recovery_s) + 600
-    return steps, total
+    """Blocos de 6 min Z3 em cadência baixa (50-60 rpm) com 4 min Z2 — força específica."""
+    return _intervalado(duracao_min, intervalo_s=360, recuperacao_s=240,
+                        zona_intervalo=3, zona_recuperacao=2, zona_pontas=2,
+                        aquecimento_s=900, volta_calma_s=600, series_max=6)
 
 
 def _tiros(duracao_min: int = 62) -> tuple[list, int]:
-    """8x30s Z5 com recuperação Z1 — sprints neuromusculares."""
-    reps = 8
-    interval_s = 30     # 30s Z5
-    recovery_s = 210    # 3.5 min Z1
-    inner = [
-        create_interval_step(interval_s, step_order=1, target_type=_hz(5)),
-        create_recovery_step(recovery_s, step_order=2, target_type=_hz(1)),
-    ]
-    steps = [
-        create_warmup_step(900, step_order=1, target_type=_hz(2)),
-        create_repeat_group(reps, inner, step_order=2),
-        create_cooldown_step(900, step_order=3, target_type=_hz(2)),
-    ]
-    total = 900 + reps * (interval_s + recovery_s) + 900
-    return steps, total
+    """Sprints de 30s Z5 com 3,5 min de recuperação Z1 — neuromuscular."""
+    return _intervalado(duracao_min, intervalo_s=30, recuperacao_s=210,
+                        zona_intervalo=5, zona_recuperacao=1, zona_pontas=2,
+                        aquecimento_s=900, volta_calma_s=900, series_max=12)
 
 
 def _vo2max(duracao_min: int = 62) -> tuple[list, int]:
-    """4x4 min Z4-Z5 com recuperação Z2 — VO2max."""
-    reps = 4
-    interval_s = 240    # 4 min Z5
-    recovery_s = 240    # 4 min Z2
-    inner = [
-        create_interval_step(interval_s, step_order=1, target_type=_hz(5)),
-        create_recovery_step(recovery_s, step_order=2, target_type=_hz(2)),
-    ]
-    steps = [
-        create_warmup_step(900, step_order=1, target_type=_hz(2)),
-        create_repeat_group(reps, inner, step_order=2),
-        create_cooldown_step(900, step_order=3, target_type=_hz(2)),
-    ]
-    total = 900 + reps * (interval_s + recovery_s) + 900
-    return steps, total
+    """Blocos de 4 min Z5 com 4 min de recuperação Z2 — VO2max."""
+    return _intervalado(duracao_min, intervalo_s=240, recuperacao_s=240,
+                        zona_intervalo=5, zona_recuperacao=2, zona_pontas=2,
+                        aquecimento_s=900, volta_calma_s=900, series_max=6)
 
 
 def _teste_ftp(duracao_min: int = 57) -> tuple[list, int]:
-    """Protocolo completo de teste FTP de 20min."""
+    """Protocolo completo de teste FTP de 20min.
+
+    O protocolo (progressivo + acelerações + teste) é fixo — é o que dá o número.
+    A duração pedida só alonga/encurta as pontas e, se sobrar, uma rodagem Z2 depois
+    do teste.
+    """
     # Aquecimento Z1 — 10min
     # Progressivo Z3 — 5min
     # 3x (30seg Z5 + 1min Z1 recuperação)
     # Pré-teste Z1 — 2min suave
     # TESTE FTP Z4 — 20min potência máxima sustentável
+    # (rodagem Z2 — só se a duração pedida pedir mais tempo)
     # Desaquecimento Z1 — 15min
+    protocolo_s = 300 + 3 * (30 + 60) + 120 + 1200
+    total = _total_s(duracao_min)
+    aq, vc = _encolher_pontas(total, 600, 900, protocolo_s)
+    sobra = max(0, total - aq - vc - protocolo_s)
+    if sobra < _MIN_BLOCO_S:
+        aq += sobra
+        sobra = 0
+
     inner_acel = [
         create_interval_step(30, step_order=1, target_type=_hz(5)),
         create_recovery_step(60, step_order=2, target_type=_hz(1)),
     ]
     steps = [
-        create_warmup_step(600, step_order=1, target_type=_hz(1)),         # 10min Z1
+        create_warmup_step(aq, step_order=1, target_type=_hz(1)),          # aquecimento Z1
         create_interval_step(300, step_order=2, target_type=_hz(3)),       # 5min Z3 progressivo
         create_repeat_group(3, inner_acel, step_order=3),                  # 3x aceleração
         create_interval_step(120, step_order=4, target_type=_hz(1)),       # 2min Z1 pré-teste
         create_interval_step(1200, step_order=5, target_type=_hz(4)),      # 20min TESTE FTP Z4
-        create_cooldown_step(900, step_order=6, target_type=_hz(1)),       # 15min Z1
     ]
-    total = 600 + 300 + 3 * (30 + 60) + 120 + 1200 + 900
-    return steps, total
+    if sobra:
+        steps.append(create_interval_step(sobra, step_order=6, target_type=_hz(2)))
+    steps.append(create_cooldown_step(vc, step_order=len(steps) + 1, target_type=_hz(1)))
+    return steps, aq + protocolo_s + sobra + vc
 
 
 _BUILDERS = {
