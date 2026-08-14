@@ -118,6 +118,77 @@ class TestDiasDeTreino:
         assert u["preferencias"]["frequencia_semanal"] == 2   # freq inválida → nº de dias
 
 
+class TestMetaDeVolume:
+    """Meta de horas por semana — opcional: em branco = a IA decide o volume."""
+
+    def test_salva_a_meta_em_minutos(self, user_com_academia, fake_db, run):
+        client, uid = user_com_academia
+
+        r = client.post("/workout/perfil", data={
+            **BASE, "bike_freq": "5", "bike_dias": "0,1,2,3,5",
+            "volume_semanal_h": "10"})
+        assert r.status_code == 200
+
+        u = run(fake_db.users.find_one({"_id": ObjectId(uid)}))
+        assert u["preferencias"]["volume_semanal_min"] == 600
+
+    def test_aceita_meia_hora_com_virgula(self, user_com_academia, fake_db, run):
+        client, uid = user_com_academia
+
+        client.post("/workout/perfil", data={
+            **BASE, "bike_dias": "0,2,4", "volume_semanal_h": "10,5"})
+
+        u = run(fake_db.users.find_one({"_id": ObjectId(uid)}))
+        assert u["preferencias"]["volume_semanal_min"] == 630
+
+    @pytest.mark.parametrize("valor", ["", "0", "abc", "99", "0.5", "-3"])
+    def test_vazio_ou_invalido_deixa_a_ia_decidir(self, user_com_academia, fake_db, run, valor):
+        client, uid = user_com_academia
+
+        client.post("/workout/perfil", data={
+            **BASE, "bike_dias": "0,2,4", "volume_semanal_h": valor})
+
+        u = run(fake_db.users.find_one({"_id": ObjectId(uid)}))
+        assert u["preferencias"]["volume_semanal_min"] is None
+
+    def test_meta_pode_ser_desligada_depois_de_ligada(self, user_com_academia, fake_db, run):
+        client, uid = user_com_academia
+        client.post("/workout/perfil", data={
+            **BASE, "bike_dias": "0,2,4", "volume_semanal_h": "10"})
+
+        client.post("/workout/perfil", data={
+            **BASE, "bike_dias": "0,2,4", "volume_semanal_h": ""})
+
+        u = run(fake_db.users.find_one({"_id": ObjectId(uid)}))
+        assert u["preferencias"]["volume_semanal_min"] is None
+
+    def test_salvar_outro_bloco_nao_apaga_a_meta(self, user_com_academia, fake_db, run):
+        client, uid = user_com_academia
+        client.post("/workout/perfil", data={
+            **BASE, "bike_dias": "0,2,4", "volume_semanal_h": "10"})
+
+        client.post("/workout/perfil", data=BASE)                      # bloco perfil
+        client.post("/workout/perfil", data={**BASE, "treina_academia": "1"})
+
+        u = run(fake_db.users.find_one({"_id": ObjectId(uid)}))
+        assert u["preferencias"]["volume_semanal_min"] == 600
+
+    def test_pagina_traz_a_meta_preenchida(self, user_com_academia, run, fake_db):
+        client, uid = user_com_academia
+        client.post("/workout/perfil", data={
+            **BASE, "bike_dias": "0,2,4", "volume_semanal_h": "10"})
+
+        html = client.get("/workout/perfil").text
+        assert 'id="volume_semanal_h"' in html
+        assert 'value="10"' in html
+
+    def test_pagina_sem_meta_deixa_o_campo_vazio(self, user_com_academia):
+        client, _ = user_com_academia
+        html = client.get("/workout/perfil").text
+        assert 'id="volume_semanal_h"' in html
+        assert "{{VOLUME_SEMANAL_H}}" not in html
+
+
 class TestNivel:
     def test_nivel_invalido_vira_vazio(self, user_com_academia, fake_db, run):
         client, uid = user_com_academia

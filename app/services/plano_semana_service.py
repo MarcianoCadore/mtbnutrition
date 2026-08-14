@@ -419,6 +419,34 @@ def dias_treino_do_usuario(preferencias: dict | None) -> list[int]:
     return list(_DIAS_POR_FREQUENCIA.get(freq) or _DIAS_TREINO_PADRAO)
 
 
+# ── Meta de volume semanal ────────────────────────────────────────────────────
+#
+# Opcional: o atleta que quer "no mínimo 10h por semana" configura isso no perfil
+# em vez de repetir no chat toda semana. Sem meta definida, quem decide o volume
+# continua sendo a IA (comportamento de sempre).
+VOLUME_SEMANAL_MIN_H = 1
+VOLUME_SEMANAL_MAX_H = 40
+
+
+def volume_semanal_do_usuario(preferencias: dict | None) -> int | None:
+    """Meta de volume semanal em MINUTOS, ou None quando o atleta não definiu."""
+    try:
+        minutos = int((preferencias or {}).get("volume_semanal_min") or 0)
+    except (ValueError, TypeError):
+        return None
+    if not VOLUME_SEMANAL_MIN_H * 60 <= minutos <= VOLUME_SEMANAL_MAX_H * 60:
+        return None
+    return minutos
+
+
+def formatar_horas(minutos: int | None) -> str:
+    """420 -> '7h'; 630 -> '10h30'."""
+    if not minutos:
+        return "—"
+    h, m = divmod(int(minutos), 60)
+    return f"{h}h{m:02d}" if m else f"{h}h"
+
+
 # Regras de treino por fase de periodização (injetadas no prompt quando há prova).
 _REGRAS_FASE = {
     "base": (
@@ -687,6 +715,7 @@ TIPOS DE TREINO NA BIKE — PRESCRIÇÃO DETALHADA (cite a intensidade SEMPRE pe
 
 REGRAS DE PROGRESSÃO:
 - Aumentar volume (+5-10% em duracao_min) quando a semana foi bem executada, respeitando o teto de duração em dia útil informado em RESTRIÇÕES DE AGENDA abaixo.
+- Quando houver META DE VOLUME SEMANAL, ela manda: a progressão acontece DENTRO dela (mudando a distribuição entre os dias), não somando horas por cima.
 - Manter ou reduzir se houve dificuldades (pontos fracos > pontos fortes).
 - DESCANSO permanece DESCANSO nos mesmos dias.
 - Para TIROS: aumentar número de repetições (8→10→12) antes de aumentar duração.
@@ -1086,6 +1115,34 @@ Posicione o TESTE_FTP num dia de qualidade (seg–sex), nunca no dia do longão.
 Após o TESTE_FTP coloque RECUPERACAO no dia seguinte.
 """
 
+    # ── Meta de volume semanal (opcional, vem do perfil) ─────────────────────
+    # Existe para o atleta não precisar repetir "quero no mínimo 10h" no chat
+    # toda semana. Sem meta, a IA segue decidindo o volume como antes.
+    volume_alvo_min = volume_semanal_do_usuario(preferencias)
+    if volume_alvo_min:
+        volume_teto_min = round(volume_alvo_min * 1.1)
+        _excecao_taper = (
+            "\n- ESTA SEMANA A META NÃO VALE: polimento/prova mandam mais que ela. "
+            "Siga a periodização e explique isso em \"progressao\"."
+            if estagio_prova else
+            "\n- ÚNICA exceção: semana de recuperação/descarga planejada por você. "
+            "Nesse caso fique abaixo da meta de propósito e diga o motivo em \"progressao\"."
+        )
+        bloco_volume = f"""
+META DE VOLUME SEMANAL (o atleta definiu no perfil): {formatar_horas(volume_alvo_min)} ({volume_alvo_min} min).
+- A soma de "duracao_min" de TODOS os treinos da semana (bike + academia, DESCANSO não conta)
+  deve ficar entre {volume_alvo_min} e {volume_teto_min} min. É a meta dele, não uma sugestão.
+- Faltando tempo para bater a meta, alongue Z2_LONGO/RECUPERACAO — nunca infle VO2MAX,
+  TIROS ou TEMPO só para fechar a conta: volume se completa em zona baixa.
+- A meta NÃO autoriza furar o teto de dia útil nem criar treino em dia sem disponibilidade.
+  Se ela não couber nos dias configurados, chegue o mais perto possível e diga em "progressao"
+  quanto faltou e por quê.{_excecao_taper}"""
+    else:
+        bloco_volume = (
+            "VOLUME SEMANAL: o atleta não definiu meta de horas — a decisão de volume é sua, "
+            "com base na análise da semana e na fase de periodização."
+        )
+
     # Bloco de potência para o prompt
     if ftp_user and zonas_pot_user:
         zonas_pot_txt = " | ".join(
@@ -1124,6 +1181,8 @@ RESTRIÇÕES DE AGENDA (OBRIGATÓRIAS):
 {restricao_util}
 {restricao_fds}
 - Dias SEM treino: DESCANSO obrigatório — não gere treino nesses dias.
+
+{bloco_volume}
 
 {_instrucoes_objetivo(objetivo)}
 
@@ -1312,7 +1371,8 @@ def _primeiro_dia_planejavel(semana_inicio: str, hoje: date | None = None) -> st
 
 def _montar_primeira_semana_template(semana_inicio: str, objetivo: str,
                                      dias_treino: list[int],
-                                     hoje: date | None = None) -> list[dict]:
+                                     hoje: date | None = None,
+                                     volume_alvo_min: int | None = None) -> list[dict]:
     """Monta deterministicamente a 1ª semana a partir do perfil. Sempre válida.
 
     - Dia que já passou (cadastro no meio da semana) → DESCANSO.
@@ -1320,6 +1380,7 @@ def _montar_primeira_semana_template(semana_inicio: str, objetivo: str,
     - Dia de fim de semana (sáb>dom, se houver treino) → longão leve Z2.
     - Demais dias de treino → sequência base do objetivo, em ordem, começando no
       primeiro dia planejável (não se "gasta" a sequência em dias vencidos).
+    - Com meta de volume no perfil, as durações são escaladas até ela.
     """
     seq = _PRIMEIRA_SEMANA_SEQ.get(objetivo) or _PRIMEIRA_SEMANA_SEQ["performance_mtb"]
     dias_treino = sorted(dias_treino or _DIAS_TREINO_PADRAO)
@@ -1351,6 +1412,37 @@ def _montar_primeira_semana_template(semana_inicio: str, objetivo: str,
             data, tipo, _PRIMEIRA_SEMANA_DUR.get(tipo, 50),
             _DESCRICAO_PADRAO.get(tipo, ""), "85-95"))
 
+    return _escalar_para_meta(treinos, volume_alvo_min)
+
+
+# Teto do fim de semana ao esticar a 1ª semana: o longão pode passar dos 3h
+# padrão para caber a meta, mas não vira ultramaratona. Dia útil segue o teto de
+# sempre (_MAX_MIN_DIA_UTIL).
+_TETO_LONGAO_META_MIN = 240
+
+
+def _escalar_para_meta(treinos: list[dict], volume_alvo_min: int | None) -> list[dict]:
+    """Estica/encolhe proporcionalmente as durações da 1ª semana até a meta do atleta.
+
+    Quem configurou "10h por semana" não é iniciante e não deve receber uma semana
+    de 6h só porque ainda não tem histórico. Sem meta, o template sai como é.
+    Cada dia tem teto próprio, então a meta pode não ser alcançada — o que couber,
+    coube; forçar 4h numa terça não é serviço que se preste.
+    """
+    if not volume_alvo_min:
+        return treinos
+    total = sum(t.get("duracao_min") or 0 for t in treinos)
+    if not total:
+        return treinos
+
+    fator = volume_alvo_min / total
+    for t in treinos:
+        if not t.get("duracao_min"):
+            continue
+        wd = date.fromisoformat(t["data"]).weekday()
+        teto = _TETO_LONGAO_META_MIN if wd >= 5 else _MAX_MIN_DIA_UTIL
+        # múltiplos de 5 min: duração de treino não se escreve com 47 min
+        t["duracao_min"] = max(30, min(teto, int(round(t["duracao_min"] * fator / 5)) * 5))
     return treinos
 
 
@@ -1383,7 +1475,10 @@ async def gerar_primeira_semana(user_id: str, semana_inicio: str) -> dict:
     peso = float(perfil.get("peso_kg") or 80)
     fc_max = int(zonas_doc.get("fc_max") or perfil.get("fc_max") or 190)
 
-    treinos = _montar_primeira_semana_template(semana_inicio, objetivo, dias_treino)
+    treinos = _montar_primeira_semana_template(
+        semana_inicio, objetivo, dias_treino,
+        volume_alvo_min=volume_semanal_do_usuario(pref),
+    )
 
     # ── Refinamento opcional das descrições via IA (best-effort) ──────────────
     analise = (

@@ -1581,10 +1581,15 @@ async def pagina_perfil(request: Request):
         if str(d).isdigit() and 0 <= int(d) <= 6
     })
     bike_freq = str(int(pref.get("frequencia_semanal") or 0))
+    # Meta de volume é opcional: sem meta o campo fica vazio (= "IA decide").
+    from app.services.plano_semana_service import volume_semanal_do_usuario
+    _volume_min = volume_semanal_do_usuario(pref)
+    volume_h = f"{_volume_min / 60:g}" if _volume_min else ""
     html = (_PAGINA_PERFIL
             .replace("{{USA_CINTA}}", usa_cinta)
             .replace("{{BIKE_DIAS_JSON}}", _json.dumps(bike_dias))
             .replace("{{BIKE_FREQ}}", bike_freq)
+            .replace("{{VOLUME_SEMANAL_H}}", volume_h)
             .replace("{{IDADE}}", val(p.get("idade")))
             .replace("{{PESO}}", val(p.get("peso_kg")))
             .replace("{{ALTURA}}", val(p.get("altura_cm")))
@@ -1602,6 +1607,20 @@ async def pagina_perfil(request: Request):
     for o in _OBJETIVOS_VALIDOS:
         html = html.replace(f"{{{{OBJ_{o}}}}}", "selected" if obj == o else "")
     return html
+
+
+def _volume_semanal_min(valor) -> int | None:
+    """'10' / '10,5' / '10.5' → minutos. Vazio, zero ou fora da faixa → None (sem meta)."""
+    from app.services.plano_semana_service import (
+        VOLUME_SEMANAL_MIN_H, VOLUME_SEMANAL_MAX_H,
+    )
+    try:
+        horas = float(str(valor or "").replace(",", ".").strip() or 0)
+    except (ValueError, TypeError):
+        return None
+    if not VOLUME_SEMANAL_MIN_H <= horas <= VOLUME_SEMANAL_MAX_H:
+        return None
+    return int(round(horas * 60 / 15)) * 15   # arredonda para 15 min
 
 
 @router.post("/perfil")
@@ -1686,6 +1705,13 @@ async def salvar_perfil(request: Request):
                 "preferencias.frequencia_semanal": (
                     bike_freq if 1 <= bike_freq <= 7 else len(bike_dias)),
             })
+
+    # Meta de volume semanal — OPCIONAL. Vazio/0 volta a deixar o volume por conta
+    # da IA, então o campo é gravado como None (e não omitido) para poder ser
+    # desligado depois de ligado.
+    if "volume_semanal_h" in form:
+        campos["preferencias.volume_semanal_min"] = _volume_semanal_min(
+            form.get("volume_semanal_h"))
 
     if "basal_metabolico" in form or "meta_calorica_diaria" in form:
         campos.update({
@@ -2742,6 +2768,21 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
       são outros, é só clicar e trocar — a IA respeita exatamente o que estiver marcado aqui.</p>
     <div class="dia-row" id="bike-dias-row"></div>
     <div class="aca-auto-tip" id="bike-resumo"></div>
+
+    <label class="fld" style="margin-top:22px">Meta de horas por semana <span style="font-weight:400;color:#6b7280">(opcional)</span></label>
+    <p class="aca-hint" style="margin-top:6px">Se você tem um volume que quer bater toda semana, informe aqui e a IA
+      passa a montar as semanas somando essas horas — sem você precisar repetir isso no chat.
+      Conta tudo que for planejado (pedal + academia). <b>Deixe em branco e a IA decide o volume</b>
+      pela sua evolução, como faz hoje.</p>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <input id="volume_semanal_h" type="number" min="1" max="40" step="0.5"
+             placeholder="ex: 10" style="max-width:150px" value="{{VOLUME_SEMANAL_H}}"
+             oninput="renderVolumeResumo()">
+      <span style="color:#6b7280;font-size:.9rem">horas por semana</span>
+      <button type="button" class="freq-btn" onclick="limparVolume()">IA decide</button>
+    </div>
+    <div class="aca-auto-tip" id="volume-resumo" style="margin-top:10px"></div>
+
     <button type="button" id="btn-bike" onclick="salvarBike()">Salvar dias de treino</button>
     <div id="st-bike" class="status"></div>
   </div>
@@ -3055,6 +3096,25 @@ function renderBike() {
   resumo.textContent = _bikeDias.length
     ? `🚴 ${_bikeDias.length}x por semana: ${_bikeDias.map(d => _DIAS_CURTOS[d]).join(', ')}.`
     : '⚠️ Marque pelo menos um dia — sem dia de treino não há o que planejar.';
+  renderVolumeResumo();
+}
+
+function renderVolumeResumo() {
+  const el = document.getElementById('volume-resumo');
+  if (!el) return;
+  const h = parseFloat(String(document.getElementById('volume_semanal_h').value).replace(',', '.'));
+  if (!h || h < 1 || h > 40) {
+    el.textContent = '🤖 Sem meta definida — a IA escolhe o volume de cada semana pela sua evolução.';
+    return;
+  }
+  const total = Math.round(h * 60);
+  const dias = _bikeDias.length || 1;
+  el.textContent = `🎯 Meta de ${total} min por semana (~${Math.round(total / dias)} min por dia de treino em ${dias} dia(s)).`;
+}
+
+function limparVolume() {
+  document.getElementById('volume_semanal_h').value = '';
+  renderVolumeResumo();
 }
 
 function setBikeFreq(n) {
@@ -3086,12 +3146,16 @@ async function salvarBike() {
     objetivo: document.getElementById('objetivo').value,
     bike_freq: String(_bikeFreq),
     bike_dias: _bikeDias.join(','),
+    volume_semanal_h: document.getElementById('volume_semanal_h').value || '',
   });
   try {
     const r = await fetch('/workout/perfil', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body});
     if (!r.ok) throw new Error('Erro ao salvar');
+    const h = parseFloat(String(document.getElementById('volume_semanal_h').value).replace(',', '.'));
     st.className = 'status ok';
-    st.textContent = '✅ Salvo! A IA usa esses dias na próxima semana que gerar.';
+    st.textContent = (h >= 1 && h <= 40)
+      ? `✅ Salvo! A IA vai montar as próximas semanas com ${Math.round(h * 60)} min no total.`
+      : '✅ Salvo! A IA usa esses dias na próxima semana que gerar.';
   } catch(e) { st.className = 'status err'; st.textContent = '❌ ' + e.message; }
   finally { btn.disabled = false; btn.textContent = 'Salvar dias de treino'; }
 }

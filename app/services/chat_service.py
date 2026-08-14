@@ -407,6 +407,17 @@ async def _build_sistema(user_id: str) -> str:
             if perfil.get("fc_max"):
                 linhas.append(f"FC máxima: {perfil['fc_max']} bpm")
             linhas.append(f"Objetivo: {obj}")
+            from app.services.plano_semana_service import (
+                volume_semanal_do_usuario, formatar_horas,
+            )
+            volume_alvo = volume_semanal_do_usuario(prefs)
+            if volume_alvo:
+                linhas.append(
+                    f"Meta de volume semanal: {formatar_horas(volume_alvo)} "
+                    f"({volume_alvo} min) — configurada por ele no perfil. Toda semana que "
+                    "você montar ou ajustar deve somar isso (bike + academia), salvo semana "
+                    "de recuperação/polimento. Ele não precisa repetir isso no chat."
+                )
             if prefs.get("sem_cinta_fc"):
                 linhas.append("Cinta cardíaca: NÃO usa — os treinos já são avaliados sem FC.")
     except Exception:
