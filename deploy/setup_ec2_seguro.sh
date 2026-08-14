@@ -82,7 +82,8 @@ RestrictRealtime=true
 LockPersonality=true
 # AF_NETLINK é necessário para enumerar interfaces de rede (os/psutil/uvicorn).
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
-ReadWritePaths=${APP_DIR}/uploads
+# .garth_mtb é o cache de sessão do Garmin (garth), gravado em $HOME=$APP_DIR.
+ReadWritePaths=${APP_DIR}/uploads ${APP_DIR}/.garth_mtb
 
 # --- Teto de memória: minerador morre aqui dentro, não derruba o Caddy ---
 MemoryMax=700M
