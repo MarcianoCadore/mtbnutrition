@@ -84,8 +84,11 @@ async def get_semana(request: Request, semana_inicio: str):
         {"semana_inicio": semana_inicio, "user_id": user_id}, {"_id": 0})
 
     prox = (date.fromisoformat(semana_inicio) + timedelta(days=7)).isoformat()
+    # Só conta como "gerada" se veio do fluxo de IA confirmado pelo usuário — um
+    # doc solto criado pelo sync do Garmin ou por um treino avulso do chat não
+    # deve travar o botão de gerar a próxima semana.
     proxima_existe = await db.semanas.count_documents(
-        {"semana_inicio": prox, "user_id": user_id}, limit=1)
+        {"semana_inicio": prox, "user_id": user_id, "gerada_por_ia": True}, limit=1)
     tem_historico = await db.semanas.count_documents(
         {"semana_inicio": {"$lt": semana_inicio}, "user_id": user_id}, limit=1)
 
@@ -382,6 +385,12 @@ async def enviar_para_garmin(request: Request, body: EnviarGarminBody):
         # body.treinos são sempre primários (o plano da IA); reanexa extras
         # existentes, senão este replace_one os apagaria.
         "treinos": [t.model_dump() for t in body.treinos] + extras_existentes,
+        # Marca que esta semana foi de fato confirmada pelo fluxo de IA — distingue
+        # de um documento que só existe porque o sync do Garmin (ou um treino avulso
+        # criado pelo chat) gravou uma entrada solta para a semana. Sem isso,
+        # "próxima semana já gerada" contava qualquer doc existente e travava o
+        # botão pra sempre.
+        "gerada_por_ia": True,
     }
     await db.semanas.replace_one(
         {"semana_inicio": body.semana_inicio, "user_id": user_id},

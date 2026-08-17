@@ -1736,19 +1736,61 @@ async function apagarTreinosGerados() {
   }
 }
 
+// Motivo pelo qual "Gerar próxima semana" está travado — null = liberado.
+// Guardado fora da função porque o clique precisa explicar o bloqueio.
+let _motivoBloqueioGen = null;
+
+// Um treino conta como concluído quando tem resultado (bike — vem do Garmin/
+// Strava) ou execução registrada. Academia NUNCA gera atividade de ciclismo no
+// Garmin: se fosse cobrada por `resultado`, um dia de academia travaria a
+// geração da próxima semana para sempre.
+function _treinoConcluido(t) {
+  if (t.resultado) return true;
+  const exec = t.execucao || (t.academia || {}).execucao || null;
+  return !!(exec && (exec.itens_feitos || []).length);
+}
+
 function _atualizarBotaoProximaSemana(treinos, proximaGerada) {
   const btn = document.getElementById('btnGenSemana');
   if (!btn) return;
+  const hojeISO = localIso(new Date());
   const semanaAtual = iso(getMonday(new Date())) === iso(monday);
-  const treinosAtivos = treinos.filter(t => t.tipo !== 'DESCANSO');
-  const todosConcluidos = treinosAtivos.length > 0 && treinosAtivos.every(t => !!t.resultado);
-  const habilitado = semanaAtual && todosConcluidos && !proximaGerada;
-  btn.disabled = !habilitado;
-  btn.title = proximaGerada
-    ? 'A próxima semana já foi gerada'
-    : (habilitado ? '' : 'Conclua todos os treinos da semana para gerar a próxima semana');
+
+  // Só dias de HOJE em diante travam. Dia que já passou sem resultado é treino
+  // perdido: vira dado para a IA analisar, não pode bloquear a semana seguinte
+  // para sempre (era o que acontecia — bastava furar um treino na terça e o
+  // botão nunca mais habilitava).
+  const pendentes = (treinos || []).filter(t =>
+    t.tipo !== 'DESCANSO' && t.origem !== 'extra'
+    && t.data >= hojeISO && !_treinoConcluido(t)
+  );
+
+  const ativos = (treinos || []).filter(t => t.tipo !== 'DESCANSO' && t.origem !== 'extra');
+
+  if (!semanaAtual) {
+    _motivoBloqueioGen = 'A próxima semana só é gerada a partir da semana atual — clique em "Hoje" primeiro.';
+  } else if (!ativos.length) {
+    _motivoBloqueioGen = 'Esta semana está vazia — a IA precisa dela para planejar a próxima.';
+  } else if (proximaGerada) {
+    _motivoBloqueioGen = 'A próxima semana já foi gerada — use a seta ▶ para abri-la.';
+  } else if (pendentes.length) {
+    const dias = pendentes.map(t => {
+      const d = new Date(t.data + 'T12:00:00');
+      return `${DIAS_PT[d.getDay()]} ${t.data.slice(8)}/${t.data.slice(5, 7)}`;
+    }).join(', ');
+    _motivoBloqueioGen = `Faltam treinos desta semana: ${dias}. Conclua (ou sincronize com o Garmin) para gerar a próxima.`;
+  } else {
+    _motivoBloqueioGen = null;
+  }
+
+  const habilitado = !_motivoBloqueioGen;
+  // De propósito NÃO usa `disabled`: no celular não existe tooltip, então um
+  // botão travado que não faz nada ao ser tocado não explica o motivo. Ele fica
+  // esmaecido e o clique responde com o motivo exato.
+  btn.disabled = false;
+  btn.title = _motivoBloqueioGen || '';
   btn.style.opacity = habilitado ? '1' : '0.5';
-  btn.style.cursor = habilitado ? 'pointer' : 'not-allowed';
+  btn.style.cursor = 'pointer';
 }
 
 async function salvar() {
@@ -1811,18 +1853,30 @@ async function sincronizarGarmin() {
     });
     if (!rSave.ok) throw new Error(await rSave.text());
 
-    // 1. Envia treinos da semana pro Garmin (push)
-    const rEnv = await fetch(`/workout/reenviar-garmin/${iso(monday)}`, {method: 'POST'});
-    if (!rEnv.ok) throw new Error(await rEnv.text());
-    const dEnv = await rEnv.json();
+    // 1. Envia treinos da semana pro Garmin (push).
+    //    O push NÃO pode abortar o pull: se o envio falha (treino já existe lá,
+    //    sessão expirada, indisponibilidade do Garmin), a importação da
+    //    atividade já realizada ficava sem rodar e o treino do dia aparecia
+    //    "sem atividade anexada" mesmo estando no Garmin Connect.
+    let enviados = null;
+    let erroEnvio = null;
+    try {
+      const rEnv = await fetch(`/workout/reenviar-garmin/${iso(monday)}`, {method: 'POST'});
+      if (!rEnv.ok) throw new Error(await rEnv.text());
+      enviados = (await rEnv.json()).enviados;
+    } catch(e) {
+      erroEnvio = e.message;
+    }
 
     // 2. Sincroniza atividades e treinos planejados do Garmin (pull)
     const rSync = await fetch(`/workout/garmin/sync/${iso(monday)}`, {method: 'POST'});
     if (!rSync.ok) throw new Error(await rSync.text());
     const dSync = await rSync.json();
 
-    const msg = `✅ ${dEnv.enviados} enviado(s) · ${dSync.atividades_processadas} atividade(s) importada(s)`;
-    toast(msg, 'ok');
+    const envMsg = erroEnvio ? 'envio falhou' : `${enviados} enviado(s)`;
+    const msg = `${erroEnvio ? '⚠️' : '✅'} ${envMsg} · ${dSync.atividades_processadas} atividade(s) importada(s)`;
+    toast(msg, erroEnvio ? 'err' : 'ok');
+    if (erroEnvio) console.warn('Garmin push falhou:', erroEnvio);
     await load();
   } catch(e) {
     toast('❌ Garmin: ' + e.message, 'err');
@@ -1851,6 +1905,7 @@ const DIAS_PT = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 let _genData = null;
 
 async function gerarProximaSemana() {
+  if (_motivoBloqueioGen) { toast(_motivoBloqueioGen, 'err'); return; }
   const btn = document.getElementById('btnGenSemana');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Gerando com IA...';
