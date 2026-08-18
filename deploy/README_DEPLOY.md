@@ -1,4 +1,17 @@
-# Deploy do MTB Nutrition na AWS (EC2 + MongoDB Atlas)
+> **Estado atual (desde 17-18/08/2026): VM dedicada na Magalu Cloud**, IP
+> `201.54.19.234` (`BV1-1-10`, região `br-se1-a`), chave `~/.ssh/id_ed25519`.
+> Migrado da AWS porque a EC2 compartilhada com o Pedal (`18.230.117.0`) ficou
+> totalmente inacessível pela rede. Banco continua o mesmo MongoDB Atlas
+> (`cluster0.xwrtqjd`, database `mtb_nutrition`), só a senha foi trocada.
+> `FERNET_KEY` foi regenerada — credenciais Garmin/Strava salvas de usuários
+> antigos não decifram mais; cada um precisa reconectar.
+> Para atualizar o site: `bash deploy/push.sh` (já aponta pro servidor certo).
+> O restante deste documento é histórico (arquitetura antiga na AWS) — mantido
+> como referência, não reflete o setup atual.
+
+---
+
+# Deploy do MTB Nutrition na AWS (histórico — EC2 + MongoDB Atlas)
 
 Arquitetura: **1 VM EC2 sempre ligada** rodando uvicorn + APScheduler (1 worker),
 banco no **MongoDB Atlas** (free tier), portal protegido por **login HTTP Basic**.
