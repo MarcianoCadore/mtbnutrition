@@ -221,6 +221,8 @@ async def salvar_ftp(user_id: str, ftp: int, modo: str = "indoor",
     modo:
       "indoor"  — alvos de watts só em VO2MAX/TIROS/TEMPO/FORCA (feitos no rolo)
       "sempre"  — todos os workouts com watts (medidor na bike de rua/MTB também)
+      "ambos"   — watts E FC no mesmo step (alvo duplo): o relógio mostra as duas
+                  faixas e o atleta segue a métrica que tiver no dia
       "nunca"   — FTP salvo só para análise; workouts usam apenas FC
 
     origem="estimado" é o eFTP calculado da curva de potência. Ele NÃO conta
@@ -232,7 +234,7 @@ async def salvar_ftp(user_id: str, ftp: int, modo: str = "indoor",
     from datetime import date
     if not (50 <= ftp <= 700):
         raise ValueError(f"FTP inválido: {ftp}W. Use um valor entre 50 e 700W.")
-    if modo not in ("indoor", "sempre", "nunca"):
+    if modo not in ("indoor", "sempre", "ambos", "nunca"):
         modo = "indoor"
     campos = {"ftp": ftp, "potencia_modo": modo, "ftp_origem": origem}
     if origem != "estimado":

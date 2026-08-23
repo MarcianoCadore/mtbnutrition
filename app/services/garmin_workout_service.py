@@ -52,70 +52,118 @@ def _pw(zona_fc: int) -> int:
     return {1: 1, 2: 2, 3: 3, 4: 4, 5: 5}.get(zona_fc, zona_fc)
 
 
-def _aplicar_watts(steps: list, zonas_watts: dict) -> None:
-    """Substitui o target de FC por target de potência (watts explícitos) em todos os steps.
-
-    `zonas_watts` = {1: {min, max}, ..., 7: {min, max}} mapeado por zona de potência.
-    A zona de potência é derivada da zona de FC original do step (via _pw).
-    Recursivo para entrar nos repeat groups.
-    """
-    for step in steps:
-        filhos = getattr(step, "workoutSteps", None)
-        if filhos:
-            _aplicar_watts(filhos, zonas_watts)
-            continue
-        tt = getattr(step, "targetType", None)
-        if not tt or tt.get("workoutTargetTypeId") != TargetType.HEART_RATE:
-            continue
-        zona_fc = tt.get("targetValue")
-        zona_p = _pw(zona_fc) if zona_fc else None
-        rng = zonas_watts.get(zona_p) if zona_p else None
-        if not rng:
-            continue
-        step.targetType = {
-            "workoutTargetTypeId": TargetType.POWER,
-            "workoutTargetTypeKey": "power",
-            "displayOrder": 1,
-        }
-        step.targetValueOne = float(rng["min"])
-        step.targetValueTwo = float(rng["max"]) if rng["max"] < 9000 else float(rng["min"] * 2)
-
-
 def _seg(steps: list) -> WorkoutSegment:
     return WorkoutSegment(segmentOrder=1, sportType=_CYCLING_SPORT, workoutSteps=steps)
 
 
-def _aplicar_bpm(steps: list, zonas_bpm: dict) -> None:
-    """Converte os alvos de zona (1-5) em faixas de bpm explícitas, lendo as
-    zonas configuradas pelo usuário. Os valores ficam no nível do step
-    (targetValueOne/Two), que é o formato que o Garmin espera. Recursivo para
-    entrar nos repeat groups."""
+# ── alvos: da zona (1-5) para as faixas reais do atleta ──────────────────────
+#
+# Os builders marcam cada step com o NÚMERO da zona (_hz). Aqui esse número vira
+# a faixa de bpm ou de watts do atleta. O Garmin aceita um alvo PRIMÁRIO e um
+# SECUNDÁRIO por step — com os dois preenchidos o relógio mostra watts e FC na
+# mesma tela do treino, e o atleta segue a métrica que tiver no dia (medidor no
+# rolo, cinta na trilha). Só o primário aciona o alerta de "fora do alvo".
+
+# Campos do alvo secundário — separados porque `_sem_secundario` precisa removê-los
+# se o Garmin recusar o upload (nem toda conta/firmware aceita alvo duplo).
+_CAMPOS_SECUNDARIOS = (
+    "secondaryTargetType",
+    "secondaryTargetValueOne",
+    "secondaryTargetValueTwo",
+)
+
+
+def _alvo_fc(rng: dict | None, zona: int) -> tuple[dict, float | None, float | None]:
+    """Alvo de FC: faixa de bpm do atleta ou, sem faixa configurada, a zona do
+    próprio dispositivo."""
+    if not rng:
+        return ({"workoutTargetTypeId": TargetType.HEART_RATE,
+                 "workoutTargetTypeKey": "heart.rate.zone",
+                 "displayOrder": 1,
+                 "zoneNumber": zona}, None, None)
+    return ({"workoutTargetTypeId": TargetType.HEART_RATE,
+             "workoutTargetTypeKey": "heart.rate",
+             "displayOrder": 1},
+            float(rng["min"]), float(rng["max"]))
+
+
+def _alvo_watts(rng: dict | None) -> tuple[dict, float, float] | None:
+    """Alvo de potência em watts explícitos. None se a zona não tem faixa."""
+    if not rng:
+        return None
+    # a Z7 é aberta no topo (max 9999) — vira "o dobro do piso" para o relógio
+    teto = rng["max"] if rng["max"] < 9000 else rng["min"] * 2
+    return ({"workoutTargetTypeId": TargetType.POWER,
+             "workoutTargetTypeKey": "power",
+             "displayOrder": 1},
+            float(rng["min"]), float(teto))
+
+
+def _aplicar_alvos(steps: list, *, zonas_bpm: dict | None = None,
+                   zonas_watts: dict | None = None, primario: str = "fc") -> None:
+    """Converte (in-place, recursivo) o número da zona de cada step nas faixas
+    reais do atleta.
+
+    `primario` ("fc" ou "watts") escolhe qual métrica vira o alvo principal do
+    relógio. Se a OUTRA também tiver faixas, ela vai junto como alvo secundário —
+    é o que faz o Garmin mostrar watts e FC na mesma tela.
+    """
     for step in steps:
         filhos = getattr(step, "workoutSteps", None)
         if filhos:
-            _aplicar_bpm(filhos, zonas_bpm)
+            _aplicar_alvos(filhos, zonas_bpm=zonas_bpm, zonas_watts=zonas_watts,
+                           primario=primario)
             continue
         tt = getattr(step, "targetType", None)
         if not tt or tt.get("workoutTargetTypeId") != TargetType.HEART_RATE:
             continue
         zona = tt.get("targetValue")
-        rng = zonas_bpm.get(zona)
-        if rng:
-            step.targetType = {
-                "workoutTargetTypeId": TargetType.HEART_RATE,
-                "workoutTargetTypeKey": "heart.rate",
-                "displayOrder": 1,
-            }
-            step.targetValueOne = float(rng["min"])
-            step.targetValueTwo = float(rng["max"])
-        else:
-            # sem faixa configurada: cai na zona do próprio dispositivo
-            step.targetType = {
-                "workoutTargetTypeId": TargetType.HEART_RATE,
-                "workoutTargetTypeKey": "heart.rate.zone",
-                "displayOrder": 1,
-                "zoneNumber": zona,
-            }
+        if not zona:
+            continue
+
+        fc = _alvo_fc(zonas_bpm.get(zona) if zonas_bpm else None, zona)
+        watts = _alvo_watts(zonas_watts.get(_pw(zona)) if zonas_watts else None)
+
+        # sem FTP configurado não há alvo de watts: cai para FC seja qual for a preferência
+        ordem = [watts, fc] if (primario == "watts" and watts) else [fc, watts]
+        (step.targetType, step.targetValueOne, step.targetValueTwo) = ordem[0]
+
+        for campo in _CAMPOS_SECUNDARIOS:
+            if hasattr(step, campo):
+                delattr(step, campo)
+        secundario = ordem[1]
+        # só vale como secundário o alvo com faixa numérica: "zona do dispositivo"
+        # (heart.rate.zone) não tem valor para preencher o segundo campo do relógio
+        if secundario and secundario[1] is not None:
+            tipo, v1, v2 = secundario
+            step.secondaryTargetType = {**tipo, "displayOrder": 4}
+            step.secondaryTargetValueOne = v1
+            step.secondaryTargetValueTwo = v2
+
+
+def _sem_secundario(steps: list) -> None:
+    """Remove os alvos secundários (recursivo). Rede de segurança: se o Garmin
+    recusar o alvo duplo, o treino sobe com o alvo primário em vez de o atleta
+    ficar sem treino no relógio."""
+    for step in steps:
+        filhos = getattr(step, "workoutSteps", None)
+        if filhos:
+            _sem_secundario(filhos)
+            continue
+        for campo in _CAMPOS_SECUNDARIOS:
+            if hasattr(step, campo):
+                delattr(step, campo)
+
+
+def _tem_secundario(steps: list) -> bool:
+    for step in steps:
+        filhos = getattr(step, "workoutSteps", None)
+        if filhos:
+            if _tem_secundario(filhos):
+                return True
+        elif hasattr(step, "secondaryTargetType"):
+            return True
+    return False
 
 
 # ── escala por duração ────────────────────────────────────────────────────────
@@ -316,19 +364,25 @@ def build_cycling_workout(
     nome: str,
     descricao: str | None = None,
     zonas_bpm: dict | None = None,
+    zonas_watts: dict | None = None,
+    primario: str = "fc",
 ) -> CyclingWorkout | None:
     """Monta um CyclingWorkout para o tipo e duração dados.
 
-    Se 'zonas_bpm' for fornecido ({zona: {'min','max'}}), os alvos de FC são
-    enviados como faixas de bpm explícitas em vez de número de zona do dispositivo.
+    'zonas_bpm' ({zona: {'min','max'}}) manda os alvos de FC como faixas de bpm
+    explícitas em vez do número de zona do dispositivo. Passando também
+    'zonas_watts', o step leva as DUAS métricas: `primario` ("fc"/"watts") define
+    qual é o alvo principal e a outra vai como alvo secundário, visível na mesma
+    tela do relógio.
     """
     builder = _BUILDERS.get(tipo)
     if not builder:
         return None
 
     steps, total_s = builder(duracao_min)
-    if zonas_bpm:
-        _aplicar_bpm(steps, zonas_bpm)
+    if zonas_bpm or zonas_watts:
+        _aplicar_alvos(steps, zonas_bpm=zonas_bpm, zonas_watts=zonas_watts,
+                       primario=primario)
     return CyclingWorkout(
         workoutName=nome,
         estimatedDurationInSecs=total_s,
@@ -411,35 +465,48 @@ async def upload_e_agendar(
       True  → força alvos em watts (usuário marcou "indoor" no dia)
       False → força alvos em FC (usuário marcou "outdoor" no dia)
       None  → usa a lógica do potencia_modo + tipo (comportamento padrão)
+
+    No modo "ambos" o step leva watts E FC juntos: `forcar_indoor`/o tipo decidem
+    qual é o alvo primário (o que dispara o alerta do relógio) e a outra métrica
+    vai como secundária, para o atleta poder seguir a que tiver no dia.
     """
     from app.services.garmin_service import get_garmin_client
     from app.services.config_service import zonas_bpm_map, get_zonas_potencia
 
-    # Determina se vai usar watts ANTES de montar o workout para evitar que
-    # _aplicar_bpm remova o targetValue (número de zona) que _aplicar_watts precisa.
     zp = await get_zonas_potencia(user_id)
+    modo = (zp or {}).get("potencia_modo", "indoor")
     usar_watts = False
     if zp:
-        if forcar_indoor is True:
-            usar_watts = True
-        elif forcar_indoor is False:
-            usar_watts = False
+        if forcar_indoor is not None:
+            usar_watts = forcar_indoor
         else:
-            modo = zp.get("potencia_modo", "indoor")
-            usar_watts = (modo == "sempre") or (modo == "indoor" and tipo in _TIPOS_INDOOR)
+            usar_watts = (modo in ("sempre", "ambos")) or (
+                modo in ("indoor", "ambos") and tipo in _TIPOS_INDOOR
+            )
 
     zonas_bpm = await zonas_bpm_map(user_id)
-    # Não aplica BPM explícito se vai usar watts — _aplicar_bpm remove o targetValue
-    # (número de zona) que _aplicar_watts precisa para mapear para watts.
-    workout = build_cycling_workout(tipo, duracao_min, nome, descricao, zonas_bpm if not usar_watts else None)
+    # Sem o gate por modo: o toggle indoor/outdoor do dia manda watts mesmo em
+    # "nunca" — é uma escolha explícita do atleta para aquela sessão.
+    zonas_w = ({z["zona"]: {"min": z["min"], "max": z["max"]} for z in zp["zonas"]}
+               if zp else None)
+
+    # "ambos" manda as duas métricas em todo step; nos outros modos só a escolhida
+    # (senão quem pediu "só FC" receberia watts na tela do relógio).
+    if modo == "ambos":
+        bpm_arg, watts_arg = zonas_bpm, zonas_w
+    elif usar_watts:
+        bpm_arg, watts_arg = None, zonas_w
+    else:
+        bpm_arg, watts_arg = zonas_bpm, None
+
+    workout = build_cycling_workout(
+        tipo, duracao_min, nome, descricao,
+        zonas_bpm=bpm_arg, zonas_watts=watts_arg,
+        primario="watts" if usar_watts else "fc",
+    )
     if not workout:
         logger.warning("Tipo %s não tem builder de workout", tipo)
         return None
-
-    if usar_watts:
-        zonas_w = {z["zona"]: {"min": z["min"], "max": z["max"]} for z in zp["zonas"]}
-        for seg in workout.workoutSegments:
-            _aplicar_watts(seg.workoutSteps, zonas_w)
 
     # Resolve o cliente antes de entrar na thread (get_garmin_client é async)
     api = await get_garmin_client(user_id)
@@ -477,7 +544,20 @@ async def upload_e_agendar(
 
     def _upload() -> str | None:
         _limpar_data_sync()
-        result = api.upload_cycling_workout(workout)
+        try:
+            result = api.upload_cycling_workout(workout)
+        except Exception as e:
+            # Alvo duplo é extensão recente do Garmin — se a conta/API recusar,
+            # reenvia só com o alvo primário. Melhor um alvo do que nenhum treino.
+            if not _tem_secundario(workout.workoutSegments[0].workoutSteps):
+                raise
+            logger.warning(
+                "Garmin recusou o alvo duplo (%s/%s): %s — reenviando só com o primário",
+                tipo, data_iso, e,
+            )
+            for seg in workout.workoutSegments:
+                _sem_secundario(seg.workoutSteps)
+            result = api.upload_cycling_workout(workout)
         workout_id = None
         if isinstance(result, dict):
             workout_id = str(result.get("workoutId") or result.get("workout_id") or "")

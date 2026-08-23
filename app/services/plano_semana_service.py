@@ -1152,6 +1152,7 @@ META DE VOLUME SEMANAL (o atleta definiu no perfil): {formatar_horas(volume_alvo
         _uso_pot = {
             "indoor": "Usa potência apenas no rolo (VO2MAX, TIROS, TEMPO, FORCA). Z2_LONGO e RECUPERACAO são feitos na rua sem medidor.",
             "sempre": "Tem medidor de potência em todas as bikes — SEMPRE prescreva watts.",
+            "ambos":  "Segue watts OU FC conforme o dia — prescreva as DUAS referências em todos os treinos.",
             "nunca":  "Sem medidor de potência — prescreva APENAS por FC.",
         }.get(potencia_modo, "")
         bloco_potencia = f"FTP: {ftp_user}W\nZONAS DE POTÊNCIA: {zonas_pot_txt}\n{_uso_pot}"
@@ -1188,7 +1189,7 @@ RESTRIÇÕES DE AGENDA (OBRIGATÓRIAS):
 
 {_bloco_academia_prompt}
 
-{"POTÊNCIA (WATTS) NAS PRESCRIÇÕES:" + chr(10) + ("Inclua o alvo em watts NA DESCRIÇÃO de TODOS os treinos: ex. 'Z2 | 171-231W'." if potencia_modo == "sempre" else "Inclua o alvo em watts NA DESCRIÇÃO dos treinos de qualidade (VO2MAX, TIROS, TEMPO, FORCA): ex. '4×4 min Z5 | >327W'. Z2_LONGO e RECUPERACAO não têm potência (feitos na rua sem medidor).") if ftp_user else ""}
+{"POTÊNCIA (WATTS) NAS PRESCRIÇÕES:" + chr(10) + ("Inclua o alvo em watts NA DESCRIÇÃO de TODOS os treinos: ex. 'Z2 | 171-231W'." if potencia_modo in ("sempre", "ambos") else "Inclua o alvo em watts NA DESCRIÇÃO dos treinos de qualidade (VO2MAX, TIROS, TEMPO, FORCA): ex. '4×4 min Z5 | >327W'. Z2_LONGO e RECUPERACAO não têm potência (feitos na rua sem medidor).") if ftp_user else ""}
 """
 
     modelo_usado = "claude"

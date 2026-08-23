@@ -635,7 +635,7 @@ async def salvar_zonas_endpoint(request: Request, body: ZonasBody):
 
 class FTPBody(BaseModel):
     ftp: int
-    modo: str = "indoor"  # "indoor" | "sempre" | "nunca"
+    modo: str = "indoor"  # "indoor" | "sempre" | "ambos" | "nunca"
 
 
 @router.post("/zonas/ftp")
@@ -2975,11 +2975,13 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
         <select id="ftp_modo" style="padding:9px 10px;border:1.5px solid #ddd;border-radius:7px;font-size:.92rem">
           <option value="indoor">🏠 Só indoor (rolo) — treinos de qualidade</option>
           <option value="sempre">🚵 Sempre — tenho medidor na bike</option>
-          <option value="nunca">❌ Nunca — só para análise</option>
+          <option value="ambos">⚡❤️ Watts e FC juntos — escolho na hora do treino</option>
+          <option value="nunca">❌ Nunca — só FC nos treinos</option>
         </select>
       </div>
       <button id="btnSalvarFTP" onclick="salvarFTP()" style="white-space:nowrap">💾 Salvar FTP</button>
     </div>
+    <p class="hint" style="margin-top:-4px">Em <b>Watts e FC juntos</b> o treino vai pro Garmin com as duas faixas no mesmo passo — o relógio mostra os watts e os bpm lado a lado e você segue a métrica que tiver naquele dia. O alerta de "fora do alvo" acompanha os watts nos dias de rolo e a FC nos dias marcados como outdoor.</p>
     <div id="st-ftp" class="status"></div>
     <div id="zonas-pot-preview" style="display:none;margin-top:12px">
       <p style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:6px">ZONAS DE POTÊNCIA CALCULADAS</p>
