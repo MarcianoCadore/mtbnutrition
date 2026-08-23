@@ -214,9 +214,34 @@ async def get_ftp(user_id: str) -> tuple[int | None, str]:
     return ftp, modo
 
 
-async def salvar_ftp(user_id: str, ftp: int, modo: str = "indoor",
+MODOS_ALVO = ("indoor", "sempre", "ambos", "nunca")
+MODO_ALVO_PADRAO = "indoor"
+
+
+def _modo_valido(modo: str | None) -> str:
+    return modo if modo in MODOS_ALVO else MODO_ALVO_PADRAO
+
+
+async def salvar_modo_potencia(user_id: str, modo: str) -> str:
+    """Salva só o alvo enviado ao Garmin (FC, watts ou os dois), sem tocar no FTP.
+
+    Vive separado de `salvar_ftp` porque são duas decisões diferentes: o FTP é um
+    número medido, o alvo é uma preferência de como treinar. No portal cada um
+    tem seu card — salvar um não pode reescrever o outro.
+    """
+    from app.services.user_service import atualizar_usuario
+    modo = _modo_valido(modo)
+    await atualizar_usuario(user_id, {"potencia_modo": modo})
+    return modo
+
+
+async def salvar_ftp(user_id: str, ftp: int, modo: str | None = None,
                      origem: str = "teste") -> dict:
-    """Salva o FTP e o modo de uso de potência. Retorna as zonas calculadas.
+    """Salva o FTP. Retorna as zonas calculadas.
+
+    `modo` é opcional: sem ele o alvo já escolhido pelo atleta é preservado (e
+    quem nunca escolheu fica no padrão). Assim salvar um FTP novo — na mão, por
+    print ou pelo eFTP — nunca muda a métrica que vai para o relógio.
 
     modo:
       "indoor"  — alvos de watts só em VO2MAX/TIROS/TEMPO/FORCA (feitos no rolo)
@@ -234,8 +259,9 @@ async def salvar_ftp(user_id: str, ftp: int, modo: str = "indoor",
     from datetime import date
     if not (50 <= ftp <= 700):
         raise ValueError(f"FTP inválido: {ftp}W. Use um valor entre 50 e 700W.")
-    if modo not in ("indoor", "sempre", "ambos", "nunca"):
-        modo = "indoor"
+    if modo is None:
+        _, modo = await get_ftp(user_id)
+    modo = _modo_valido(modo)
     campos = {"ftp": ftp, "potencia_modo": modo, "ftp_origem": origem}
     if origem != "estimado":
         campos["ultimo_teste_ftp"] = date.today().isoformat()

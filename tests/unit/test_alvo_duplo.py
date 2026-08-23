@@ -10,6 +10,8 @@ zona) de que `_aplicar_watts` precisava, então as duas conversões nunca podiam
 rodar sobre o mesmo workout. Agora uma única passada (`_aplicar_alvos`) lê a zona
 e escreve as duas faixas.
 """
+from datetime import datetime, timezone
+
 import pytest
 
 from garminconnect.workout import TargetType
@@ -19,6 +21,8 @@ from app.services.garmin_workout_service import (
     _tem_secundario,
     build_cycling_workout,
 )
+
+HOJE = datetime.now(timezone.utc).date().isoformat()
 
 # Zonas de um atleta qualquer — os números são só âncoras do teste, o app nunca
 # embute faixa fixa (cada atleta tem as suas).
@@ -185,6 +189,62 @@ class TestModoAmbos:
         assert r["potencia_modo"] == "indoor"
 
 
+@pytest.mark.asyncio
+class TestAlvoSeparadoDoFTP:
+    """FTP e alvo são decisões distintas e têm cards separados no portal — salvar
+    um não pode reescrever o outro."""
+
+    async def _usuario(self, fake_db, **campos):
+        from bson import ObjectId
+        oid = ObjectId()
+        await fake_db.users.insert_one({"_id": oid, "login": "a", **campos})
+        return str(oid)
+
+    async def test_salvar_ftp_sem_modo_preserva_o_alvo(self, fake_db):
+        from app.services.config_service import salvar_ftp, get_ftp
+        uid = await self._usuario(fake_db, ftp=250, potencia_modo="ambos")
+
+        await salvar_ftp(uid, 300)
+
+        ftp, modo = await get_ftp(uid)
+        assert (ftp, modo) == (300, "ambos")
+
+    async def test_quem_nunca_escolheu_fica_no_padrao(self, fake_db):
+        from app.services.config_service import salvar_ftp
+        uid = await self._usuario(fake_db)
+        assert (await salvar_ftp(uid, 300))["potencia_modo"] == "indoor"
+
+    async def test_salvar_alvo_nao_encosta_no_ftp(self, fake_db):
+        from app.services.config_service import salvar_modo_potencia, get_ftp
+        uid = await self._usuario(fake_db, ftp=287, potencia_modo="indoor")
+
+        await salvar_modo_potencia(uid, "sempre")
+
+        ftp, modo = await get_ftp(uid)
+        assert (ftp, modo) == (287, "sempre")
+
+    async def test_salvar_alvo_funciona_sem_ftp(self, fake_db):
+        """O card do alvo não pode exigir FTP — quem só usa FC nunca vai ter um."""
+        from app.services.config_service import salvar_modo_potencia, get_ftp
+        uid = await self._usuario(fake_db)
+
+        assert await salvar_modo_potencia(uid, "nunca") == "nunca"
+        assert (await get_ftp(uid)) == (None, "nunca")
+
+    async def test_eftp_estimado_nao_muda_o_alvo(self, fake_db):
+        """O eFTP roda sozinho no sync do Garmin — se ele reescrevesse o alvo, o
+        atleta veria a métrica do relógio mudar sem ter pedido."""
+        from app.services import potencia_service as pot
+        from app.services.config_service import get_ftp
+        uid = await self._usuario(fake_db, ftp=250, potencia_modo="nunca")
+        await pot.registrar_esforcos(uid, HOJE, {1200: 320})
+
+        await pot.talvez_atualizar_ftp(uid)
+
+        ftp, modo = await get_ftp(uid)
+        assert ftp > 250 and modo == "nunca"
+
+
 class _GarminFake:
     """Cliente Garmin de mentira: guarda o workout em vez de subir."""
 
@@ -203,7 +263,7 @@ class _GarminFake:
             for s in seg["workoutSteps"]
         )
         if self.recusa_duplo and tem_duplo:
-            raise RuntimeError("API Error 400 - secondary target não suportado")
+            raise RuntimeError("API Error 400 - secondary target nao suportado")
         self.enviados.append(payload)
         return {"workoutId": "123"}
 
@@ -213,8 +273,8 @@ class _GarminFake:
 
 @pytest.mark.asyncio
 class TestUploadPorModo:
-    """O modo do perfil decide o que chega no relógio — errar aqui manda o atleta
-    treinar pela métrica que ele não tem no dia."""
+    """O alvo escolhido no perfil decide o que chega no relogio — errar aqui manda
+    o atleta treinar pela metrica que ele nao tem no dia."""
 
     async def _usuario(self, fake_db, modo, ftp=300):
         from bson import ObjectId
@@ -251,44 +311,44 @@ class TestUploadPorModo:
 
     async def test_ambos_respeita_o_toggle_outdoor_do_dia(self, fake_db, monkeypatch):
         """Marcou o dia como outdoor: a FC vira o alvo que apita, os watts ficam
-        de referência."""
+        de referencia."""
         uid = await self._usuario(fake_db, "ambos")
         step = self._primeiro_step(
             await self._enviar(monkeypatch, uid, forcar_indoor=False))
         assert step["targetType"]["workoutTargetTypeKey"] == "heart.rate"
         assert step["secondaryTargetType"]["workoutTargetTypeKey"] == "power"
 
-    async def test_nunca_nao_manda_watts_nem_de_secundario(self, fake_db, monkeypatch):
-        """'Nunca' é a resposta de quem não tem medidor — watts na tela seria ruído."""
+    async def test_so_fc_nao_manda_watts_nem_de_secundario(self, fake_db, monkeypatch):
+        """Quem escolheu 'FC em todos os treinos' nao pode receber watts na tela."""
         uid = await self._usuario(fake_db, "nunca")
         step = self._primeiro_step(await self._enviar(monkeypatch, uid))
         assert step["targetType"]["workoutTargetTypeKey"] == "heart.rate"
         assert "secondaryTargetType" not in step
 
-    async def test_indoor_continua_so_watts_no_treino_de_qualidade(self, fake_db, monkeypatch):
+    async def test_watts_no_rolo_manda_watts_no_treino_de_qualidade(self, fake_db, monkeypatch):
         uid = await self._usuario(fake_db, "indoor")
         step = self._primeiro_step(await self._enviar(monkeypatch, uid))
         assert step["targetType"]["workoutTargetTypeKey"] == "power"
         assert "secondaryTargetType" not in step
 
-    async def test_indoor_continua_so_fc_no_longao(self, fake_db, monkeypatch):
+    async def test_watts_no_rolo_manda_fc_no_longao(self, fake_db, monkeypatch):
         uid = await self._usuario(fake_db, "indoor")
         step = self._primeiro_step(
             await self._enviar(monkeypatch, uid, tipo="Z2_LONGO"))
         assert step["targetType"]["workoutTargetTypeKey"] == "heart.rate"
         assert "secondaryTargetType" not in step
 
-    async def test_toggle_indoor_do_dia_vence_o_modo_nunca(self, fake_db, monkeypatch):
-        """'Nunca' é a preferência geral; marcar o dia como indoor é uma escolha
-        explícita para aquela sessão e tem que valer."""
+    async def test_toggle_indoor_do_dia_vence_a_preferencia_geral(self, fake_db, monkeypatch):
+        """'FC em todos' e a preferencia geral; marcar o dia como indoor e uma
+        escolha explicita para aquela sessao e tem que valer."""
         uid = await self._usuario(fake_db, "nunca")
         step = self._primeiro_step(
             await self._enviar(monkeypatch, uid, forcar_indoor=True))
         assert step["targetType"]["workoutTargetTypeKey"] == "power"
 
     async def test_garmin_recusando_duplo_ainda_entrega_o_treino(self, fake_db, monkeypatch):
-        """Se a API rejeitar o alvo secundário, reenvia só com o primário — o
-        atleta não pode ficar com o dia vazio no relógio."""
+        """Se a API rejeitar o alvo secundario, reenvia so com o primario — o
+        atleta nao pode ficar com o dia vazio no relogio."""
         uid = await self._usuario(fake_db, "ambos")
         step = self._primeiro_step(
             await self._enviar(monkeypatch, uid, recusa_duplo=True))

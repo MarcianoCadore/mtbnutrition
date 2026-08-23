@@ -521,11 +521,19 @@ async def reenviar_para_garmin(request: Request, semana_inicio: str):
 
 @router.get("/zonas/dados")
 async def ler_zonas(request: Request):
-    """Zonas de FC + FTP/modo de potência atualmente configurados."""
-    from app.services.config_service import get_zonas, get_zonas_potencia
-    zonas_fc = await get_zonas(request.state.user_id)
-    zonas_pot = await get_zonas_potencia(request.state.user_id)
-    return {**zonas_fc, "potencia": zonas_pot}
+    """Zonas de FC + FTP/modo de potência atualmente configurados.
+
+    `potencia_modo` vem no topo, e não só dentro de `potencia`: sem FTP o bloco
+    de potência é null, mas o card de alvo ainda precisa mostrar a escolha salva
+    — senão ele exibiria a primeira opção do select como se fosse a atual e o
+    próximo Salvar trocaria o alvo do atleta sem ele pedir.
+    """
+    from app.services.config_service import get_zonas, get_zonas_potencia, get_ftp
+    user_id = request.state.user_id
+    zonas_fc = await get_zonas(user_id)
+    zonas_pot = await get_zonas_potencia(user_id)
+    _, modo = await get_ftp(user_id)
+    return {**zonas_fc, "potencia": zonas_pot, "potencia_modo": modo}
 
 
 @router.post("/zonas/importar-garmin")
@@ -635,17 +643,31 @@ async def salvar_zonas_endpoint(request: Request, body: ZonasBody):
 
 class FTPBody(BaseModel):
     ftp: int
-    modo: str = "indoor"  # "indoor" | "sempre" | "ambos" | "nunca"
+    modo: Optional[str] = None  # omitido = preserva o alvo já escolhido
+
+
+class AlvoBody(BaseModel):
+    modo: str  # "indoor" | "sempre" | "ambos" | "nunca"
 
 
 @router.post("/zonas/ftp")
 async def salvar_ftp_endpoint(request: Request, body: FTPBody):
-    """Salva o FTP e o modo de uso de potência. Recalcula as 7 zonas automaticamente."""
+    """Salva o FTP. Recalcula as 7 zonas automaticamente."""
     from app.services.config_service import salvar_ftp
     try:
         return await salvar_ftp(request.state.user_id, body.ftp, body.modo)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/zonas/alvo")
+async def salvar_alvo_endpoint(request: Request, body: AlvoBody):
+    """Salva a métrica que vai como alvo dos treinos no Garmin (FC, watts ou as
+    duas). Separado de /zonas/ftp: o card do alvo não deve exigir nem reescrever
+    o FTP."""
+    from app.services.config_service import salvar_modo_potencia
+    modo = await salvar_modo_potencia(request.state.user_id, body.modo)
+    return {"status": "ok", "potencia_modo": modo}
 
 
 @router.get("/zonas/potencia")
@@ -2970,23 +2992,36 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
         <label style="font-size:.8rem;font-weight:600;display:block;margin-bottom:4px">FTP (watts)</label>
         <input type="number" id="ftp_val" min="50" max="700" step="1" placeholder="ex: 290" style="width:110px;padding:9px 10px;border:1.5px solid #ddd;border-radius:7px;font-size:1rem">
       </div>
-      <div>
-        <label style="font-size:.8rem;font-weight:600;display:block;margin-bottom:4px">Usar potência em</label>
-        <select id="ftp_modo" style="padding:9px 10px;border:1.5px solid #ddd;border-radius:7px;font-size:.92rem">
-          <option value="indoor">🏠 Só indoor (rolo) — treinos de qualidade</option>
-          <option value="sempre">🚵 Sempre — tenho medidor na bike</option>
-          <option value="ambos">⚡❤️ Watts e FC juntos — escolho na hora do treino</option>
-          <option value="nunca">❌ Nunca — só FC nos treinos</option>
-        </select>
-      </div>
       <button id="btnSalvarFTP" onclick="salvarFTP()" style="white-space:nowrap">💾 Salvar FTP</button>
     </div>
-    <p class="hint" style="margin-top:-4px">Em <b>Watts e FC juntos</b> o treino vai pro Garmin com as duas faixas no mesmo passo — o relógio mostra os watts e os bpm lado a lado e você segue a métrica que tiver naquele dia. O alerta de "fora do alvo" acompanha os watts nos dias de rolo e a FC nos dias marcados como outdoor.</p>
     <div id="st-ftp" class="status"></div>
     <div id="zonas-pot-preview" style="display:none;margin-top:12px">
       <p style="font-size:.78rem;font-weight:600;color:#555;margin-bottom:6px">ZONAS DE POTÊNCIA CALCULADAS</p>
       <div id="zonas-pot-lista"></div>
     </div>
+  </div>
+
+  <!-- ── Alvo no Garmin ──
+       Fora das seções de FC e de potência de propósito: a escolha é sobre QUAL
+       das duas o relógio usa como alvo, então não pertence a nenhuma das duas. -->
+  <div class="section-title">⌚ Alvo dos treinos no Garmin</div>
+  <div class="card">
+    <h2>🎯 O que o relógio cobra de você</h2>
+    <p class="hint">Define a métrica que vai como alvo em cada passo do treino enviado ao Garmin — é ela que dispara o alerta de "fora da zona". As faixas de FC e de watts continuam as duas na descrição do treino, seja qual for a escolha.</p>
+    <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px">
+      <div>
+        <label style="font-size:.8rem;font-weight:600;display:block;margin-bottom:4px">Alvo enviado ao Garmin</label>
+        <select id="ftp_modo" style="padding:9px 10px;border:1.5px solid #ddd;border-radius:7px;font-size:.92rem">
+          <option value="nunca">❤️ Frequência cardíaca em todos os treinos</option>
+          <option value="indoor">🏠 Watts no rolo, FC na rua</option>
+          <option value="sempre">🚵 Watts em todos os treinos — tenho medidor na bike</option>
+          <option value="ambos">⚡❤️ Os dois juntos no mesmo passo</option>
+        </select>
+      </div>
+      <button id="btnSalvarAlvo" onclick="salvarAlvo()" style="white-space:nowrap">💾 Salvar alvo</button>
+    </div>
+    <p class="hint" style="margin-top:-4px">As três opções com watts precisam do FTP preenchido acima. Em <b>Os dois juntos</b> o passo vai com as duas faixas e o relógio mostra watts e bpm lado a lado — o alerta acompanha os watts nos dias de rolo e a FC nos dias marcados como outdoor. Aparelhos mais antigos (Edge 530, por exemplo) podem ignorar a segunda faixa e mostrar só a principal.</p>
+    <div id="st-alvo" class="status"></div>
   </div>
 
   <!-- ── Aparência ── -->
@@ -3260,6 +3295,8 @@ async function carregarZonas() {
     const r = await fetch('/workout/zonas/dados');
     const d = await r.json();
     aplicarZonas(d);
+    // o alvo vem no topo porque existe mesmo sem FTP configurado
+    if (d.potencia_modo) document.getElementById('ftp_modo').value = d.potencia_modo;
     if (d.potencia) aplicarFTP(d.potencia);
   } catch(e) { renderZonas([]); }
 }
@@ -3292,17 +3329,38 @@ function renderZonasPot(zonas, ftp) {
 async function salvarFTP() {
   const btn=document.getElementById('btnSalvarFTP'), st=document.getElementById('st-ftp');
   const ftp = Number(document.getElementById('ftp_val').value);
-  const modo = document.getElementById('ftp_modo').value;
   if (!ftp) { st.className='status err'; st.textContent='⚠️ Informe o FTP em watts.'; return; }
   btn.disabled=true; btn.textContent='Salvando...'; st.className='status';
   try {
-    const r = await fetch('/workout/zonas/ftp', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ftp, modo})});
+    // sem 'modo': o alvo tem card próprio e salvar o FTP não pode mexer nele
+    const r = await fetch('/workout/zonas/ftp', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ftp})});
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || 'Erro');
     renderZonasPot(d.zonas || [], d.ftp);
     st.className='status ok'; st.textContent=`✅ FTP ${d.ftp}W salvo! Zonas calculadas.`;
   } catch(e) { st.className='status err'; st.textContent='❌ '+e.message; }
   finally { btn.disabled=false; btn.textContent='💾 Salvar FTP'; }
+}
+const _ROTULO_ALVO = {
+  nunca:  'Os treinos vão para o Garmin com alvo de frequência cardíaca.',
+  indoor: 'Rolo vai em watts; treinos de rua vão em FC.',
+  sempre: 'Todos os treinos vão para o Garmin com alvo em watts.',
+  ambos:  'Cada passo vai com as duas faixas — watts e FC.',
+};
+async function salvarAlvo() {
+  const btn=document.getElementById('btnSalvarAlvo'), st=document.getElementById('st-alvo');
+  const modo = document.getElementById('ftp_modo').value;
+  btn.disabled=true; btn.textContent='Salvando...'; st.className='status';
+  try {
+    const r = await fetch('/workout/zonas/alvo', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({modo})});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Erro');
+    document.getElementById('ftp_modo').value = d.potencia_modo;
+    st.className='status ok';
+    st.textContent = '✅ ' + (_ROTULO_ALVO[d.potencia_modo] || 'Alvo salvo.')
+                   + ' Clique em "Enviar + Sincronizar Garmin" na semana para os treinos já agendados irem de novo com o alvo novo.';
+  } catch(e) { st.className='status err'; st.textContent='❌ '+e.message; }
+  finally { btn.disabled=false; btn.textContent='💾 Salvar alvo'; }
 }
 async function importarGarmin() {
   const btn=document.getElementById('btnGarmin'), st=document.getElementById('stGarmin');
