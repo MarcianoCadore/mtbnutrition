@@ -295,7 +295,12 @@ def _linhas_treinos(treinos: list[dict], desc_max: int = 80) -> list[str]:
     academia (campo `academia`) e os "extras" (origem="extra"). Achatar os três
     numa lista simples fazia o chat ler um extra como se fosse o treino do dia
     e nunca enxergar a academia acoplada a um dia de bike.
+
+    A descrição passa pela MESMA limpeza da exibição no portal (bpm, cabeçalho
+    "TIPO — DATA" e o rótulo de tipo que abre o texto): sem isso o chat lia
+    "Tiros — ..." numa sessão cujo badge é VO2Max e repetia o nome errado.
     """
+    from app.services.plano_semana_service import limpar_descricao_planejada
     linhas: list[str] = []
     # Primário antes dos extras da mesma data (False < True na ordenação).
     for t in sorted(treinos, key=lambda x: (x.get("data") or "", x.get("origem") == "extra")):
@@ -324,7 +329,7 @@ def _linhas_treinos(treinos: list[dict], desc_max: int = 80) -> list[str]:
             if t.get("distancia_km"):
                 linha += f" {t['distancia_km']}km"
 
-        desc = " ".join((t.get("descricao") or "").split())
+        desc = " ".join((limpar_descricao_planejada(t.get("descricao")) or "").split())
         if desc:
             linha += f" — {desc[:desc_max]}"
         linhas.append(linha)

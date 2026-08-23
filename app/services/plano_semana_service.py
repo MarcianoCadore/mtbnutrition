@@ -138,6 +138,50 @@ def limpar_titulo_descricao(txt: str | None) -> str | None:
     return "\n".join(linhas).strip()
 
 
+# Rótulo de tipo no INÍCIO da descrição: "Tiros — 75 min...", "VO2Max: ...".
+# Diferente do cabeçalho "TIPO — DATA" acima, este é escrito pela própria IA junto
+# com a prescrição e não ocupa uma linha isolada. O tipo já é mostrado no badge do
+# card — e reconciliado pela série principal (ai_service.tipo_definitivo) —, então o
+# rótulo do texto só aparece para contradizê-lo: uma sessão mista escrita como
+# "Tiros — ... 8×30 seg all-out ... 5×2 min em Z4/Z5" é classificada VO2MAX (minutos
+# em Z5) e o card exibia os dois nomes ao mesmo tempo.
+# Conservador: só o começo do texto, só rótulos do vocabulário de tipos e só com
+# separador claro. Prosa com travessão ("Atenção — ...") fica intacta. ACADEMIA fica
+# de FORA de propósito: lá o "ACADEMIA — Força MTB (foco: …)" é a primeira linha do
+# formato obrigatório (extrair_exercicios_academia conta com ela) e não há badge
+# divergindo, porque o tipo do dia não é reclassificado pela série principal.
+_ROTULOS_TIPO = (
+    r"vo\s*[2₂]\s*m[áa]x", r"tiros?", r"tempo", r"for[çc]a(?:\s*\(?\s*bike\s*\)?)?",
+    r"recupera[çc][ãa]o(?:\s*ativa)?", r"regenerativo", r"z2\s*longo", r"long[ãa]o",
+    r"longo", r"z[1-5]", r"descanso", r"teste\s*(?:de\s*)?ftp", r"intervalos?", r"sprints?",
+    r"limiar", r"sweet\s*spot",
+)
+# Separador: travessão/dois-pontos colados ou não; hífen SÓ cercado de espaço (senão
+# "Tempo-limite" viraria "limite").
+_ROTULO_TIPO_RE = re.compile(
+    r"^[^\w\n]{0,4}(?:" + "|".join(_ROTULOS_TIPO) + r")"
+    r"(?:[ \t]*[—–:][ \t]*|[ \t]+-[ \t]+)(?=\S)",
+    re.IGNORECASE)
+
+
+def limpar_rotulo_tipo_descricao(txt: str | None) -> str | None:
+    """Remove o rótulo de tipo que abre a descrição ("Tiros — 75 min...").
+
+    O tipo do dia aparece no badge do card e é reconciliado pela estrutura da
+    série principal; quando os dois divergem, o texto contradiz o badge e confunde
+    (caso reportado em 2026-08-23: badge "VO2Max", notas abrindo com "Tiros —").
+    Uma fonte só para o nome do treino: o badge."""
+    if not txt:
+        return txt
+    t, n = _ROTULO_TIPO_RE.subn("", txt, count=1)
+    # Maiúscula só quando o rótulo saiu de fato: o corpo que sobrou vira o começo
+    # da frase ("Recuperação — pedal leve" → "Pedal leve"). Sem remoção o texto
+    # não é tocado.
+    if n and t[0].islower():
+        t = t[0].upper() + t[1:]
+    return t
+
+
 _MARCADOR_LEGENDA = "🎯 Alvo"
 
 # Nível do atleta na academia — define a carga de ENTRADA da prescrição. Sem
@@ -234,10 +278,15 @@ def extrair_exercicios_academia(descricao: str | None) -> list[str]:
 
 def limpar_descricao_planejada(txt: str | None) -> str | None:
     """Limpeza canônica da descrição de um treino planejado: remove parênteses de
-    bpm (a FC real vem do modal/legenda) e os cabeçalhos 'TIPO — DATA' (nome do
-    workout do app) que o round-trip de sync acumulava. NÃO mexe no corpo da
-    prescrição — o tipo do dia é derivado da descrição, não o contrário."""
-    return limpar_titulo_descricao(limpar_bpm_descricao(txt))
+    bpm (a FC real vem do modal/legenda), os cabeçalhos 'TIPO — DATA' (nome do
+    workout do app) que o round-trip de sync acumulava e o rótulo de tipo que abre
+    o texto (o badge do card já diz o tipo). NÃO mexe no corpo da prescrição — o
+    tipo do dia é derivado da descrição, não o contrário.
+
+    A ordem importa: o cabeçalho 'TIPO — DATA' sai primeiro, senão o rótulo inicial
+    seria procurado nele em vez de na primeira linha da prescrição."""
+    return limpar_rotulo_tipo_descricao(
+        limpar_titulo_descricao(limpar_bpm_descricao(txt)))
 
 
 def _fmt_faixa(z: dict) -> str:

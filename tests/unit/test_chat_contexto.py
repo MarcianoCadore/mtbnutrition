@@ -92,6 +92,18 @@ class TestDescricao:
         assert len(linhas) == 1
         assert "\n" not in linhas[0]
 
+    def test_rotulo_de_tipo_nao_vai_pro_chat(self):
+        # O badge do dia é VO2Max (5x2 min em Z4/Z5), mas a IA abriu a descrição
+        # com "Tiros —". Se esse rótulo chegasse ao contexto, o chat repetiria o
+        # nome errado pro atleta (caso reportado em 2026-08-23).
+        linhas = _linhas_treinos([{
+            "data": SEG, "tipo": "VO2MAX", "duracao_min": 75,
+            "descricao": "Tiros — 75 min. 5x2 min em Z4/Z5 com 2 min Z1.",
+        }], desc_max=200)
+        assert "Tiros" not in linhas[0]
+        assert "[VO2MAX]" in linhas[0]
+        assert "5x2 min em Z4/Z5" in linhas[0]
+
     def test_truncada_no_limite(self):
         linhas = _linhas_treinos(
             [{"data": SEG, "tipo": "TEMPO", "duracao_min": 70, "descricao": "x" * 300}],
