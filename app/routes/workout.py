@@ -2877,7 +2877,7 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
       <button type="button" id="cinta-nao" class="aca-btn" onclick="setCinta(false)">Não uso cinta</button>
     </div>
     <label class="aca-check" style="margin-top:12px">
-      <input type="checkbox" id="cinta-reav" checked>
+      <input type="checkbox" id="cinta-reav">
       <span>Reavaliar também os treinos dos últimos 14 dias</span>
     </label>
     <button type="button" id="btn-cinta" onclick="salvarCinta()">Salvar</button>
