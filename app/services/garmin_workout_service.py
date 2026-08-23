@@ -499,6 +499,14 @@ async def upload_e_agendar(
     else:
         bpm_arg, watts_arg = zonas_bpm, None
 
+    # Mesma limpeza da exibição no portal antes de o texto virar a nota do
+    # workout no relógio: sem isto o aparelho recebe o rótulo de tipo que a IA
+    # escreveu ("Tiros — 75 min...") contradizendo o nome do workout, que é o
+    # tipo real ("VO2MAX — 2026-08-24"). Também evita reinjetar bpm e cabeçalhos
+    # de round-trip que a limpeza já tinha tirado.
+    from app.services.plano_semana_service import limpar_descricao_planejada
+    descricao = limpar_descricao_planejada(descricao)
+
     workout = build_cycling_workout(
         tipo, duracao_min, nome, descricao,
         zonas_bpm=bpm_arg, zonas_watts=watts_arg,
