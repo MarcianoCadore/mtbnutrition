@@ -205,6 +205,33 @@ async def _reclassificar_impl(user_id: str, semana_inicio: str) -> dict:
         descricao = t.get("descricao")
         if not descricao:
             continue
+        # Dia de descanso não se reclassifica: não há sessão para classificar e a
+        # descrição só cita os outros tipos de passagem. "Descanso completo.
+        # Recuperação após TEMPO." empatava DESCANSO/RECUPERACAO/TEMPO no scorer,
+        # e o desempate por intensidade (_PRIORIDADE_TIPO) entregava TEMPO — a
+        # sexta virava um "treino" de 0 min, que o envio pro Garmin pula por não
+        # ter duração. O atleta ficava com um card de Tempo que nunca chegava no
+        # relógio. (Reportado em 2026-08-23, semana de 24/08.)
+        if t.get("tipo") == "DESCANSO":
+            continue
+        if not t.get("duracao_min"):
+            # Sem duração E sem workout no Garmin o dia não pode ser sessão de
+            # verdade: todo treino planejado nasce com duração, e todo treino
+            # importado do Garmin nasce com garmin_workout_id. Sobrou o descanso
+            # que o scorer carimbou errado — desfaz, senão o card mente para
+            # sempre. ACADEMIA fica de fora: não vai pro Garmin por natureza.
+            if t.get("tipo") != "ACADEMIA" and not t.get("garmin_workout_id"):
+                await db.semanas.update_one(
+                    {
+                        "semana_inicio": semana_inicio, "user_id": user_id,
+                        "treinos": {"$elemMatch": {"data": t["data"], "origem": {"$ne": "extra"}}},
+                    },
+                    {"$set": {"treinos.$.tipo": "DESCANSO",
+                              "treinos.$.duracao_min": None}},
+                )
+                alterados.append({"data": t["data"], "de": t.get("tipo"),
+                                  "para": "DESCANSO"})
+            continue
         novo_tipo = classificar_por_texto(descricao)
         if novo_tipo and novo_tipo != t.get("tipo"):
             await db.semanas.update_one(
