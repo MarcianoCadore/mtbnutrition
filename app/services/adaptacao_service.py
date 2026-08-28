@@ -469,3 +469,135 @@ def _ajuste_minimo(desvio: dict, treinos: list[dict], hoje: str) -> dict:
                 }],
             }
     return {"resumo": "", "ajustes": []}
+
+
+# ── aplicação: grava a semana e refaz o agendamento no relógio ───────────────
+
+async def claim_adaptacao(user_id: str, data_desvio: str) -> bool:
+    """Reserva a adaptação deste desvio. True só na PRIMEIRA vez.
+
+    O sync do Garmin roda de 10 em 10 min: sem esta trava, o mesmo desvio
+    reescreveria a semana a cada rodada e o atleta nunca veria um plano estável.
+    Upsert com $setOnInsert é atômico — duas execuções simultâneas não passam as
+    duas.
+    """
+    from datetime import datetime, timezone
+    from app.services.mongo_service import get_db
+
+    res = await get_db().adaptacoes.update_one(
+        {"_id": f"{user_id}:{data_desvio}"},
+        {"$setOnInsert": {"user_id": str(user_id), "data_desvio": data_desvio,
+                          "criada_em": datetime.now(timezone.utc)}},
+        upsert=True,
+    )
+    return res.upserted_id is not None
+
+
+async def aplicar_ajustes(user_id: str, semana_inicio: str, proposta: dict) -> dict:
+    """Grava os ajustes na semana e sincroniza o Garmin.
+
+    Cada dia mudado guarda um bloco `ajuste_ia` com o motivo e o que ele era
+    antes: no modo automático o plano muda sozinho debaixo do atleta, e ele tem
+    que conseguir abrir o card e entender o porquê sem perguntar a ninguém.
+
+    INVARIANTE: todo dia alterado tem o workout antigo APAGADO no Garmin antes do
+    novo subir. Sem isso o pull seguinte (sync_treinos_planejados) traz o treino
+    velho de volta e desfaz o ajuste.
+    """
+    from datetime import datetime, timezone
+    from app.services.mongo_service import get_db
+    from app.services.plano_semana_service import _anexar_legenda_alvos
+    from app.services.config_service import get_zonas, get_zonas_potencia
+    from app.services.garmin_workout_service import upload_e_agendar, deletar_workout_garmin
+
+    db = get_db()
+    doc = await db.semanas.find_one({"semana_inicio": semana_inicio, "user_id": str(user_id)})
+    if not doc:
+        return {"aplicados": [], "garmin_ok": False}
+
+    por_data = {t.get("data"): t for t in doc.get("treinos", []) if t.get("origem") != "extra"}
+
+    # Legenda de alvos (FC/watts do atleta) na descrição, igual à geração semanal:
+    # o código é dono dos números, a IA cita só o nome da zona.
+    zonas_fc = (await get_zonas(user_id)).get("zonas") or []
+    zonas_pot = ((await get_zonas_potencia(user_id)) or {}).get("zonas", [])
+    _anexar_legenda_alvos(
+        [a for a in proposta["ajustes"] if a["tipo"] not in ("DESCANSO", "ACADEMIA")],
+        zonas_fc, zonas_pot,
+    )
+
+    agora = datetime.now(timezone.utc).isoformat()
+    aplicados, garmin_falhou = [], False
+
+    for aj in proposta["ajustes"]:
+        data_iso = aj["data"]
+        antes = por_data.get(data_iso) or {}
+        gid_antigo = antes.get("garmin_workout_id")
+        virou_descanso = aj["tipo"] == "DESCANSO"
+
+        campos = {
+            "treinos.$.tipo": aj["tipo"],
+            "treinos.$.duracao_min": None if virou_descanso else aj["duracao_min"],
+            "treinos.$.descricao": "" if virou_descanso else aj["descricao"],
+            "treinos.$.cadencia_rpm": None if virou_descanso else aj.get("cadencia_rpm"),
+            "treinos.$.garmin_workout_id": None,
+            "treinos.$.ajuste_ia": {
+                "motivo": aj.get("motivo") or proposta.get("resumo") or "",
+                "aplicado_em": agora,
+                "antes": {"tipo": antes.get("tipo"), "duracao_min": antes.get("duracao_min")},
+                "desvio": {"data": proposta["desvio"]["data"],
+                           "motivo": proposta["desvio"]["motivo"]},
+            },
+        }
+        # `periodo` e `indoor` são escolhas do atleta para aquele dia, não do
+        # treinador: o ajuste troca o treino, não a rotina dele.
+        await db.semanas.update_one(
+            {"semana_inicio": semana_inicio, "user_id": str(user_id),
+             "treinos": {"$elemMatch": {"data": data_iso, "origem": {"$ne": "extra"}}}},
+            {"$set": campos},
+        )
+
+        if gid_antigo:
+            try:
+                if not await deletar_workout_garmin(user_id, gid_antigo):
+                    logger.warning("adaptacao: não removi o workout %s do Garmin", gid_antigo)
+                    garmin_falhou = True
+            except Exception as exc:
+                logger.error("adaptacao: erro ao remover workout %s — %s", gid_antigo, exc)
+                garmin_falhou = True
+
+        if not virou_descanso and aj["duracao_min"]:
+            try:
+                gid = await upload_e_agendar(
+                    user_id,
+                    tipo=aj["tipo"],
+                    duracao_min=aj["duracao_min"],
+                    nome=f"{aj['tipo'].replace('_', ' ')} — {data_iso}",
+                    data_iso=data_iso,
+                    descricao=aj["descricao"],
+                    forcar_indoor=antes.get("indoor"),
+                )
+                if gid:
+                    await db.semanas.update_one(
+                        {"semana_inicio": semana_inicio, "user_id": str(user_id),
+                         "treinos": {"$elemMatch": {"data": data_iso, "origem": {"$ne": "extra"}}}},
+                        {"$set": {"treinos.$.garmin_workout_id": gid}},
+                    )
+                else:
+                    garmin_falhou = True
+            except Exception as exc:
+                logger.error("adaptacao: upload de %s falhou — %s", data_iso, exc)
+                garmin_falhou = True
+
+        aplicados.append({
+            "data": data_iso,
+            "de": antes.get("tipo"),
+            "para": aj["tipo"],
+            "duracao_min": None if virou_descanso else aj["duracao_min"],
+            "motivo": aj.get("motivo") or "",
+        })
+
+    logger.info("adaptacao aplicada user=%s semana=%s dias=%s garmin_ok=%s",
+                user_id, semana_inicio, [a["data"] for a in aplicados], not garmin_falhou)
+    return {"aplicados": aplicados, "garmin_ok": not garmin_falhou,
+            "resumo": proposta.get("resumo", "")}
