@@ -135,8 +135,14 @@ def desvios_da_semana(treinos: list[dict], hoje: str | None = None) -> list[dict
 # ── validação: o que a IA propõe não passa por cima das regras duras ──────────
 
 def _dia_intocavel(dia: dict, hoje: str) -> bool:
-    """Dia que já aconteceu não se replaneja — nem que a IA peça."""
-    return bool(dia.get("data", "") <= hoje or (dia.get("resultado") or {}))
+    """Dia que já aconteceu não se replaneja — nem que a IA peça.
+
+    O que trava um dia é o treino ter acontecido, não o calendário: HOJE ainda é
+    ajustável enquanto não tiver resultado. É o caso do job das 5h — o app já sabe
+    que ontem foi duro e o atleta ainda não montou na bike, que é justamente a
+    melhor hora para aliviar o treino do dia.
+    """
+    return bool(dia.get("data", "") < hoje or (dia.get("resultado") or {}))
 
 
 def validar_ajustes(
@@ -252,7 +258,7 @@ def _sem_repor_volume(ajustes: list[dict], por_data: dict, hoje: str) -> list[di
     permitido (o total não muda); alongar os dias que sobraram para compensar o
     treino que não aconteceu, não.
     """
-    futuros = [d for dt, d in por_data.items() if dt > hoje and not (d.get("resultado") or {})]
+    futuros = [d for d in por_data.values() if not _dia_intocavel(d, hoje)]
     teto = sum(int(d.get("duracao_min") or 0) for d in futuros)
 
     mudados = {a["data"]: a for a in ajustes}
@@ -293,7 +299,8 @@ Você não está gerando uma semana nova: está corrigindo o resto DESTA semana 
 que o atleta chegue melhor no fim dela, sabendo o que ele já fez de verdade.
 
 REGRAS QUE NÃO SE NEGOCIAM:
-1. Só pode mexer em dias DEPOIS de hoje. Dia com treino já feito é história.
+1. Só pode mexer em dia que ainda não aconteceu. HOJE conta, enquanto o treino de
+   hoje não tiver sido feito; dia com treino feito é história e não se toca.
 2. Volume perdido NÃO se repõe: a soma dos minutos dos dias restantes não pode
    passar do que já estava planejado. O que você ajusta é a INTENSIDADE e a ORDEM.
 3. Nunca deixe dois dias duros (VO2MAX, TIROS, TESTE_FTP) colados — conte o que
@@ -355,7 +362,7 @@ async def propor_ajuste(user_id: str, semana_inicio: str, desvio: dict,
     if not doc:
         return None
     treinos = [t for t in doc.get("treinos", []) if t.get("origem") != "extra"]
-    if not any(t.get("data", "") > hoje for t in treinos):
+    if not any(not _dia_intocavel(t, hoje) for t in treinos):
         return None                      # semana acabou: nada para ajustar
 
     user = await _perfil(user_id)

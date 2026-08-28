@@ -95,6 +95,28 @@ class TestValidador:
             self.semana(), hoje=HOJE)
         assert ajustes == []
 
+    def test_hoje_ainda_e_ajustavel_antes_de_treinar(self):
+        """O desvio de ONTEM detectado às 5h: o treino de hoje ainda não aconteceu
+        e é exatamente ele que deveria aliviar."""
+        semana = [
+            dia("2026-08-26", "VO2MAX", 75, feito("VO2MAX", 74)),   # ontem, duro
+            dia(HOJE, "TEMPO", 100),                                 # hoje, ainda a fazer
+            dia(SEXTA, "Z2_LONGO", 120),
+        ]
+        ajustes = validar_ajustes(
+            [{"data": HOJE, "tipo": "RECUPERACAO", "duracao_min": 60,
+              "descricao": "Leve.", "motivo": "Ontem foi VO2máx."}],
+            semana, hoje=HOJE, preferencias=self.PREF)
+        assert [a["data"] for a in ajustes] == [HOJE]
+
+    def test_dia_passado_sem_treino_continua_intocavel(self):
+        """Não adianta reescrever o que já passou: o dia não volta."""
+        semana = [dia("2026-08-26", "VO2MAX", 75), dia(HOJE, "TEMPO", 100)]
+        assert validar_ajustes(
+            [{"data": "2026-08-26", "tipo": "RECUPERACAO", "duracao_min": 60,
+              "descricao": "x"}],
+            semana, hoje=HOJE, preferencias=self.PREF) == []
+
     def test_troca_da_sexta_passa(self):
         ajustes = validar_ajustes(
             [{"data": SEXTA, "tipo": "RECUPERACAO", "duracao_min": 60,
