@@ -55,25 +55,32 @@ def _classify(hr_values: list, zonas_bpm: dict | None = None,
     Quando a FC não é confiável (`ignorar_fc`: sem cinta, cinta falhando) a
     leitura é feita pelos watts, que no rolo são o dado bom. Sem nenhum dos dois,
     sobra o padrão aeróbico.
-    """
-    # 1. Potência — mais confiável para tiros neuromusculares curtos, e não
-    #    depende de zona: é a forma da sessão (picos sobre a média).
-    if avg_power and norm_power and avg_power > 0:
-        vi = norm_power / avg_power  # Variability Index
-        if vi >= 1.15:
-            return "TIROS"
-    if avg_power and max_power and avg_power > 0:
-        if max_power / avg_power >= 3.0:
-            return "TIROS"
 
-    # 2. Distribuição nas zonas do atleta.
+    Quem decide QUÃO duro foi a sessão é sempre a distribuição de intensidade. O
+    Variability Index (potência normalizada / média) entra só para separar tiros
+    de VO2máx DENTRO de uma sessão já dura — sozinho ele não serve: no MTB a
+    pedalada é intermitente por natureza, VI ≥ 1.15 e pico ≥ 3× a média são o
+    normal de qualquer trilha, e como regra de entrada rotulavam todo pedal de
+    trilha como "tiros" (inclusive um dia de recuperação com FC média em Z1).
+    """
+    vi = (norm_power / avg_power) if (avg_power and norm_power and avg_power > 0) else None
+
     usa_fc = bool(hr_values and zonas_bpm and not ignorar_fc)
     if usa_fc:
-        return _classify_fc(hr_values, zonas_bpm)
-    return _classify_watts(power_values, zonas_watts)
+        return _classify_fc(hr_values, zonas_bpm, vi)
+    return _classify_watts(power_values, zonas_watts, vi)
 
 
-def _classify_fc(hr_values: list, zonas_bpm: dict) -> str:
+def _tipo_duro(std: float | None, vi: float | None) -> str:
+    """Sessão dura: blocos sustentados (VO2máx) ou picos curtos (tiros)."""
+    if std is not None and std > 15:
+        return "TIROS"
+    if vi is not None and vi >= 1.25:
+        return "TIROS"
+    return "VO2MAX"
+
+
+def _classify_fc(hr_values: list, zonas_bpm: dict, vi: float | None = None) -> str:
     fr = _fracao_por_zona(hr_values, zonas_bpm)
     if not fr:
         return "Z2_LONGO"
@@ -81,39 +88,34 @@ def _classify_fc(hr_values: list, zonas_bpm: dict) -> str:
     high = z4 + z5
     std = statistics.stdev(hr_values) if len(hr_values) > 1 else 0
 
-    # Intervalos detectados pela FC: entradas em Z4 separadas por recuperação.
-    n_intervals = _count_intervals(hr_values, zonas_bpm[4]["min"], min_run=3)
-    if n_intervals >= 2:
-        return "TIROS"
-    if z5 > 0.01 and std > 8:
-        return "TIROS"
-
-    if z5 > 0.15:
-        return "VO2MAX"
-    if high > 0.30:
-        return "TIROS" if std > 15 else "VO2MAX"
+    if z5 > 0.15 or high > 0.30:
+        return _tipo_duro(std, vi)
     if z3 + z4 > 0.40:
         return "TEMPO"
-    if z1 > 0.70 and std < 8:
+    # Tiros de verdade quase não somam tempo em Z5 (8×30s = 4 min numa hora), mas
+    # deixam picos sobre uma base leve: pouco tempo no topo com muita variação.
+    if z5 > 0.02 and std > 12:
+        return "TIROS"
+    if z1 > 0.70:
         return "RECUPERACAO"
-
     return "Z2_LONGO"
 
 
-def _classify_watts(power_values: list | None, zonas_watts: dict | None) -> str:
+def _classify_watts(power_values: list | None, zonas_watts: dict | None,
+                    vi: float | None = None) -> str:
     """Leitura por potência, para quando a FC não serve.
 
     As zonas de potência são as 7 de Coggan (config_service.calc_zonas_potencia):
-    Z5 é o VO2máx, Z6/Z7 é o anaeróbico/neuromuscular dos tiros. Sem heurística de
-    desvio-padrão aqui — em watts a variação é natural até em Z2, e picos curtos
-    já foram tratados pelo Variability Index acima.
+    Z5 é o VO2máx, Z6/Z7 é o anaeróbico/neuromuscular dos tiros. Sem
+    desvio-padrão aqui — em watts a variação é natural até em Z2 —, então quem
+    separa tiros de VO2máx é o VI.
     """
     fr = _fracao_por_zona(power_values, zonas_watts)
     if not fr:
         return "Z2_LONGO"  # arquivo válido mas sem dado utilizável → aeróbico
     acima_do_limiar = sum(v for z, v in fr.items() if z >= 5)
     if acima_do_limiar > 0.10:
-        return "VO2MAX"
+        return _tipo_duro(None, vi)
     if fr.get(4, 0) + fr.get(3, 0) > 0.40:
         return "TEMPO"
     if fr.get(1, 0) > 0.70:

@@ -63,9 +63,19 @@ class TestFCNaoConfiavel:
     def test_sem_fc_e_sem_watts_cai_no_padrao(self):
         assert _classify([], None) == "Z2_LONGO"
 
-    def test_picos_de_potencia_ainda_sao_tiros(self):
-        """A forma da curva (VI) não depende de zona e continua valendo."""
-        assert _classify([140] * 100, ZONAS_A, avg_power=150, norm_power=200) == "TIROS"
+    def test_pedal_de_trilha_nao_e_tiros(self):
+        """Regressão: no MTB a pedalada é intermitente por natureza. O Variability
+        Index sozinho rotulava TODO pedal de trilha como tiros — até um dia de
+        recuperação com a FC inteira em Z1."""
+        z1 = [130] * 3000            # Z1 do atleta A
+        assert _classify(z1, ZONAS_A, avg_power=150, norm_power=200,
+                         max_power=600) == "RECUPERACAO"
+
+    def test_vi_separa_tiros_de_vo2max_em_sessao_dura(self):
+        """Dentro de uma sessão já dura o VI volta a valer: picos = tiros."""
+        dura = [180] * 3000          # Z5 do atleta A, sem variação de FC
+        assert _classify(dura, ZONAS_A) == "VO2MAX"
+        assert _classify(dura, ZONAS_A, avg_power=200, norm_power=260) == "TIROS"
 
 
 class TestFracaoPorZona:
