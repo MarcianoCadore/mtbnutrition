@@ -718,6 +718,11 @@ async def sync_atividades(user_id: str, semana_inicio: str) -> int:
             "cadencia_max_rpm": round(cad_max) if cad_max else None,
             "calorias": analise.get("calorias"),
             "carga_exercicio": round(act["activityTrainingLoad"]) if act.get("activityTrainingLoad") else None,
+            # O que a sessão FOI, lido do .fit com as zonas do atleta. O `tipo` do
+            # dia continua sendo o planejado (é a prescrição, e vale mais que a
+            # leitura do arquivo); este campo é o realizado, e é dele que sai a
+            # detecção de desvio em adaptacao_service.
+            "tipo_realizado": analise.get("tipo"),
         }
 
         if fc_marcada:
