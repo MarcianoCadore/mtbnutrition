@@ -118,8 +118,13 @@ async def _backfill_garmin(user_id: str, dias: int) -> dict:
     db = get_db()
     importadas = 0
 
-    from app.services.config_service import get_zonas
+    from app.services.config_service import get_zonas, zonas_bpm_map, zonas_watts_map
+    from app.services.avaliacao_service import usuario_sem_cinta
     limiar = (await get_zonas(user_id)).get("limiar")
+    # Zonas do atleta: o tipo de cada treino importado é lido com a régua dele.
+    zonas_bpm = await zonas_bpm_map(user_id)
+    zonas_watts = await zonas_watts_map(user_id)
+    ignorar_fc = await usuario_sem_cinta(user_id)
 
     for act in atividades:
         act_id = str(act.get("activityId", ""))
@@ -139,7 +144,8 @@ async def _backfill_garmin(user_id: str, dias: int) -> dict:
             fit_path = os.path.join(dest_dir, f"{data_iso}_{act_id}.fit")
             with open(fit_path, "wb") as f:
                 f.write(fit_bytes)
-            analise = analisar_fit(fit_path)
+            analise = analisar_fit(fit_path, zonas_bpm=zonas_bpm,
+                                   zonas_watts=zonas_watts, ignorar_fc=ignorar_fc)
         except Exception as exc:
             logger.warning("backfill garmin: atividade %s ignorada — %s", act_id, exc)
             continue

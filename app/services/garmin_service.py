@@ -284,11 +284,15 @@ async def sync_treinos_planejados(user_id: str, semana_inicio: str) -> int:
         if nome:
             try:
                 from app.services.ai_service import classificar_tipo_treino
-                tipo_planejado = await classificar_tipo_treino({
-                    "workout_name": nome,
-                    "duracao_min": duracao_min,
-                    "descricao_existente": notas,
-                })
+                from app.services.config_service import zonas_bpm_map
+                tipo_planejado = await classificar_tipo_treino(
+                    {
+                        "workout_name": nome,
+                        "duracao_min": duracao_min,
+                        "descricao_existente": notas,
+                    },
+                    zonas_bpm=await zonas_bpm_map(user_id),
+                )
             except Exception:
                 pass
 
@@ -600,6 +604,15 @@ async def sync_atividades(user_id: str, semana_inicio: str) -> int:
                     upsert=True,
                 )
 
+    # Zonas ATUAIS do atleta: são elas que dizem o que cada bpm/watt significa
+    # para ESTE atleta hoje (elas mudam a cada novo teste de FC/FTP). Lidas uma
+    # vez por sync — não mudam no meio dele.
+    from app.services.config_service import zonas_bpm_map, zonas_watts_map
+    from app.services.avaliacao_service import usuario_sem_cinta
+    zonas_bpm_atleta = await zonas_bpm_map(user_id)
+    zonas_watts_atleta = await zonas_watts_map(user_id)
+    sem_cinta = await usuario_sem_cinta(user_id)
+
     for act in atividades:
         start_local = act.get("startTimeLocal") or ""
         act_date = start_local[:10]
@@ -649,7 +662,27 @@ async def sync_atividades(user_id: str, semana_inicio: str) -> int:
         with open(fit_path, "wb") as f:
             f.write(fit_bytes)
 
-        analise = analisar_fit(fit_path)
+        # busca treino planejado para comparação (o primário da data — um
+        # "extra" nunca sincroniza com o Garmin, então nunca é "o" planejado)
+        treino_planejado = {}
+        if doc:
+            for t in doc.get("treinos", []):
+                if t.get("data") == act_date and t.get("origem") != "extra":
+                    treino_planejado = t
+                    break
+
+        # FC confiável? Vale a marcação já feita nesta mesma atividade (o atleta
+        # pode ter avisado que a cinta falhou) ou a preferência "não uso cinta".
+        # Sem isso, um re-sync recriaria o resultado com a FC ruim de volta.
+        # Precisa vir ANTES da análise: é o que decide se o tipo do treino é lido
+        # pela FC ou pelos watts.
+        saved_resultado = treino_planejado.get("resultado") or {}
+        fc_marcada = bool(saved_resultado.get("garmin_activity_id") == act_id
+                          and saved_resultado.get("fc_invalida"))
+        ignorar_fc = fc_marcada or sem_cinta
+
+        analise = analisar_fit(fit_path, zonas_bpm=zonas_bpm_atleta,
+                               zonas_watts=zonas_watts_atleta, ignorar_fc=ignorar_fc)
 
         # Cadência vem do resumo da atividade do Garmin (média e máxima);
         # cai no valor calculado do .fit se o resumo não trouxer.
@@ -687,26 +720,12 @@ async def sync_atividades(user_id: str, semana_inicio: str) -> int:
             "carga_exercicio": round(act["activityTrainingLoad"]) if act.get("activityTrainingLoad") else None,
         }
 
-        # busca treino planejado para comparação (o primário da data — um
-        # "extra" nunca sincroniza com o Garmin, então nunca é "o" planejado)
-        treino_planejado = {}
-        if doc:
-            for t in doc.get("treinos", []):
-                if t.get("data") == act_date and t.get("origem") != "extra":
-                    treino_planejado = t
-                    break
-
-        # FC confiável? Vale a marcação já feita nesta mesma atividade (o atleta
-        # pode ter avisado que a cinta falhou) ou a preferência "não uso cinta".
-        # Sem isso, um re-sync recriaria o resultado com a FC ruim de volta.
-        saved_resultado = treino_planejado.get("resultado") or {}
-        if saved_resultado.get("garmin_activity_id") == act_id and saved_resultado.get("fc_invalida"):
+        if fc_marcada:
             resultado["fc_invalida"] = True
             if saved_resultado.get("fc_invalida_motivo"):
                 resultado["fc_invalida_motivo"] = saved_resultado["fc_invalida_motivo"]
-        from app.services.avaliacao_service import deve_ignorar_fc, MOTIVO_PADRAO
-        ignorar_fc = await deve_ignorar_fc(user_id, resultado)
         if ignorar_fc:
+            from app.services.avaliacao_service import MOTIVO_PADRAO
             resultado["fc_invalida"] = True
             resultado.setdefault("fc_invalida_motivo", MOTIVO_PADRAO)
 

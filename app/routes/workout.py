@@ -1809,7 +1809,15 @@ async def upload_fit(request: Request, semana_inicio: str, data: str, arquivo: U
     with open(dest_path, "wb") as f:
         shutil.copyfileobj(arquivo.file, f)
 
-    analise = analisar_fit(dest_path)
+    from app.services.config_service import zonas_bpm_map, zonas_watts_map
+    from app.services.avaliacao_service import usuario_sem_cinta
+    zonas_bpm = await zonas_bpm_map(user_id)
+    analise = analisar_fit(
+        dest_path,
+        zonas_bpm=zonas_bpm,
+        zonas_watts=await zonas_watts_map(user_id),
+        ignorar_fc=await usuario_sem_cinta(user_id),
+    )
 
     db = get_db()
     doc = await db.semanas.find_one({"semana_inicio": semana_inicio, "user_id": user_id})
@@ -1826,7 +1834,7 @@ async def upload_fit(request: Request, semana_inicio: str, data: str, arquivo: U
 
     # chama IA sempre que houver qualquer dado útil
     if analise.get("descricao_estruturada") or analise.get("workout_name") or analise.get("descricao_existente") or analise.get("avg_hr"):
-        analise["tipo"] = await classificar_tipo_treino(analise)
+        analise["tipo"] = await classificar_tipo_treino(analise, zonas_bpm=zonas_bpm)
 
     novo_treino = {
         "data": data,

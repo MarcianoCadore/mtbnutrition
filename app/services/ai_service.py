@@ -216,13 +216,18 @@ def classificar_por_texto(*textos: str | None) -> str | None:
     return melhor if scores[melhor] > 0 else None
 
 
-async def classificar_tipo_treino(analise: dict) -> str:
+async def classificar_tipo_treino(analise: dict, zonas_bpm: dict | None = None) -> str:
     """Classifica o tipo de treino combinando texto, dados de FC e IA.
 
     Ordem de confiança:
       1. Palavras-chave no nome/notas/descrição (determinístico, confiável)
       2. Classificação por FC/potência do .fit (já feita em fit_service)
       3. Claude (último recurso)
+
+    `zonas_bpm` são as faixas do atleta ({zona: {'min','max'}}), usadas só no
+    passo 3 para o modelo saber o que cada bpm significa PARA ELE. Sem elas o
+    prompt não cita zona nenhuma — melhor classificar só pelo texto do que
+    entregar a fisiologia de outra pessoa como se fosse a do atleta.
     """
     # 1) Palavras-chave — título tem prioridade
     tipo_kw = classificar_por_texto(
@@ -260,11 +265,16 @@ async def classificar_tipo_treino(analise: dict) -> str:
         return analise.get("tipo", "Z2_LONGO")
 
     # 3) Claude — último recurso
+    bloco_zonas = ""
+    if zonas_bpm:
+        faixas = " | ".join(
+            f"Z{z} {zonas_bpm[z]['min']}-{zonas_bpm[z]['max']}"
+            for z in sorted(zonas_bpm)
+        )
+        bloco_zonas = f"\nZonas de FC deste atleta: {faixas} bpm\n"
+
     prompt = f"""Você é um especialista em treinamento de ciclismo MTB.
-
-Atleta: Marciano, FC máxima 192 bpm
-Zonas de FC: Z1 até 134 | Z2 135-153 | Z3 154-164 | Z4 165-177 | Z5 178+
-
+{bloco_zonas}
 Dados do treino:
 {chr(10).join(linhas)}
 

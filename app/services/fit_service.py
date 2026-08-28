@@ -2,12 +2,29 @@ import re
 import statistics
 from fitparse import FitFile
 
-# Zonas de FC do Marciano (FC max 192)
-Z1_MAX = 134
-Z2_MIN, Z2_MAX = 135, 153
-Z3_MIN, Z3_MAX = 154, 164
-Z4_MIN, Z4_MAX = 165, 177
-Z5_MIN = 178
+def _fracao_por_zona(valores: list, zonas: dict | None) -> dict:
+    """Fração do tempo em cada zona, com as faixas DO ATLETA.
+
+    `zonas` = {numero: {"min":.., "max":..}} — de config_service.zonas_bpm_map
+    (FC) ou zonas_watts_map (potência). Abaixo da primeira zona conta como a
+    primeira; acima da última, como a última.
+    """
+    if not valores or not zonas:
+        return {}
+    faixas = sorted(zonas.items())
+    contagem = {z: 0 for z, _ in faixas}
+    for v in valores:
+        if v <= faixas[0][1]["max"]:
+            contagem[faixas[0][0]] += 1
+        elif v >= faixas[-1][1]["min"]:
+            contagem[faixas[-1][0]] += 1
+        else:
+            for z, faixa in faixas:
+                if faixa["min"] <= v <= faixa["max"]:
+                    contagem[z] += 1
+                    break
+    total = len(valores)
+    return {z: c / total for z, c in contagem.items()}
 
 
 def _count_intervals(values: list, threshold: int, min_run: int = 3) -> int:
@@ -24,8 +41,23 @@ def _count_intervals(values: list, threshold: int, min_run: int = 3) -> int:
     return count
 
 
-def _classify(hr_values: list, avg_power=None, norm_power=None, max_power=None) -> str:
-    # 1. Potência — mais confiável para tiros neuromusculares curtos
+def _classify(hr_values: list, zonas_bpm: dict | None = None,
+              avg_power=None, norm_power=None, max_power=None,
+              power_values: list | None = None, zonas_watts: dict | None = None,
+              ignorar_fc: bool = False) -> str:
+    """Que tipo de treino esta sessão FOI, pela distribuição de intensidade.
+
+    As faixas vêm das zonas do atleta (`zonas_bpm`/`zonas_watts`), lidas na hora
+    da classificação: cada um tem as suas, e as de um mesmo atleta mudam com o
+    tempo (novo teste de FC/FTP). Nada de bpm fixo aqui — com faixa de outra
+    pessoa, um Z2 vira VO2máx.
+
+    Quando a FC não é confiável (`ignorar_fc`: sem cinta, cinta falhando) a
+    leitura é feita pelos watts, que no rolo são o dado bom. Sem nenhum dos dois,
+    sobra o padrão aeróbico.
+    """
+    # 1. Potência — mais confiável para tiros neuromusculares curtos, e não
+    #    depende de zona: é a forma da sessão (picos sobre a média).
     if avg_power and norm_power and avg_power > 0:
         vi = norm_power / avg_power  # Variability Index
         if vi >= 1.15:
@@ -34,19 +66,23 @@ def _classify(hr_values: list, avg_power=None, norm_power=None, max_power=None) 
         if max_power / avg_power >= 3.0:
             return "TIROS"
 
-    if not hr_values:
-        return "Z2_LONGO"  # arquivo válido mas sem FC → aeróbico por padrão
+    # 2. Distribuição nas zonas do atleta.
+    usa_fc = bool(hr_values and zonas_bpm and not ignorar_fc)
+    if usa_fc:
+        return _classify_fc(hr_values, zonas_bpm)
+    return _classify_watts(power_values, zonas_watts)
 
-    total = len(hr_values)
-    z1   = sum(1 for h in hr_values if h <= Z1_MAX) / total
-    z3   = sum(1 for h in hr_values if Z3_MIN <= h <= Z3_MAX) / total
-    z4   = sum(1 for h in hr_values if Z4_MIN <= h <= Z4_MAX) / total
-    z5   = sum(1 for h in hr_values if h >= Z5_MIN) / total
+
+def _classify_fc(hr_values: list, zonas_bpm: dict) -> str:
+    fr = _fracao_por_zona(hr_values, zonas_bpm)
+    if not fr:
+        return "Z2_LONGO"
+    z1, z3, z4, z5 = fr.get(1, 0), fr.get(3, 0), fr.get(4, 0), fr.get(5, 0)
     high = z4 + z5
-    std  = statistics.stdev(hr_values) if len(hr_values) > 1 else 0
+    std = statistics.stdev(hr_values) if len(hr_values) > 1 else 0
 
-    # 2. Intervalos detectados pela FC
-    n_intervals = _count_intervals(hr_values, Z4_MIN, min_run=3)
+    # Intervalos detectados pela FC: entradas em Z4 separadas por recuperação.
+    n_intervals = _count_intervals(hr_values, zonas_bpm[4]["min"], min_run=3)
     if n_intervals >= 2:
         return "TIROS"
     if z5 > 0.01 and std > 8:
@@ -61,6 +97,27 @@ def _classify(hr_values: list, avg_power=None, norm_power=None, max_power=None) 
     if z1 > 0.70 and std < 8:
         return "RECUPERACAO"
 
+    return "Z2_LONGO"
+
+
+def _classify_watts(power_values: list | None, zonas_watts: dict | None) -> str:
+    """Leitura por potência, para quando a FC não serve.
+
+    As zonas de potência são as 7 de Coggan (config_service.calc_zonas_potencia):
+    Z5 é o VO2máx, Z6/Z7 é o anaeróbico/neuromuscular dos tiros. Sem heurística de
+    desvio-padrão aqui — em watts a variação é natural até em Z2, e picos curtos
+    já foram tratados pelo Variability Index acima.
+    """
+    fr = _fracao_por_zona(power_values, zonas_watts)
+    if not fr:
+        return "Z2_LONGO"  # arquivo válido mas sem dado utilizável → aeróbico
+    acima_do_limiar = sum(v for z, v in fr.items() if z >= 5)
+    if acima_do_limiar > 0.10:
+        return "VO2MAX"
+    if fr.get(4, 0) + fr.get(3, 0) > 0.40:
+        return "TEMPO"
+    if fr.get(1, 0) > 0.70:
+        return "RECUPERACAO"
     return "Z2_LONGO"
 
 
@@ -265,7 +322,15 @@ def ptss(norm_power: float | None, ftp: int, duracao_min: int | None) -> int | N
     return round((duracao_min / 60) * (if_fator ** 2) * 100)
 
 
-def analisar_fit(caminho: str) -> dict:
+def analisar_fit(caminho: str, zonas_bpm: dict | None = None,
+                 zonas_watts: dict | None = None, ignorar_fc: bool = False) -> dict:
+    """Lê o .fit e devolve as métricas da sessão + o tipo de treino que ela foi.
+
+    `zonas_bpm`/`zonas_watts` são as faixas ATUAIS do atleta (config_service):
+    sem elas o tipo não é classificado por intensidade, só pela forma da curva de
+    potência. `ignorar_fc` manda ler pelos watts quando a FC daquele treino não é
+    confiável (ver avaliacao_service.deve_ignorar_fc).
+    """
     ff = FitFile(caminho)
 
     hr_values       = []
@@ -329,7 +394,9 @@ def analisar_fit(caminho: str) -> dict:
 
     duration_min = max(1, round(duration_s / 60)) if duration_s else None
 
-    tipo = _classify(hr_values, avg_power, norm_power, max_power)
+    tipo = _classify(hr_values, zonas_bpm, avg_power, norm_power, max_power,
+                     power_values=power_values, zonas_watts=zonas_watts,
+                     ignorar_fc=ignorar_fc)
 
     avg_hr = round(sum(hr_values) / len(hr_values)) if hr_values else None
     max_hr = max(hr_values) if hr_values else None
