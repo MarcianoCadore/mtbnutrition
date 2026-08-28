@@ -87,9 +87,17 @@ class TestGraficoSegueADescricao:
 
     def test_pontas_e_recuperacao_do_texto(self):
         segs = preview_estrutura("TEMPO", 100, descricao=DESC_TEMPO)["segments"]
-        assert segs[0]["fase"] == "warmup" and segs[0]["duracao_s"] == 900
-        assert segs[-1]["fase"] == "cooldown" and segs[-1]["duracao_s"] == 900
+        assert segs[0]["fase"] == "warmup"
+        assert segs[-1]["fase"] == "cooldown"
         assert {s["duracao_s"] for s in segs if s["fase"] == "recovery"} == {300}
+
+    def test_nao_inventa_bloco_para_fechar_a_duracao(self):
+        """A descrição soma 90 min num dia de 100: os 10 min de diferença alongam
+        as pontas. Como bloco solto eles apareciam no gráfico como uma 4ª série —
+        e o atleta não tinha como saber de onde ela veio."""
+        segs = preview_estrutura("TEMPO", 100, descricao=DESC_TEMPO)["segments"]
+        assert len([s for s in segs if s["fase"] == "interval"]) == 3
+        assert segs[0]["duracao_s"] + segs[-1]["duracao_s"] == 100 * 60 - 3 * (900 + 300)
 
     @pytest.mark.parametrize("dur", [60, 75, 90, 100, 120, 180])
     def test_soma_sempre_fecha_com_a_duracao_do_dia(self, dur):

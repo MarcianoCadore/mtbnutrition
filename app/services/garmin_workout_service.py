@@ -184,6 +184,12 @@ _MIN_VOLTA_CALMA_S = 300
 # solto de 40 segundos no relógio.
 _MIN_BLOCO_S = 300
 
+# Sobra menor que isto some nas pontas em vez de virar rodagem Z2. Menos que ~20
+# min não é uma parte da sessão, é o desencontro entre a duração planejada para o
+# dia e a soma da prescrição — e como bloco separado ele aparece no gráfico como
+# uma série a mais, contradizendo o "3×15 min" que o atleta acabou de ler.
+_SOBRA_VIRA_RODAGEM_S = 20 * 60
+
 
 def _encolher_pontas(total_s: int, aquecimento_s: int, volta_calma_s: int,
                      miolo_s: int) -> tuple[int, int]:
@@ -230,7 +236,8 @@ def _intervalado(duracao_min: int | None, *, intervalo_s: int, recuperacao_s: in
     A duração pedida é preenchida somando séries — o bloco (esforço + recuperação)
     é a assinatura do tipo e não muda de tamanho. Acima de `series_max` a sessão
     ficaria desproporcional, então o tempo restante vira rodagem Z2 antes da volta
-    à calma.
+    à calma — mas só quando é tempo de pedal de verdade (`_SOBRA_VIRA_RODAGEM_S`);
+    abaixo disso ele alonga as pontas, sem inventar um bloco no gráfico.
 
     `zona_aquecimento`/`zona_volta_calma` separam as pontas quando a prescrição do
     dia dá zonas diferentes para elas ("aquecimento Z1→Z2 ... volta à calma Z1");
@@ -242,8 +249,14 @@ def _intervalado(duracao_min: int | None, *, intervalo_s: int, recuperacao_s: in
 
     series = max(1, min(series_max, (total - aq - vc) // bloco))
     sobra = max(0, total - aq - vc - series * bloco)
-    if sobra < _MIN_BLOCO_S:
-        aq += sobra          # curta demais para um bloco: alonga o aquecimento
+    if sobra < _SOBRA_VIRA_RODAGEM_S:
+        # Sobra pequena vai para as pontas, na proporção delas. É a diferença
+        # entre a duração planejada para o dia e a soma da prescrição ("3×15 min
+        # + pontas" = 90 min num dia de 100): virar um bloco no meio do desenho
+        # faz o atleta contar uma série que ninguém prescreveu.
+        extra_aq = round(sobra * aq / (aq + vc)) if (aq + vc) else sobra
+        aq += extra_aq
+        vc += sobra - extra_aq
         sobra = 0
 
     inner = [
