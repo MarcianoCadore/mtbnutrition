@@ -1296,6 +1296,45 @@ async def salvar_uso_cinta(request: Request):
     }
 
 
+@router.patch("/adaptacao")
+async def salvar_modo_adaptacao(request: Request):
+    """Como o atleta quer o ajuste automático da semana quando o treino sai do
+    plano. Body: {"modo": "auto" | "aceite"}."""
+    from app.services.adaptacao_service import definir_modo_adaptacao
+
+    body = await request.json()
+    modo = await definir_modo_adaptacao(request.state.user_id, str(body.get("modo") or ""))
+    return {"status": "ok", "modo": modo}
+
+
+@router.get("/adaptacao/pendente")
+async def adaptacao_pendente(request: Request):
+    """Proposta de ajuste esperando o aceite (só existe no modo 'aceite')."""
+    from app.services.adaptacao_service import pendente
+
+    doc = await pendente(request.state.user_id)
+    if not doc:
+        return {"pendente": None}
+    return {"pendente": {
+        "desvio": doc.get("desvio"),
+        "semana_inicio": doc.get("semana_inicio"),
+        "resumo": (doc.get("proposta") or {}).get("resumo", ""),
+        "ajustes": (doc.get("proposta") or {}).get("ajustes", []),
+    }}
+
+
+@router.post("/adaptacao/pendente")
+async def responder_adaptacao(request: Request):
+    """Aplica ou descarta a proposta pendente. Body: {"aceitar": bool}."""
+    from app.services.adaptacao_service import aplicar_pendente
+
+    body = await request.json()
+    r = await aplicar_pendente(request.state.user_id, bool(body.get("aceitar", True)))
+    if not r:
+        raise HTTPException(status_code=404, detail="Não há ajuste pendente.")
+    return r
+
+
 @router.post("/garmin/conectar")
 async def garmin_conectar(
     request: Request,
@@ -1637,6 +1676,8 @@ async def pagina_perfil(request: Request):
     academia_freq = str(int(academia.get("frequencia_semanal") or 0))
     academia_nivel = str(academia.get("nivel") or "")
     usa_cinta = "0" if pref.get("sem_cinta_fc") else "1"
+    from app.services.adaptacao_service import MODO_AUTO, MODO_ACEITE
+    modo_adaptacao = pref.get("adaptacao") if pref.get("adaptacao") in (MODO_AUTO, MODO_ACEITE) else MODO_AUTO
     tema = (pref.get("tema")) or "light"
     bike_dias = sorted({
         int(d) for d in (pref.get("dias_treino") or [])
@@ -1649,6 +1690,7 @@ async def pagina_perfil(request: Request):
     volume_h = f"{_volume_min / 60:g}" if _volume_min else ""
     html = (_PAGINA_PERFIL
             .replace("{{USA_CINTA}}", usa_cinta)
+            .replace("{{MODO_ADAPTACAO}}", modo_adaptacao)
             .replace("{{BIKE_DIAS_JSON}}", _json.dumps(bike_dias))
             .replace("{{BIKE_FREQ}}", bike_freq)
             .replace("{{VOLUME_SEMANAL_H}}", volume_h)
@@ -2946,6 +2988,20 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
   </div>
 
   <div class="card">
+    <h2>🔄 Quando você treina diferente do plano</h2>
+    <p class="hint">Fez um treino mais forte, mais curto, ou não conseguiu treinar?
+      O app percebe sozinho (pelo Garmin, ou pelo dia que fechou sem treino) e reorganiza
+      o resto da semana — sem repor o volume perdido, e sem deixar dois dias duros colados.
+      Você escolhe se ele faz isso sozinho ou se pede sua confirmação antes.</p>
+    <div class="aca-toggle">
+      <button type="button" id="adap-auto" class="aca-btn" onclick="setAdaptacao('auto')">A IA ajusta sozinha</button>
+      <button type="button" id="adap-aceite" class="aca-btn" onclick="setAdaptacao('aceite')">Quero dar o aceite</button>
+    </div>
+    <button type="button" id="btn-adap" onclick="salvarAdaptacao()">Salvar</button>
+    <div id="st-adap" class="status"></div>
+  </div>
+
+  <div class="card">
     <h2>🎯 Como preencher suas zonas</h2>
     <p class="hint">Três caminhos para os mesmos números — use o que for mais fácil pra você.
       Dá para editar tudo à mão depois, no card abaixo.</p>
@@ -3493,6 +3549,34 @@ async function salvarCinta() {
   finally { btn.disabled = false; btn.textContent = 'Salvar'; }
 }
 setCinta(_usaCinta);
+
+// ── Adaptação automática da semana ──
+let _modoAdap = '{{MODO_ADAPTACAO}}';
+
+function setAdaptacao(m) {
+  _modoAdap = m;
+  document.getElementById('adap-auto').classList.toggle('aca-active', m === 'auto');
+  document.getElementById('adap-aceite').classList.toggle('aca-active', m === 'aceite');
+}
+
+async function salvarAdaptacao() {
+  const btn = document.getElementById('btn-adap'), st = document.getElementById('st-adap');
+  btn.disabled = true; btn.textContent = 'Salvando…';
+  try {
+    const r = await fetch('/workout/adaptacao', {
+      method: 'PATCH', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({modo: _modoAdap}),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Erro');
+    st.className = 'status ok';
+    st.textContent = d.modo === 'auto'
+      ? '✅ A semana será ajustada sozinha quando você sair do plano.'
+      : '✅ Você receberá a sugestão e decide se aplica.';
+  } catch(e) { st.className = 'status err'; st.textContent = '❌ ' + e.message; }
+  finally { btn.disabled = false; btn.textContent = 'Salvar'; }
+}
+setAdaptacao(_modoAdap);
 
 // ── Academia ──
 const _ACA_DIAS_NOMES =['Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado','Domingo'];

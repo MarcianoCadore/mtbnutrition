@@ -835,6 +835,15 @@ async def sync_atividades(user_id: str, semana_inicio: str) -> int:
             except Exception as e:
                 logger.error("WhatsApp pós-treino error: %s", e)
 
+            # O atleta não avisa quando troca o treino: é aqui que o app descobre.
+            # Se o dia saiu do plano, o resto da semana é reajustado (a própria
+            # adaptação decide se aplica sozinha ou só propõe).
+            try:
+                from app.services.adaptacao_service import rodar_para_dia
+                await rodar_para_dia(user_id, act_date)
+            except Exception as e:
+                logger.error("adaptacao pós-treino error (%s): %s", act_date, e)
+
         processadas += 1
 
     return processadas

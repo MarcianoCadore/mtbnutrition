@@ -343,6 +343,35 @@ async def _enviar_alerta_prova_usuario(u: dict) -> bool:
     return True
 
 
+async def job_treino_nao_feito():
+    """05:00 — o dia de ontem fechou. Treino planejado sem nenhum resultado é uma
+    sessão que não aconteceu, e isso muda o resto da semana tanto quanto ter
+    treinado diferente.
+
+    Roda de madrugada de propósito: às 5h o pedal da noite anterior já
+    sincronizou, então silêncio aqui é silêncio de verdade.
+    """
+    from app.services.adaptacao_service import rodar_para_dia
+    from app.services.user_service import listar_usuarios
+
+    # Só para quem tem dispositivo: sem Garmin o app não tem como saber se o
+    # atleta treinou, e todo dia planejado pareceria uma sessão perdida. Quem
+    # treina sem relógio registra pelo chat (avaliacao_service.registrar_realizado).
+    ontem = (datetime.now(TZ).date() - timedelta(days=1)).isoformat()
+    com_dispositivo = com_assinatura([
+        u for u in await listar_usuarios()
+        if (u.get("integracao") or {}).get("tipo") == "garmin"
+    ])
+    for u in com_dispositivo:
+        try:
+            r = await rodar_para_dia(str(u["_id"]), ontem)
+            if r:
+                print(f"[{datetime.now()}] adaptação ({u.get('login')}): "
+                      f"{ontem} sem treino → {r['status']}")
+        except Exception as e:
+            logger.error("job_treino_nao_feito: user_id=%s — %s", u.get("_id"), e)
+
+
 async def job_alerta_prova():
     """Roda semanalmente (segunda 8h05) — alerta cada usuário sobre a próxima prova."""
     print(f"[{datetime.now()}] Enviando alertas de prova...")
@@ -461,6 +490,14 @@ def start_scheduler():
         job_garmin_sync,
         IntervalTrigger(minutes=10),
         id="garmin_sync",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        job_treino_nao_feito,
+        CronTrigger(hour=5, minute=0, timezone=TZ),
+        id="treino_nao_feito",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

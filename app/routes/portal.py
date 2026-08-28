@@ -57,6 +57,16 @@ HTML = """<!DOCTYPE html>
     .prova-panel .pp-nome { font-size: 1.15rem; font-weight: 800; }
     .prova-panel .pp-fase { margin-left: auto; background: rgba(255,255,255,.2); border-radius: 20px; padding: 4px 12px; font-size: .75rem; font-weight: 700; white-space: nowrap; }
     .prova-panel .pp-sub { font-size: .85rem; opacity: .92; margin-top: 3px; }
+    .adap-panel { background: var(--card); border: 1px solid var(--green); border-left-width: 4px; border-radius: 12px; padding: 16px 18px; margin-bottom: 20px; box-shadow: var(--shadow-sm); }
+    .adap-panel h4 { margin: 0 0 6px; font-size: .98rem; }
+    .adap-panel .ad-resumo { font-size: .88rem; color: var(--muted); margin-bottom: 10px; }
+    .adap-panel ul { margin: 0 0 12px; padding-left: 18px; font-size: .88rem; line-height: 1.6; }
+    .adap-panel .ad-motivo { color: var(--muted); }
+    .adap-panel button { border: none; border-radius: 8px; padding: 8px 14px; font-weight: 700; cursor: pointer; margin-right: 8px; }
+    .ajuste-ia { background: rgba(46,125,50,.08); border: 1px solid var(--border); border-left: 3px solid var(--green); border-radius: 8px; padding: 7px 10px; margin-bottom: 10px; font-size: .78rem; line-height: 1.45; }
+    .ajuste-ia .ai-motivo { color: var(--muted); margin-top: 2px; }
+    .adap-panel .ad-ok { background: var(--green); color: #fff; }
+    .adap-panel .ad-no { background: transparent; color: var(--muted); border: 1px solid var(--border); }
     .prova-panel .pp-count { font-size: 1.4rem; font-weight: 800; margin: 8px 0 2px; }
     .prova-panel .pp-focos { background: rgba(255,255,255,.13); border-radius: 10px; padding: 10px 12px; margin-top: 12px; }
     .prova-panel .pp-focos .pf-titulo { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; opacity: .9; margin-bottom: 6px; }
@@ -487,6 +497,8 @@ HTML = """<!DOCTYPE html>
     <button class="today-btn" onclick="goToday()">Hoje</button>
     <button class="arrow" onclick="changeWeek(1)">&#8594;</button>
   </div>
+
+  <div id="adapPanel"></div>
 
   <div id="provaPanel"></div>
 
@@ -1029,6 +1041,16 @@ function buildCards(treinos) {
         ${tssPlanejado ? `<li><span class="ri">📊</span><span class="rk">P: TSS</span><span class="rv">${tssPlanejado}${tssObtido ? ` · real ${tssObtido}` : ''}</span></li>` : ''}
       </ul>` : '';
 
+    // Dia que a IA reorganizou: no modo automático o plano muda sozinho, então o
+    // card precisa dizer o que era antes e por quê — senão o atleta abre a semana
+    // e não reconhece o próprio treino.
+    const aj = t.ajuste_ia;
+    const ajusteHTML = (aj && !hide) ? `
+      <div class="ajuste-ia" title="Ajuste automático do treinador">
+        <b>🔄 Ajustado</b>${aj.antes && aj.antes.tipo ? ` — era ${(TIPOS.find(tp => tp.v === aj.antes.tipo) || {l: aj.antes.tipo}).l}` : ''}
+        ${aj.motivo ? `<div class="ai-motivo">${aj.motivo.replace(/</g,'&lt;')}</div>` : ''}
+      </div>` : '';
+
     const acSub = t.academia;
     const academiaSubHTML = acSub && acSub.descricao
       ? renderAcademiaBloco(acSub, key, key > todayISO) : '';
@@ -1070,6 +1092,7 @@ function buildCards(treinos) {
         </select>
 
         <div id="ex-${key}" style="${hide ? 'display:none' : ''}">
+          ${ajusteHTML}
           ${resumoHTML}
           ${metricsHTML}
 
@@ -1618,6 +1641,7 @@ function collect() {
 
 async function load() {
   updateLabel();
+  carregarAdaptacaoPendente();
   try {
     const r = await fetch(`/workout/semana/${iso(monday)}`);
     const d = await r.json();
@@ -1630,6 +1654,50 @@ async function load() {
     _atualizarBotaoProximaSemana([], false);
     _atualizarBotoesNovato({treinos: []});
   }
+}
+
+// Ajuste da semana esperando o aceite (só aparece para quem escolheu "quero dar
+// o aceite" no perfil; no modo automático a semana já vem ajustada).
+const _AD_TIPO_LABEL = {Z2_LONGO:'Z2 longo', RECUPERACAO:'Recuperação', TEMPO:'Tempo',
+  FORCA:'Força', TIROS:'Tiros', VO2MAX:'VO2máx', TESTE_FTP:'Teste de FTP',
+  ACADEMIA:'Academia', DESCANSO:'Descanso'};
+
+async function carregarAdaptacaoPendente() {
+  const painel = document.getElementById('adapPanel');
+  if (!painel) return;
+  try {
+    const r = await fetch('/workout/adaptacao/pendente');
+    const d = await r.json();
+    const p = d.pendente;
+    if (!p || !(p.ajustes || []).length) { painel.innerHTML = ''; return; }
+    const itens = p.ajustes.map(a => {
+      const dur = a.duracao_min ? ` · ${a.duracao_min} min` : '';
+      const motivo = a.motivo ? `<br><span class="ad-motivo">${a.motivo}</span>` : '';
+      return `<li><b>${a.data.slice(8,10)}/${a.data.slice(5,7)}</b>: ${_AD_TIPO_LABEL[a.tipo] || a.tipo}${dur}${motivo}</li>`;
+    }).join('');
+    painel.innerHTML = `<div class="adap-panel">
+      <h4>🔄 Sugestão de ajuste na semana</h4>
+      ${p.resumo ? `<div class="ad-resumo">${p.resumo}</div>` : ''}
+      <ul>${itens}</ul>
+      <button class="ad-ok" onclick="responderAdaptacao(true)">Aplicar</button>
+      <button class="ad-no" onclick="responderAdaptacao(false)">Manter o plano</button>
+      <span id="adapMsg" style="font-size:.85rem;margin-left:8px"></span>
+    </div>`;
+  } catch { painel.innerHTML = ''; }
+}
+
+async function responderAdaptacao(aceitar) {
+  const msg = document.getElementById('adapMsg');
+  if (msg) msg.textContent = aceitar ? 'Aplicando…' : 'Descartando…';
+  try {
+    const r = await fetch('/workout/adaptacao/pendente', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({aceitar}),
+    });
+    if (!r.ok) throw new Error('falhou');
+    document.getElementById('adapPanel').innerHTML = '';
+    load();
+  } catch { if (msg) msg.textContent = '❌ não consegui, tente de novo'; }
 }
 
 function _temTreinoReal(treinos) {

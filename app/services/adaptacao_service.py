@@ -601,3 +601,177 @@ async def aplicar_ajustes(user_id: str, semana_inicio: str, proposta: dict) -> d
                 user_id, semana_inicio, [a["data"] for a in aplicados], not garmin_falhou)
     return {"aplicados": aplicados, "garmin_ok": not garmin_falhou,
             "resumo": proposta.get("resumo", "")}
+
+
+# ── modo de operação: a IA ajusta sozinha ou pede o aceite ───────────────────
+
+MODO_AUTO = "auto"
+MODO_ACEITE = "aceite"
+_MODOS = (MODO_AUTO, MODO_ACEITE)
+
+
+async def modo_adaptacao(user_id: str) -> str:
+    """Como este atleta quer o ajuste: aplicado sozinho ou proposto.
+
+    Padrão AUTO — o app é o treinador e a decisão é dele; quem preferir revisar
+    antes escolhe "aceite" no perfil.
+    """
+    from app.services.user_service import get_por_id
+    u = await get_por_id(user_id) or {}
+    modo = ((u.get("preferencias") or {}).get("adaptacao") or MODO_AUTO)
+    return modo if modo in _MODOS else MODO_AUTO
+
+
+async def definir_modo_adaptacao(user_id: str, modo: str) -> str:
+    from app.services.user_service import atualizar_usuario
+    modo = modo if modo in _MODOS else MODO_AUTO
+    await atualizar_usuario(user_id, {"preferencias.adaptacao": modo})
+    return modo
+
+
+# ── orquestração: do desvio detectado até a semana ajustada ──────────────────
+
+async def rodar_para_dia(user_id: str, data_iso: str, hoje: str | None = None) -> dict | None:
+    """Ponto de entrada: este dia saiu do plano? Então arruma o resto da semana.
+
+    Chamado pelo sync do Garmin quando uma atividade nova é processada e pelo job
+    noturno quando um dia fecha sem treino. Devolve None quando não havia nada a
+    fazer.
+    """
+    from app.services.mongo_service import get_db
+    from app.services.treino_semana_service import _semana_inicio
+
+    hoje = hoje or hoje_local().isoformat()
+    semana_inicio = _semana_inicio(data_iso)
+    db = get_db()
+    doc = await db.semanas.find_one({"semana_inicio": semana_inicio, "user_id": str(user_id)})
+    if not doc:
+        return None
+
+    dia = next((t for t in doc.get("treinos", [])
+                if t.get("data") == data_iso and t.get("origem") != "extra"), None)
+    if not dia:
+        return None
+
+    desvio = detectar_desvio(dia, hoje=hoje)
+    if not desvio:
+        return None
+
+    # Uma adaptação por desvio. O sync roda a cada 10 min e o atleta não pode ver
+    # a semana se reescrevendo a cada rodada.
+    if not await claim_adaptacao(user_id, data_iso):
+        logger.info("adaptacao: desvio de %s já tratado — nada a fazer", data_iso)
+        return None
+
+    proposta = await propor_ajuste(user_id, semana_inicio, desvio, hoje=hoje)
+    if not proposta:
+        await _registrar(user_id, data_iso, {"status": "sem_ajuste", "desvio": desvio})
+        return None
+
+    modo = await modo_adaptacao(user_id)
+    if modo == MODO_ACEITE:
+        await _registrar(user_id, data_iso, {"status": "pendente", "desvio": desvio,
+                                             "proposta": proposta,
+                                             "semana_inicio": semana_inicio})
+        await _avisar(user_id, proposta, aplicado=False)
+        return {"modo": modo, "status": "pendente", "proposta": proposta}
+
+    resultado = await aplicar_ajustes(user_id, semana_inicio, proposta)
+    await _registrar(user_id, data_iso, {"status": "aplicada", "desvio": desvio,
+                                         "proposta": proposta,
+                                         "semana_inicio": semana_inicio,
+                                         "garmin_ok": resultado["garmin_ok"]})
+    await _avisar(user_id, proposta, aplicado=True, garmin_ok=resultado["garmin_ok"])
+    return {"modo": modo, "status": "aplicada", **resultado}
+
+
+async def _registrar(user_id: str, data_desvio: str, campos: dict) -> None:
+    from app.services.mongo_service import get_db
+    await get_db().adaptacoes.update_one(
+        {"_id": f"{user_id}:{data_desvio}"}, {"$set": campos}, upsert=True,
+    )
+
+
+async def pendente(user_id: str) -> dict | None:
+    """Proposta aguardando o aceite do atleta (modo 'aceite'), se houver."""
+    from app.services.mongo_service import get_db
+    return await get_db().adaptacoes.find_one(
+        {"user_id": str(user_id), "status": "pendente"}, sort=[("criada_em", -1)],
+    )
+
+
+async def aplicar_pendente(user_id: str, aceitar: bool = True) -> dict | None:
+    """Aplica (ou descarta) a proposta pendente. É o "ok" do modo aceite."""
+    doc = await pendente(user_id)
+    if not doc:
+        return None
+    if not aceitar:
+        await _registrar(user_id, doc["data_desvio"], {"status": "recusada"})
+        return {"status": "recusada"}
+
+    resultado = await aplicar_ajustes(user_id, doc["semana_inicio"], doc["proposta"])
+    await _registrar(user_id, doc["data_desvio"],
+                     {"status": "aplicada", "garmin_ok": resultado["garmin_ok"]})
+    return {"status": "aplicada", **resultado}
+
+
+# ── aviso no WhatsApp ────────────────────────────────────────────────────────
+
+_ROTULO_TIPO = {
+    "Z2_LONGO": "Z2 longo", "RECUPERACAO": "Recuperação", "TEMPO": "Tempo",
+    "FORCA": "Força", "TIROS": "Tiros", "VO2MAX": "VO2máx",
+    "TESTE_FTP": "Teste de FTP", "ACADEMIA": "Academia", "DESCANSO": "Descanso",
+}
+
+
+def _dia_br(data_iso: str) -> str:
+    from datetime import date
+    d = date.fromisoformat(data_iso)
+    return f"{_NOMES_DIA[d.weekday()].capitalize()} {d.strftime('%d/%m')}"
+
+
+def formatar_aviso(proposta: dict, aplicado: bool, garmin_ok: bool = True) -> str:
+    """Mensagem do ajuste. No modo automático ela é a única chance de o atleta
+    saber que a semana mudou — por isso diz o que mudou, e por quê."""
+    desvio = proposta["desvio"]
+    if desvio["motivo"] == "nao_fez":
+        abertura = f"Vi que o treino de {_dia_br(desvio['data'])} não aconteceu."
+    else:
+        feito = _ROTULO_TIPO.get(desvio.get("tipo_realizado"), desvio.get("tipo_realizado") or "outro treino")
+        plano = _ROTULO_TIPO.get(desvio.get("tipo_planejado"), desvio.get("tipo_planejado"))
+        abertura = (f"Vi que em {_dia_br(desvio['data'])} você fez *{feito}* "
+                    f"no lugar de {plano}.")
+
+    titulo = "🔄 *Ajustei a semana*" if aplicado else "🔄 *Sugestão de ajuste na semana*"
+    linhas = [titulo, "", abertura]
+    if proposta.get("resumo"):
+        linhas += ["", f"_{proposta['resumo']}_"]
+
+    linhas.append("")
+    for aj in proposta["ajustes"]:
+        dur = f" · {aj['duracao_min']} min" if aj.get("duracao_min") else ""
+        linhas.append(f"• *{_dia_br(aj['data'])}*: {_ROTULO_TIPO.get(aj['tipo'], aj['tipo'])}{dur}")
+        if aj.get("motivo"):
+            linhas.append(f"  _{aj['motivo']}_")
+
+    linhas.append("")
+    if not aplicado:
+        linhas.append("Abra o portal para aplicar ou descartar.")
+    elif not garmin_ok:
+        linhas.append("⚠️ Não consegui atualizar tudo no Garmin — confira pelo portal.")
+    else:
+        linhas.append("Já está no app e no Garmin 📲")
+    return "\n".join(linhas)
+
+
+async def _avisar(user_id: str, proposta: dict, aplicado: bool,
+                  garmin_ok: bool = True) -> None:
+    from app.services.user_service import telefone_notificavel
+    from app.services.whatsapp_service import send_message
+
+    try:
+        telefone = await telefone_notificavel(user_id)
+        if telefone:
+            await send_message(telefone, formatar_aviso(proposta, aplicado, garmin_ok))
+    except Exception as exc:
+        logger.error("adaptacao: falha ao avisar no WhatsApp — %s", exc)
