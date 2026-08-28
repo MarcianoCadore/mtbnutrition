@@ -7,8 +7,9 @@ amigo) pode ler os eventos e exibi-los N segundos ANTES da mudança — sem prec
 inspecionar a árvore de steps.
 
 A fonte dos blocos é a MESMA usada para montar o workout enviado ao Garmin
-(`garmin_workout_service.preview_estrutura` → `_BUILDERS`), então o ERG nunca
-diverge do que o atleta recebe no relógio. As potências saem em watts absolutos
+(`garmin_workout_service.preview_estrutura`, que lê a série da descrição do dia e
+completa com o molde do tipo), então o ERG nunca diverge do que o atleta recebe no
+relógio. As potências saem em watts absolutos
 das zonas do atleta (requer FTP configurado).
 
 Tipos de evento suportados no XML (o cliente decide como renderizar cada um):
@@ -105,7 +106,8 @@ def build_erg_xml(
     Requer `zonas_watts` = {zona: {'min','max',...}} (do FTP do atleta) — as
     potências saem em watts absolutos.
     """
-    dados = preview_estrutura(tipo, duracao_min, zonas_bpm=None, zonas_watts=zonas_watts)
+    dados = preview_estrutura(tipo, duracao_min, zonas_bpm=None,
+                              zonas_watts=zonas_watts, descricao=descricao)
     if dados is None:
         return None
 

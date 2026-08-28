@@ -5,9 +5,9 @@ Rouvy…): a potência é expressa como **fração do FTP** (0.75 = 75% do FTP),
 o arquivo é RELATIVO — cada atleta baixa o seu e o próprio software escala pelo
 FTP dele. Por isso a exportação não exige FTP configurado no nosso app.
 
-A fonte da estrutura é a MESMA usada para o Garmin (`preview_estrutura` →
-`_BUILDERS`): fase (warmup/interval/recovery/cooldown), zona (1-5) e duração de
-cada bloco. As porcentagens de FTP por zona vêm de `config_service.faixa_util_pct`
+A fonte da estrutura é a MESMA usada para o Garmin (`preview_estrutura`, que lê
+a série da descrição do dia e completa com o molde do tipo): fase
+(warmup/interval/recovery/cooldown), zona (1-5) e duração de cada bloco. As porcentagens de FTP por zona vêm de `config_service.faixa_util_pct`
 (bandas Coggan com piso prescritível), então o .zwo nunca diverge da prescrição.
 
 Mensagens seguem o esquema do Zwift: `<textevent timeoffset=... message=...>`
@@ -84,7 +84,7 @@ def build_zwo_xml(
 ) -> str | None:
     """Monta o .zwo (Zwift Workout) do treino. Retorna a string XML, ou None se o
     tipo não tiver estrutura. Potências relativas ao FTP — não exige FTP salvo."""
-    dados = preview_estrutura(tipo, duracao_min)
+    dados = preview_estrutura(tipo, duracao_min, descricao=descricao)
     if dados is None:
         return None
 

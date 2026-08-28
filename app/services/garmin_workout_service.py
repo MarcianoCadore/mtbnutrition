@@ -11,6 +11,7 @@ import asyncio
 import logging
 from datetime import datetime
 
+from app.services.prescricao_service import parse_prescricao
 from garminconnect.workout import (
     CyclingWorkout,
     WorkoutSegment,
@@ -221,13 +222,19 @@ def _continuo(duracao_min: int | None, *, zona_miolo: int, zona_pontas: int,
 def _intervalado(duracao_min: int | None, *, intervalo_s: int, recuperacao_s: int,
                  zona_intervalo: int, zona_recuperacao: int, zona_pontas: int,
                  aquecimento_s: int, volta_calma_s: int,
-                 series_max: int) -> tuple[list, int]:
+                 series_max: int,
+                 zona_aquecimento: int | None = None,
+                 zona_volta_calma: int | None = None) -> tuple[list, int]:
     """Aquecimento + N séries + (rodagem Z2) + volta à calma.
 
     A duração pedida é preenchida somando séries — o bloco (esforço + recuperação)
     é a assinatura do tipo e não muda de tamanho. Acima de `series_max` a sessão
     ficaria desproporcional, então o tempo restante vira rodagem Z2 antes da volta
     à calma.
+
+    `zona_aquecimento`/`zona_volta_calma` separam as pontas quando a prescrição do
+    dia dá zonas diferentes para elas ("aquecimento Z1→Z2 ... volta à calma Z1");
+    sem isso as duas seguem `zona_pontas`.
     """
     total = _total_s(duracao_min)
     bloco = intervalo_s + recuperacao_s
@@ -244,12 +251,13 @@ def _intervalado(duracao_min: int | None, *, intervalo_s: int, recuperacao_s: in
         create_recovery_step(recuperacao_s, step_order=2, target_type=_hz(zona_recuperacao)),
     ]
     steps = [
-        create_warmup_step(aq, step_order=1, target_type=_hz(zona_pontas)),
+        create_warmup_step(aq, step_order=1, target_type=_hz(zona_aquecimento or zona_pontas)),
         create_repeat_group(series, inner, step_order=2),
     ]
     if sobra:
         steps.append(create_interval_step(sobra, step_order=3, target_type=_hz(2)))
-    steps.append(create_cooldown_step(vc, step_order=len(steps) + 1, target_type=_hz(zona_pontas)))
+    steps.append(create_cooldown_step(
+        vc, step_order=len(steps) + 1, target_type=_hz(zona_volta_calma or zona_pontas)))
     return steps, aq + series * bloco + sobra + vc
 
 
@@ -267,32 +275,43 @@ def _z2_longo(duracao_min: int = 120) -> tuple[list, int]:
                      aquecimento_s=900, volta_calma_s=900)
 
 
+# Moldes dos tipos intervalados. Valem quando a descrição do dia NÃO diz a série
+# (ver _params_da_prescricao): o texto do treino manda, o molde só preenche o que
+# ele não disser.
+_MOLDES_INTERVALADO = {
+    "TEMPO":  dict(intervalo_s=600, recuperacao_s=300, zona_intervalo=3,
+                   zona_recuperacao=2, zona_pontas=2,
+                   aquecimento_s=900, volta_calma_s=600, series_max=5),
+    "FORCA":  dict(intervalo_s=360, recuperacao_s=240, zona_intervalo=3,
+                   zona_recuperacao=2, zona_pontas=2,
+                   aquecimento_s=900, volta_calma_s=600, series_max=6),
+    "TIROS":  dict(intervalo_s=30, recuperacao_s=210, zona_intervalo=5,
+                   zona_recuperacao=1, zona_pontas=2,
+                   aquecimento_s=900, volta_calma_s=900, series_max=12),
+    "VO2MAX": dict(intervalo_s=240, recuperacao_s=240, zona_intervalo=5,
+                   zona_recuperacao=2, zona_pontas=2,
+                   aquecimento_s=900, volta_calma_s=900, series_max=6),
+}
+
+
 def _tempo(duracao_min: int = 70) -> tuple[list, int]:
     """Blocos de 10 min Z3 com 5 min de recuperação Z2 — esforço de limiar."""
-    return _intervalado(duracao_min, intervalo_s=600, recuperacao_s=300,
-                        zona_intervalo=3, zona_recuperacao=2, zona_pontas=2,
-                        aquecimento_s=900, volta_calma_s=600, series_max=5)
+    return _intervalado(duracao_min, **_MOLDES_INTERVALADO["TEMPO"])
 
 
 def _forca(duracao_min: int = 65) -> tuple[list, int]:
     """Blocos de 6 min Z3 em cadência baixa (50-60 rpm) com 4 min Z2 — força específica."""
-    return _intervalado(duracao_min, intervalo_s=360, recuperacao_s=240,
-                        zona_intervalo=3, zona_recuperacao=2, zona_pontas=2,
-                        aquecimento_s=900, volta_calma_s=600, series_max=6)
+    return _intervalado(duracao_min, **_MOLDES_INTERVALADO["FORCA"])
 
 
 def _tiros(duracao_min: int = 62) -> tuple[list, int]:
     """Sprints de 30s Z5 com 3,5 min de recuperação Z1 — neuromuscular."""
-    return _intervalado(duracao_min, intervalo_s=30, recuperacao_s=210,
-                        zona_intervalo=5, zona_recuperacao=1, zona_pontas=2,
-                        aquecimento_s=900, volta_calma_s=900, series_max=12)
+    return _intervalado(duracao_min, **_MOLDES_INTERVALADO["TIROS"])
 
 
 def _vo2max(duracao_min: int = 62) -> tuple[list, int]:
     """Blocos de 4 min Z5 com 4 min de recuperação Z2 — VO2max."""
-    return _intervalado(duracao_min, intervalo_s=240, recuperacao_s=240,
-                        zona_intervalo=5, zona_recuperacao=2, zona_pontas=2,
-                        aquecimento_s=900, volta_calma_s=900, series_max=6)
+    return _intervalado(duracao_min, **_MOLDES_INTERVALADO["VO2MAX"])
 
 
 def _teste_ftp(duracao_min: int = 57) -> tuple[list, int]:
@@ -358,6 +377,55 @@ _DESCRICOES_PADRAO = {
 }
 
 
+def _params_da_prescricao(tipo: str, descricao: str | None) -> dict | None:
+    """Parâmetros de `_intervalado` lidos da DESCRIÇÃO do dia, completados pelo
+    molde do tipo. None quando o texto não descreve uma série — aí vale o molde
+    inteiro.
+
+    É o que faz o gráfico do portal, o .zwo e o treino do relógio baterem com a
+    prescrição que o atleta lê no card: "3×15 min" desenhava 5 blocos de 10 min
+    porque só o molde do tipo era consultado.
+
+    Só os tipos intervalados entram. Z2_LONGO/RECUPERACAO são contínuos, e o
+    TESTE_FTP tem protocolo fixo (é ele que dá o número) cuja descrição ainda cita
+    séries de aquecimento — "3×(30s Z5 + 1min Z1)" — que não são a sessão principal.
+    """
+    molde = _MOLDES_INTERVALADO.get(tipo)
+    if not molde or not descricao:
+        return None
+    lido = parse_prescricao(descricao)
+    if not lido:
+        return None
+
+    params = dict(molde)
+    # A série descrita é a sessão: `series_max` vira o número de blocos do texto —
+    # se não couberem na duração do dia, _intervalado corta pelo tempo disponível.
+    params["series_max"] = lido["series"]
+    params["intervalo_s"] = lido["esforco_s"]
+    for no_texto, no_molde in (
+        ("recuperacao_s",    "recuperacao_s"),
+        ("zona_esforco",     "zona_intervalo"),
+        ("zona_recuperacao", "zona_recuperacao"),
+        ("aquecimento_s",    "aquecimento_s"),
+        ("volta_calma_s",    "volta_calma_s"),
+        ("zona_aquecimento", "zona_aquecimento"),
+        ("zona_volta_calma", "zona_volta_calma"),
+    ):
+        if lido.get(no_texto) is not None:
+            params[no_molde] = lido[no_texto]
+    return params
+
+
+def _estrutura(tipo: str, duracao_min: int, descricao: str | None = None) -> tuple[list, int] | None:
+    """(steps, total_s) do treino: a série descrita para o dia quando o texto a
+    traz, senão o molde do tipo. None se o tipo não tem estrutura."""
+    params = _params_da_prescricao(tipo, descricao)
+    if params:
+        return _intervalado(duracao_min, **params)
+    builder = _BUILDERS.get(tipo)
+    return builder(duracao_min) if builder else None
+
+
 def build_cycling_workout(
     tipo: str,
     duracao_min: int,
@@ -374,12 +442,15 @@ def build_cycling_workout(
     'zonas_watts', o step leva as DUAS métricas: `primario` ("fc"/"watts") define
     qual é o alvo principal e a outra vai como alvo secundário, visível na mesma
     tela do relógio.
+
+    A estrutura sai da série descrita em `descricao` quando ela está lá — o
+    relógio recebe o treino que o atleta lê no card, não o molde do tipo.
     """
-    builder = _BUILDERS.get(tipo)
-    if not builder:
+    estrutura = _estrutura(tipo, duracao_min, descricao)
+    if not estrutura:
         return None
 
-    steps, total_s = builder(duracao_min)
+    steps, total_s = estrutura
     if zonas_bpm or zonas_watts:
         _aplicar_alvos(steps, zonas_bpm=zonas_bpm, zonas_watts=zonas_watts,
                        primario=primario)
@@ -396,20 +467,25 @@ def preview_estrutura(
     duracao_min: int,
     zonas_bpm: dict | None = None,
     zonas_watts: dict | None = None,
+    descricao: str | None = None,
 ) -> dict | None:
     """Monta a lista plana de segmentos (aquecimento/intervalo/recuperação/volta à
-    calma) do treino, para exibir como gráfico no portal — mesma fonte (_BUILDERS)
-    usada para montar o workout real enviado ao Garmin, então o gráfico nunca diverge
-    do que o atleta recebe no relógio. Repeat groups são expandidos (cada repetição
-    vira segmentos separados).
+    calma) do treino, para exibir como gráfico no portal — mesma fonte usada para
+    montar o workout real enviado ao Garmin, então o gráfico nunca diverge do que o
+    atleta recebe no relógio. Repeat groups são expandidos (cada repetição vira
+    segmentos separados).
+
+    `descricao` é a prescrição do dia: dela saem os blocos quando o texto os
+    descreve ("3×15 min em Z3/Z4 com 5 min de recuperação"). Sem ela o desenho cai
+    no molde do tipo — e foi assim que um treino de 3 blocos aparecia com 5.
 
     Se 'zonas_bpm'/'zonas_watts' forem passadas, cada segmento leva a faixa real
     (min/max) do atleta; caso contrário só a zona (1-5) é informada.
     """
-    builder = _BUILDERS.get(tipo)
-    if not builder:
+    estrutura = _estrutura(tipo, duracao_min, descricao)
+    if not estrutura:
         return None
-    steps, total_s = builder(duracao_min)
+    steps, total_s = estrutura
 
     def _faixa(zona: int) -> tuple[float | None, float | None, str | None]:
         if zonas_watts:

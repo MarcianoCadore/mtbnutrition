@@ -697,10 +697,14 @@ function renderGraficoTreino(containerId, dados) {
     </div>`;
 }
 
-async function carregarGraficoTreino(key, tipo, duracaoMin, indoor) {
+async function carregarGraficoTreino(key, tipo, duracaoMin, indoor, descricao) {
   const containerId = `tc-${key}`;
   try {
-    const r = await fetch(`/workout/estrutura/${tipo}?duracao_min=${Math.round(duracaoMin)}&indoor=${indoor}`);
+    // A descrição vai junto: o desenho é montado em cima da prescrição que está
+    // logo abaixo dele ("3×15 min" desenha 3 blocos, não os 5 do molde do tipo).
+    const desc = (descricao || '').slice(0, 1200);
+    const r = await fetch(`/workout/estrutura/${tipo}?duracao_min=${Math.round(duracaoMin)}&indoor=${indoor}`
+                          + (desc ? `&descricao=${encodeURIComponent(desc)}` : ''));
     if (!r.ok) throw new Error('falhou');
     const dados = await r.json();
     renderGraficoTreino(containerId, dados);
@@ -1482,7 +1486,7 @@ function abrirTreinoInfo(key) {
   document.getElementById('treinoModal').classList.add('show');
 
   if (tipo !== 'ACADEMIA') {
-    carregarGraficoTreino(key, tipo, p.duracao_min || 60, isIndoor);
+    carregarGraficoTreino(key, tipo, p.duracao_min || 60, isIndoor, notas);
   }
 }
 

@@ -705,17 +705,21 @@ async def ler_zonas_potencia(request: Request):
 
 
 @router.get("/estrutura/{tipo}")
-async def estrutura_treino(request: Request, tipo: str, duracao_min: int = 60, indoor: bool = False):
+async def estrutura_treino(request: Request, tipo: str, duracao_min: int = 60,
+                           indoor: bool = False, descricao: str | None = None):
     """Segmentos (aquecimento/intervalo/recuperação/volta à calma) do treino, para
     desenhar o gráfico de estrutura no portal — mesma fonte usada para montar o
-    workout enviado ao Garmin. `indoor=true` traz a faixa em watts, senão em bpm."""
+    workout enviado ao Garmin. `indoor=true` traz a faixa em watts, senão em bpm.
+
+    `descricao` é a prescrição que o atleta está lendo no card: com ela o desenho
+    sai da série descrita ("3×15 min") em vez do molde do tipo."""
     from app.services.garmin_workout_service import preview_estrutura
     from app.services.config_service import zonas_bpm_map, zonas_watts_map
 
     user_id = request.state.user_id
     zonas_bpm = await zonas_bpm_map(user_id)
     zonas_watts = await zonas_watts_map(user_id) if indoor else None
-    dados = preview_estrutura(tipo, duracao_min, zonas_bpm, zonas_watts)
+    dados = preview_estrutura(tipo, duracao_min, zonas_bpm, zonas_watts, descricao=descricao)
     if dados is None:
         raise HTTPException(status_code=404, detail=f"Tipo de treino sem estrutura: {tipo}")
     return dados
