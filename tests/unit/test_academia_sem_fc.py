@@ -191,3 +191,52 @@ OBSERVAÇÕES:
             "resultado": {"duracao_min": 62, "fc_invalida": True},
         })
         assert "sem dado confiável nesta sessão" in txt
+
+
+class TestExerciciosEmProsa:
+    """A IA nem sempre escreve a seção "EXERCÍCIOS:".
+
+    Quando ela manda tudo num parágrafo só, o checklist sumia e o atleta ficava
+    com um bloco de texto para ler no meio da série — que é justamente quando
+    ele mais precisa marcar o que já fez.
+    """
+
+    PROSA = ("ACADEMIA — Força MTB (foco: pernas+core). Agachamento 4×8, "
+             "leg press 3×10, cadeira extensora 3×12, stiff 3×10, "
+             "prancha 3×60s, abdominal 3×15. Cargas moderadas, foco em execução.")
+
+    def test_le_a_lista_separada_por_virgula(self):
+        from app.services.plano_semana_service import extrair_exercicios_academia
+        assert extrair_exercicios_academia(self.PROSA) == [
+            "Agachamento 4×8", "leg press 3×10", "cadeira extensora 3×12",
+            "stiff 3×10", "prancha 3×60s", "abdominal 3×15",
+        ]
+
+    def test_cabecalho_e_observacao_ficam_de_fora(self):
+        """Séries×repetições é o que separa exercício de recado."""
+        from app.services.plano_semana_service import extrair_exercicios_academia
+        itens = extrair_exercicios_academia(self.PROSA)
+        assert not any("Cargas moderadas" in i for i in itens)
+        assert not any("foco em execução" in i for i in itens)
+        assert not any("ACADEMIA" in i for i in itens)
+
+    def test_formato_numerado_continua_mandando(self):
+        """Quem já vem no formato estruturado não passa pela leitura em prosa."""
+        from app.services.plano_semana_service import extrair_exercicios_academia
+        estruturado = ("ACADEMIA — Força MTB\n\nEXERCÍCIOS:\n"
+                       "1. Agachamento — 3x10\n2. Panturrilha — 4x15\n\n"
+                       "OBSERVAÇÕES:\n- Descanso 90s")
+        assert extrair_exercicios_academia(estruturado) == [
+            "1. Agachamento — 3x10", "2. Panturrilha — 4x15",
+        ]
+
+    def test_texto_sem_exercicio_nenhum_volta_vazio(self):
+        """Sem série×repetição não há o que marcar — o card cai no texto."""
+        from app.services.plano_semana_service import extrair_exercicios_academia
+        assert extrair_exercicios_academia("Treino livre, faça o que der.") == []
+
+    def test_series_com_x_minusculo_e_com_sinal_de_multiplicacao(self):
+        from app.services.plano_semana_service import extrair_exercicios_academia
+        assert extrair_exercicios_academia("Gym. Supino 3x12, remada 4×10.") == [
+            "Supino 3x12", "remada 4×10",
+        ]

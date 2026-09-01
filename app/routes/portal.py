@@ -760,6 +760,21 @@ function _parseAcademiaTexto(descricao) {
     else if (section === 'obs') obsText += (obsText ? ' · ' : '') + l.replace(/^-\\s*/, '');
   }
 
+  // Sem a seção "EXERCÍCIOS:", lê em prosa — a IA às vezes escreve tudo num
+  // parágrafo só ("Agachamento 4x8, leg press 3x10, ..."), e sem esta segunda
+  // passada o atleta fica sem checklist justamente no treino que vai fazer.
+  // Só entra trecho com séries x repetições: assim o cabeçalho e o "foco em
+  // execução" do fim ficam de fora sem lista de exceções. Espelha
+  // _exercicios_em_prosa() do plano_semana_service.
+  if (exItens.length === 0) {
+    raw.split(/[.,;\\n]/).forEach(function(tr) {
+      let t = tr.replace(/^[\s\-\u2013\u2014]+|[\s\-\u2013\u2014]+$/g, '');
+      if (!t || !/\d+\s*[x\u00d7]\s*\d+/i.test(t)) return;
+      if (t.indexOf('\u2014') >= 0) t = t.split('\u2014').pop().trim();
+      if (t) exItens.push(t);
+    });
+  }
+
   return {raw, foco, porqueText: porqueText.trim(), obsText, exItens};
 }
 
@@ -1640,12 +1655,19 @@ function collect() {
   return treinos;
 }
 
+// Versão da semana que esta tela está lendo. Vai junto em todo salvamento: o
+// servidor recusa (409) se a semana tiver mudado desde então, em vez de deixar
+// uma aba velha desfazer em silêncio o que o chat, o sync ou a adaptação
+// fizeram no meio-tempo.
+let _versaoSemana = null;
+
 async function load() {
   updateLabel();
   carregarAdaptacaoPendente();
   try {
     const r = await fetch(`/workout/semana/${iso(monday)}`);
     const d = await r.json();
+    _versaoSemana = d.versao || '';
     document.getElementById('objetivo').value = d.objetivo || '';
     buildCards(d.treinos || []);
     _atualizarBotaoProximaSemana(d.treinos || [], d.proxima_semana_gerada);
@@ -1866,24 +1888,48 @@ function _atualizarBotaoProximaSemana(treinos, proximaGerada) {
   btn.style.cursor = 'pointer';
 }
 
+// Salva a semana carregando a versão lida na abertura. Devolve a resposta para
+// quem chamou decidir o que fazer; lança em erro, com o texto do servidor.
+async function _postSemana() {
+  const r = await fetch('/workout/semana', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      semana_inicio: iso(monday),
+      objetivo: document.getElementById('objetivo').value.trim(),
+      treinos: collect(),
+      base_versao: _versaoSemana,
+    }),
+  });
+  if (r.status === 409) {
+    const d = await r.json().catch(() => ({}));
+    const err = new Error(d.detail || 'Esta semana mudou depois que a página abriu.');
+    err.desatualizada = true;
+    throw err;
+  }
+  if (!r.ok) throw new Error(await r.text());
+  const d = await r.json().catch(() => ({}));
+  if (d.versao) _versaoSemana = d.versao;
+  return d;
+}
+
+// Semana mudou por fora: recarrega para a tela mostrar o que está valendo, em
+// vez de deixar o atleta olhando dados velhos sem saber.
+function _avisarDesatualizada(e) {
+  toast('🔄 ' + e.message, 'err');
+  setTimeout(load, 2500);
+}
+
 async function salvar() {
   const btn = document.getElementById('btnSave');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Salvando...';
   try {
-    const r = await fetch('/workout/semana', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({
-        semana_inicio: iso(monday),
-        objetivo: document.getElementById('objetivo').value.trim(),
-        treinos: collect(),
-      }),
-    });
-    if (!r.ok) throw new Error(await r.text());
+    await _postSemana();
     toast('✅ Semana salva!', 'ok');
   } catch(e) {
-    toast('❌ Erro: ' + e.message, 'err');
+    if (e.desatualizada) _avisarDesatualizada(e);
+    else toast('❌ Erro: ' + e.message, 'err');
   } finally {
     btn.disabled = false;
     btn.innerHTML = '💾 Salvar Semana';
@@ -1915,16 +1961,9 @@ async function sincronizarGarmin() {
     // 0. Salva o estado atual da semana ANTES de mexer no Garmin. Sem isto, o
     //    envio lê o estado antigo do banco e re-cria no Garmin o treino que você
     //    acabou de excluir/mover — e o pull seguinte o traz "de volta".
-    const rSave = await fetch('/workout/semana', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({
-        semana_inicio: iso(monday),
-        objetivo: document.getElementById('objetivo').value.trim(),
-        treinos: collect(),
-      }),
-    });
-    if (!rSave.ok) throw new Error(await rSave.text());
+    //    Se a semana mudou desde que a página abriu, isto para aqui: mandar o
+    //    plano velho para o Garmin é pior que não mandar nada.
+    await _postSemana();
 
     // 1. Envia treinos da semana pro Garmin (push).
     //    O push NÃO pode abortar o pull: se o envio falha (treino já existe lá,
@@ -1952,7 +1991,8 @@ async function sincronizarGarmin() {
     if (erroEnvio) console.warn('Garmin push falhou:', erroEnvio);
     await load();
   } catch(e) {
-    toast('❌ Garmin: ' + e.message, 'err');
+    if (e.desatualizada) _avisarDesatualizada(e);
+    else toast('❌ Garmin: ' + e.message, 'err');
   } finally {
     btn.disabled = false;
     btn.innerHTML = '📡 Enviar + Sincronizar Garmin';

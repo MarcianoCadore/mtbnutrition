@@ -46,6 +46,10 @@ class PlanoSemanal(BaseModel):
     semana_inicio: str
     objetivo: str = ""
     treinos: list[TreinoSemana]
+    # Versão da semana que a tela leu quando abriu. O servidor recusa o salvamento
+    # se a semana tiver mudado desde então. Opcional: chamadas antigas (e o
+    # WhatsApp, que não tem tela) continuam salvando sem checagem.
+    base_versao: Optional[str] = None
 
 
 @router.post("/", response_model=dict)
@@ -98,6 +102,9 @@ async def get_semana(request: Request, semana_inicio: str):
         {"semana_inicio": {"$lt": semana_inicio}, "user_id": user_id}, limit=1)
 
     base = dict(doc) if doc else {"semana_inicio": semana_inicio, "objetivo": "", "treinos": []}
+    # Carimbo da versão que esta tela está lendo. Volta no POST para o servidor
+    # saber se a semana mudou desde então — ver `salvar_semana`.
+    base["versao"] = str(base.get("atualizado_em") or "")
     # Garantia de display: título (tipo) e descrição coerentes. Limpa a descrição
     # (bpm — a FC real vem do modal/legenda — e os cabeçalhos "TIPO — DATA" que o
     # round-trip de sync acumula) e, quando a série principal da descrição é
@@ -130,7 +137,24 @@ async def salvar_semana(request: Request, plano: PlanoSemanal):
     # e bloqueia edição manual de treinos presentes/futuros sem resultado (apenas IA pode sobrescrever)
     existing = await db.semanas.find_one(
         {"semana_inicio": plano.semana_inicio, "user_id": user_id})
+
+    # Aba velha não pode desfazer o que aconteceu enquanto ela estava aberta.
+    # Esta tela monta o payload com o que tem em memória; se a semana mudou no
+    # servidor desde que a página carregou (o chat ajustou um treino, o sync do
+    # Garmin trouxe um resultado, a adaptação reorganizou os dias), salvar
+    # jogaria tudo isso fora em silêncio — foi o que aconteceu em 31/08/2026.
+    if plano.base_versao is not None and existing:
+        atual = str(existing.get("atualizado_em") or "")
+        if plano.base_versao != atual:
+            raise HTTPException(
+                status_code=409,
+                detail=("Esta semana mudou depois que a página abriu. Recarregue "
+                        "(F5) para ver o que está valendo agora — salvar assim "
+                        "desfaria a alteração mais recente."),
+            )
+
     data = plano.model_dump()
+    data.pop("base_versao", None)
     data["user_id"] = user_id
     if existing:
         # preserva objetivo do banco quando o request traz string vazia
@@ -167,17 +191,23 @@ async def salvar_semana(request: Request, plano: PlanoSemanal):
             # salvar a semana apagaria os checks que o atleta acabou de dar.
             if saved.get("execucao") and not t.get("execucao"):
                 t["execucao"] = saved["execucao"]
-            # bloqueia alteração se data >= hoje E treino ainda não foi realizado
-            if t["data"] >= today_iso and not saved.get("resultado") and saved:
+            # Dia planejado do presente/futuro só a IA reescreve. E dia que JÁ
+            # ACONTECEU é ainda mais intocável: o plano dele virou histórico, e
+            # é contra ele que a avaliação do treino foi feita. Antes, ter
+            # resultado ABRIA a porta em vez de fechá-la — e uma aba velha
+            # rebaixou um VO2máx avaliado para "recuperação".
+            if saved and (saved.get("resultado") or t["data"] >= today_iso):
                 data["treinos"][i] = saved
         data["treinos"].extend(extras_existentes)
 
+    data["atualizado_em"] = _dt.now(timezone.utc).isoformat()
     await db.semanas.replace_one(
         {"semana_inicio": plano.semana_inicio, "user_id": user_id},
         data,
         upsert=True,
     )
-    return {"status": "salvo", "semana": plano.semana_inicio}
+    return {"status": "salvo", "semana": plano.semana_inicio,
+            "versao": data["atualizado_em"]}
 
 
 @router.post("/garmin/sync/{semana_inicio}")

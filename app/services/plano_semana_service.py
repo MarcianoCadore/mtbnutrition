@@ -251,8 +251,13 @@ def extrair_exercicios_academia(descricao: str | None) -> list[str]:
     item do checklist — o atleta marca a posição N, e o servidor precisa saber
     que exercício é esse para montar o relato da sessão.
 
-    Devolve [] quando a descrição não segue o formato (ex.: texto livre antigo),
-    e nesse caso o card cai no textarea de sempre.
+    Quando não há a seção "EXERCÍCIOS:", cai na leitura em prosa: a IA às vezes
+    escreve tudo num parágrafo só ("Agachamento 4×8, leg press 3×10, ..."), e
+    sem esta segunda passada o atleta ficava sem checklist justamente no treino
+    que estava prestes a fazer.
+
+    Devolve [] quando não dá para reconhecer exercício nenhum, e nesse caso o
+    card cai no texto de sempre.
     """
     if not descricao:
         return []
@@ -273,6 +278,31 @@ def extrair_exercicios_academia(descricao: str | None) -> list[str]:
             continue
         if secao == "ex":
             itens.append(l)
+    return itens or _exercicios_em_prosa(descricao)
+
+
+# "4x8", "3×10", "3x60s", "4 x 12" — a marca de que o trecho é um exercício, e
+# não uma observação. É ela que separa "prancha 3×60s" de "cargas moderadas".
+_RE_SERIE = re.compile(r"\d+\s*[x×]\s*\d+", re.IGNORECASE)
+
+
+def _exercicios_em_prosa(descricao: str) -> list[str]:
+    """Exercícios de uma descrição escrita em parágrafo, separados por vírgula.
+
+    Só entra o trecho que traz séries×repetições: assim o cabeçalho do treino e
+    o "foco em execução" do fim ficam de fora sem precisar de lista de exceções.
+    """
+    itens: list[str] = []
+    for trecho in re.split(r"[.,;\n]", descricao):
+        t = trecho.strip(" -–—\t")
+        if not t or not _RE_SERIE.search(t):
+            continue
+        # O cabeçalho pode grudar no primeiro exercício ("ACADEMIA — Força MTB
+        # 4x8"); fica com o que vem depois do travessão.
+        if "—" in t:
+            t = t.split("—")[-1].strip()
+        if t:
+            itens.append(t)
     return itens
 
 
