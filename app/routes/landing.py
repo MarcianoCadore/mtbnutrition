@@ -394,8 +394,8 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
       </div>
       <div class="feature reveal">
         <div class="f-icon">🚴</div>
-        <h3>Do rolo à trilha, você escolhe</h3>
-        <p>MTB, speed ou gravel; na rua ou no rolo interativo. Cada dia, você decide onde pedalar — e a IA molda a sessão para a modalidade e o ambiente. A mesma cabeça, seja no asfalto ou na sala de casa.</p>
+        <h3>Watts só onde você tem medidor</h3>
+        <p>MTB, speed ou gravel; na rua ou no rolo. Você diz em quantos treinos por semana usa a bike com potenciômetro e a IA marca esses dias em watts — o resto vai em frequência cardíaca. Sem alvo de potência num pedal que não mede potência, e sem você marcar nada dia a dia.</p>
       </div>
       <div class="feature reveal">
         <div class="f-icon">🏋️</div>
@@ -405,7 +405,7 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
       <div class="feature reveal">
         <div class="f-icon">🏠</div>
         <h3>Seu rolo, sem depender do relógio</h3>
-        <p>Um clique baixa o treino do dia em .zwo e ele abre no MyWhoosh, Zwift, TrainerRoad ou Rouvy — com os blocos e a potência calculados a partir do <em>seu</em> FTP. Rolo ligado, treino na tela, zero configuração manual.</p>
+        <p>Um clique baixa o treino do dia em .zwo e ele abre no MyWhoosh, Zwift, TrainerRoad ou Rouvy — com os blocos e a potência calculados a partir do <em>seu</em> FTP. E a volta é automática: conectando o MyWhoosh, o pedal salvo lá sobe sozinho para o Garmin Connect e já vem analisado, sem o computador precisar ficar ligado.</p>
       </div>
       <div class="feature reveal">
         <div class="f-icon">⌚</div>
@@ -521,7 +521,7 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
           <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Envio automático dos treinos para o Garmin</li>
           <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Análise pós-treino com IA ilimitada</li>
           <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Nutrição periodizada + guia de prova</li>
-          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Treinos para MTB, estrada, gravel e rolo — indoor ou outdoor</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Treinos para MTB, estrada, gravel e rolo — com ou sem potenciômetro</li>
           <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Academia planejada pela IA, com checklist e progressão de carga</li>
           <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Download em .zwo para MyWhoosh, Zwift e TrainerRoad</li>
           <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="rgba(45,212,168,.15)"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#2dd4a8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Importação dos seus últimos 90 dias do Garmin</li>
@@ -543,11 +543,11 @@ footer{border-top:1px solid var(--border);padding:34px 0;margin-top:40px}
     <div class="faq">
       <details class="reveal">
         <summary>Preciso ter um Garmin para usar?</summary>
-        <div class="faq-body">Para treinar, não. Todo treino tem um botão que baixa o arquivo .zwo — o formato que os apps de rolo entendem. Você importa no MyWhoosh (que é gratuito), Zwift, TrainerRoad ou Rouvy e pedala com os blocos e a potência já calculados a partir do seu FTP.<br><br>Para a análise pós-treino, o sistema precisa receber a atividade de volta. O caminho mais simples é ligar o app do rolo ao Garmin Connect — a conta é gratuita e não exige nenhum aparelho: a pedalada cai lá e o nosso sync analisa igual, sem você mexer em nada. E se você treinou sem nada registrando, é só contar ao assistente que ele anota a sessão no seu histórico.</div>
+        <div class="faq-body">Para treinar, não. Todo treino tem um botão que baixa o arquivo .zwo — o formato que os apps de rolo entendem. Você importa no MyWhoosh (que é gratuito), Zwift, TrainerRoad ou Rouvy e pedala com os blocos e a potência já calculados a partir do seu FTP.<br><br>Para a análise pós-treino, o sistema precisa receber a atividade de volta. Se você usa o <b>MyWhoosh</b>, basta conectar a conta uma vez: ao salvar o treino, ele sobe sozinho para o Garmin Connect (que é gratuito e não exige aparelho nenhum) e a análise sai em minutos — sem deixar o computador ligado e sem você mexer em nada. Nos outros apps de rolo, é só ligá-los ao Garmin Connect uma vez e o efeito é o mesmo. E se você treinou sem nada registrando, conte ao assistente que ele anota a sessão no seu histórico.</div>
       </details>
       <details class="reveal">
         <summary>Posso treinar indoor e outdoor?</summary>
-        <div class="faq-body">Sim. Os treinos funcionam para MTB, estrada e gravel, e você escolhe onde pedalar em cada dia: na rua (outdoor) ou no rolo (indoor). No indoor a prescrição vira watts, e o download em .zwo abre direto no MyWhoosh, Zwift ou TrainerRoad — o rolo controla a carga para você.</div>
+        <div class="faq-body">Sim, e o que muda a prescrição não é o lugar — é o equipamento. Um rolo de equilíbrio fica dentro de casa e não mede watts; uma bike de rua com potenciômetro mede na trilha. Por isso você diz onde tem medidor, não onde pedala: esses treinos saem em watts, os outros em frequência cardíaca. Se um dia fugir do combinado, um toque no treino corrige. E para o rolo, o download em .zwo abre direto no MyWhoosh, Zwift ou TrainerRoad, com a carga calculada a partir do seu FTP.</div>
       </details>
       <details class="reveal">
         <summary>Como recebo os treinos?</summary>
