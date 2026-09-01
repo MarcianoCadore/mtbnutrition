@@ -23,7 +23,7 @@ import logging
 import os
 import tempfile
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -46,6 +46,11 @@ _JANELA_PADRAO = 5
 # curta demais derrubava justamente as sessões maiores.
 _TIMEOUT = httpx.Timeout(30.0, read=120.0)
 _TENTATIVAS_DOWNLOAD = 3
+
+# Duas gravações do mesmo pedal (MyWhoosh e relógio) não começam no mesmo
+# segundo: o atleta aperta "start" em cada aparelho com alguns minutos de
+# diferença. 15 min separa "o mesmo treino" de "dois treinos no mesmo dia".
+_TOLERANCIA_DUPLICATA_S = 15 * 60
 
 
 class MyWhooshErro(Exception):
@@ -195,6 +200,63 @@ def _id_da_atividade(atividade: dict) -> str | None:
     return None
 
 
+def _inicio_da_atividade(atividade: dict) -> datetime | None:
+    """Início da sessão em UTC. A API manda `date` como epoch em segundos."""
+    for chave in ("date", "startDatetime", "createdAt"):
+        valor = atividade.get(chave)
+        if isinstance(valor, (int, float)) and valor > 0:
+            try:
+                return datetime.fromtimestamp(float(valor), timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                continue
+    return None
+
+
+async def _ja_esta_no_garmin(user_id: str, inicio: datetime) -> bool:
+    """O Garmin já tem um pedal começando junto deste?
+
+    O atleta grava o rolo no MyWhoosh E no relógio/Edge ao mesmo tempo. São dois
+    arquivos diferentes do MESMO pedal, então o 409 do Garmin não reconhece e a
+    sessão entra duas vezes — foi o que aconteceu em 03/08 e 21/08, com 10
+    segundos de diferença entre uma e outra. O que identifica o mesmo evento é a
+    hora de início, não o arquivo.
+    """
+    import asyncio
+
+    from app.services.garmin_service import get_garmin_client
+
+    dia = inicio.date().isoformat()
+    try:
+        api = await get_garmin_client(user_id)
+        # Janela de um dia para cada lado: o pedal pode virar a meia-noite UTC.
+        anterior = (inicio - timedelta(days=1)).date().isoformat()
+        seguinte = (inicio + timedelta(days=1)).date().isoformat()
+        ats = await asyncio.to_thread(
+            api.get_activities_by_date, anterior, seguinte, "cycling")
+    except Exception as exc:
+        # Na dúvida, não bloqueia o envio: um 409 do Garmin é problema menor que
+        # o treino nunca chegar.
+        logger.warning("mywhoosh: não deu para checar duplicata em %s — %s", dia, _detalhe(exc))
+        return False
+
+    for a in ats or []:
+        gmt = a.get("startTimeGMT")
+        if not gmt:
+            continue
+        try:
+            outro = datetime.strptime(str(gmt)[:19], "%Y-%m-%d %H:%M:%S").replace(
+                tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        if abs((outro - inicio).total_seconds()) <= _TOLERANCIA_DUPLICATA_S:
+            logger.info(
+                "mywhoosh: %s já está no Garmin como %s (início %s vs %s) — não sobe",
+                dia, a.get("activityId"), gmt, inicio.strftime("%Y-%m-%d %H:%M:%S"),
+            )
+            return True
+    return False
+
+
 async def _baixar_fit(sessao: dict, atividade: dict) -> bytes:
     """Baixa o .fit: a API devolve uma URL S3 assinada, o arquivo vem de lá.
 
@@ -321,14 +383,24 @@ async def sync_para_garmin(user_id: str, limite: int = _JANELA_PADRAO) -> int:
             continue
         if not await _reservar(user_id, activity_id):
             continue                                   # já subiu antes
+
         try:
+            # O mesmo pedal gravado no relógio já chegou ao Garmin por conta
+            # própria: subir a versão do MyWhoosh criaria uma segunda cópia. A
+            # reserva fica de pé — não é para reavaliar isto a cada 10 min.
+            inicio = _inicio_da_atividade(atividade)
+            if inicio and await _ja_esta_no_garmin(user_id, inicio):
+                continue
+
             conteudo = await _baixar_fit(sessao, atividade)
             await _subir_no_garmin(user_id, conteudo, activity_id)
             enviadas += 1
             logger.info("mywhoosh: atividade %s enviada ao Garmin (user=%s)",
                         activity_id, user_id)
         except Exception as exc:
+            # Devolve a reserva e segue: uma sessão que falhou não pode levar
+            # junto as outras da janela nem sumir para sempre.
             await _liberar(user_id, activity_id)
             logger.error("mywhoosh: falha ao enviar %s (user=%s) — %s",
-                         activity_id, user_id, exc)
+                         activity_id, user_id, _detalhe(exc))
     return enviadas

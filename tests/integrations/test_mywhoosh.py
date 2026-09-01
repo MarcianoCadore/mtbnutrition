@@ -19,7 +19,10 @@ SENHA = "senha-mywhoosh"
 # .fit mínimo: o serviço só confere a assinatura ".FIT" nos bytes 8-11.
 FIT = b"\x0e\x10\x00\x00\x00\x00\x00\x00.FIT\x00\x00rest-do-arquivo"
 
-ATIVIDADE = {"id": "act-1", "activityFileId": "file-1", "name": "Ride"}
+# 2026-08-21 21:35:42 UTC — o mesmo pedal que o relógio dele gravou.
+INICIO_TS = 1787348142
+ATIVIDADE = {"id": "act-1", "activityFileId": "file-1", "name": "Ride",
+             "date": INICIO_TS}
 
 
 def _resposta(url, payload, status=200):
@@ -57,7 +60,7 @@ def api(monkeypatch):
 @pytest.fixture
 def garmin(monkeypatch):
     """Dublê do upload no Garmin. `garmin["subidas"]` guarda os arquivos."""
-    estado = {"subidas": [], "erro": None}
+    estado = {"subidas": [], "erro": None, "ja_no_garmin": []}
 
     class _Api:
         def upload_activity(self, caminho):
@@ -66,6 +69,9 @@ def garmin(monkeypatch):
             with open(caminho, "rb") as f:
                 estado["subidas"].append(f.read())
             return {"ok": True}
+
+        def get_activities_by_date(self, inicio, fim, tipo):
+            return estado["ja_no_garmin"]
 
     async def _cliente(_user_id):
         return _Api()
@@ -200,6 +206,98 @@ class TestSync:
 
         assert await mw.sync_para_garmin(UID) == 0
         assert garmin["subidas"] == []
+
+
+class TestPedalGravadoNosDoisAparelhos:
+    """O rolo é gravado no MyWhoosh E no relógio ao mesmo tempo.
+
+    São dois arquivos diferentes do MESMO pedal, então o 409 do Garmin não
+    reconhece: em 03/08 e 21/08 a sessão entrou duas vezes, com 10 segundos
+    entre uma e outra. Quem identifica o mesmo evento é a hora de início.
+    """
+
+    def _no_garmin(self, ts_desvio_s):
+        from datetime import datetime, timedelta, timezone
+        inicio = datetime.fromtimestamp(INICIO_TS, timezone.utc) + timedelta(seconds=ts_desvio_s)
+        return [{"activityId": 999, "startTimeGMT": inicio.strftime("%Y-%m-%d %H:%M:%S")}]
+
+    async def test_nao_sobe_o_que_o_relogio_ja_mandou(self, fake_db, api, garmin):
+        await _conectado(fake_db)
+        garmin["ja_no_garmin"] = self._no_garmin(10)      # 10 s de diferença
+
+        assert await mw.sync_para_garmin(UID) == 0
+        assert garmin["subidas"] == []
+
+    async def test_reserva_fica_de_pe_para_nao_rechecar(self, fake_db, api, garmin):
+        """Sem isto, o job repetiria a consulta ao Garmin de 10 em 10 min."""
+        await _conectado(fake_db)
+        garmin["ja_no_garmin"] = self._no_garmin(10)
+        await mw.sync_para_garmin(UID)
+
+        garmin["ja_no_garmin"] = []
+        assert await mw.sync_para_garmin(UID) == 0
+        assert garmin["subidas"] == []
+
+    async def test_pedal_de_outro_horario_no_mesmo_dia_sobe(self, fake_db, api, garmin):
+        """Dois treinos no mesmo dia são dois treinos, não uma duplicata."""
+        await _conectado(fake_db)
+        garmin["ja_no_garmin"] = self._no_garmin(4 * 3600)   # 4 h depois
+
+        assert await mw.sync_para_garmin(UID) == 1
+        assert garmin["subidas"] == [FIT]
+
+    async def test_falha_na_checagem_nao_perde_o_treino(self, fake_db, api, garmin,
+                                                       monkeypatch):
+        """Se a checagem quebrar, a reserva volta e a próxima rodada tenta de novo —
+        senão o treino ficaria marcado como enviado sem nunca ter subido."""
+        await _conectado(fake_db)
+
+        quebrado = {"sim": True}
+
+        async def _talvez_explode(_user_id, _inicio):
+            if quebrado["sim"]:
+                raise RuntimeError("Garmin fora do ar")
+            return False
+
+        # monkeypatch.undo() aqui desfaria também os dublês das fixtures (a
+        # instância é compartilhada no escopo do teste) — daí o interruptor.
+        monkeypatch.setattr(mw, "_ja_esta_no_garmin", _talvez_explode)
+        assert await mw.sync_para_garmin(UID) == 0
+
+        quebrado["sim"] = False
+        assert await mw.sync_para_garmin(UID) == 1, "a rodada seguinte tem de recuperar"
+
+    async def test_garmin_fora_do_ar_deixa_subir(self, fake_db, api, garmin, monkeypatch):
+        """Dentro da checagem, erro do Garmin não bloqueia: um 409 é problema
+        menor que o treino nunca chegar."""
+        await _conectado(fake_db)
+
+        class _ApiQuebrada:
+            def get_activities_by_date(self, *_a):
+                raise RuntimeError("Garmin fora do ar")
+
+            def upload_activity(self, caminho):
+                with open(caminho, "rb") as f:
+                    garmin["subidas"].append(f.read())
+
+        import app.services.garmin_service as gs
+
+        async def _cliente(_user_id):
+            return _ApiQuebrada()
+
+        monkeypatch.setattr(gs, "get_garmin_client", _cliente)
+        assert await mw.sync_para_garmin(UID) == 1
+
+    @pytest.mark.parametrize("atividade,tem_inicio", [
+        ({"date": INICIO_TS}, True),
+        ({"startDatetime": INICIO_TS}, True),
+        ({"createdAt": INICIO_TS}, True),
+        ({}, False),
+        ({"date": 0}, False),
+        ({"date": "ontem"}, False),
+    ])
+    def test_le_o_inicio_da_sessao(self, atividade, tem_inicio):
+        assert (mw._inicio_da_atividade(atividade) is not None) is tem_inicio
 
 
 class TestFormatoDaResposta:
