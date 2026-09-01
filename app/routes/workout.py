@@ -1345,6 +1345,7 @@ async def garmin_conectar(
     e salva no documento do usuário. Retorna {"status": "conectado"}."""
     import asyncio as _asyncio
     from garminconnect import Garmin as _Garmin
+    from garminconnect.exceptions import GarminConnectAuthenticationError
     from app.services.crypto_service import cifrar
     from app.services.user_service import atualizar_usuario
     from app.services.garmin_service import _clients
@@ -1356,11 +1357,33 @@ async def garmin_conectar(
         api.login()
         return api
 
+    # O Garmin protege o login com Cloudflare e limita por IP: um servidor leva
+    # 429/403 nas cinco estratégias da biblioteca ANTES de a senha ser conferida.
+    # Chamar isso de "credenciais inválidas" manda o atleta caçar um problema que
+    # não existe — e cada nova tentativa aperta mais o bloqueio.
     try:
         await _asyncio.to_thread(_testar_login)
+    except GarminConnectAuthenticationError as e:
+        logger.error("garmin_conectar: credenciais recusadas para user_id=%s — %s", user_id, e)
+        raise HTTPException(
+            status_code=400,
+            detail="O Garmin recusou esse e-mail e senha. Confira os dados e tente de novo.",
+        )
     except Exception as e:
-        logger.error("garmin_conectar: credenciais inválidas para user_id=%s — %s", user_id, e)
-        raise HTTPException(status_code=400, detail="Credenciais Garmin inválidas. Verifique e-mail e senha.")
+        bloqueio = any(t in str(e) for t in ("429", "403", "Cloudflare", "rate limit"))
+        logger.error("garmin_conectar: login não concluído para user_id=%s (bloqueio=%s) — %s",
+                     user_id, bloqueio, e)
+        if bloqueio:
+            raise HTTPException(
+                status_code=503,
+                detail=("O Garmin está bloqueando o login a partir do nosso servidor agora "
+                        "(proteção antirrobô). Isso não é problema da sua senha — espere uns "
+                        "10 minutos e tente de novo. Tentar seguido só aumenta o bloqueio."),
+            )
+        raise HTTPException(
+            status_code=400,
+            detail="Não consegui falar com o Garmin agora. Tente de novo em alguns minutos.",
+        )
 
     # Persiste credenciais cifradas no documento do usuário
     await atualizar_usuario(user_id, {
@@ -2447,9 +2470,6 @@ _PAGINA_INTEGRACAO = """<!DOCTYPE html>
   function iso(d) { return d.toISOString().split('T')[0]; }
   function segundaAtualISO() { return iso(getMonday(new Date())); }
 
-  // Importa 90 dias de histórico. Demora (baixa e analisa um .fit por sessão),
-  // então a mensagem explica o que está acontecendo em vez de deixar a tela
-  // parada — e uma falha aqui nunca desfaz a conexão que acabou de dar certo.
   async function conectarMyWhoosh(ev) {
     ev.preventDefault();
     const btn = document.getElementById('btnMwConn');
@@ -2510,6 +2530,9 @@ _PAGINA_INTEGRACAO = """<!DOCTYPE html>
     }
   }
 
+  // Importa 90 dias de histórico. Demora (baixa e analisa um .fit por sessão),
+  // então a mensagem explica o que está acontecendo em vez de deixar a tela
+  // parada — e uma falha aqui nunca desfaz a conexão que acabou de dar certo.
   async function importarHistorico(st) {
     st.className = 'status info';
     st.textContent = '📥 Importando seus últimos 90 dias… isso pode levar um minuto.';
@@ -2542,8 +2565,12 @@ _PAGINA_INTEGRACAO = """<!DOCTYPE html>
       fd.append('email', document.getElementById('g_email').value);
       fd.append('senha', document.getElementById('g_senha').value);
       const r = await fetch('/workout/garmin/conectar', { method:'POST', body: fd });
-      if (r.status === 400) { st.className='status err'; st.textContent='❌ Credenciais inválidas. Verifique e-mail e senha.'; return; }
-      if (!r.ok) throw new Error('Erro ao conectar');
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        st.className='status err';
+        st.textContent = '❌ ' + (d.detail || 'Erro ao conectar.');
+        return;
+      }
       st.className='status ok'; st.textContent='✅ Conectado! Sincronizando seus treinos…';
       // Sync inicial best-effort
       try { await fetch('/workout/garmin/sync/' + segundaAtualISO(), { method:'POST' }); } catch(e) {}
