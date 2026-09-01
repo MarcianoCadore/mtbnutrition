@@ -310,6 +310,15 @@ HTML = """<!DOCTYPE html>
 
     /* Resumo no CARD: só o placar e o botão que abre o modal. A lista inteira
        aqui deixava a coluna do dia três vezes mais alta que as vizinhas. */
+    /* Item travado tem de PARECER travado: sem isto ele fica idêntico ao
+       clicável e o atleta acha que o clique falhou. */
+    .ex-check-item:has(input:disabled) { opacity: .55; }
+    .ex-check-item:has(input:disabled):hover { border-color: var(--border); }
+    .esp-checklist .sensacao-btns button:disabled { opacity: .45; cursor: not-allowed; }
+
+    .ex-travado { font-size: .8rem; line-height: 1.4; color: var(--muted); background: var(--bg);
+      border: 1px dashed var(--border); border-radius: 7px; padding: 9px 11px; margin-bottom: 10px; }
+
     .ex-resumo { display: flex; flex-direction: column; gap: 6px; margin-bottom: 6px; }
     .ex-resumo .ex-progresso { margin: 0; }
     .day-body button.ex-abrir { width: 100%; padding: 8px; border: 1.5px solid var(--green);
@@ -880,7 +889,16 @@ function renderChecklistAcademia(sk, itens, locked) {
   const dis = locked ? 'disabled' : '';
   const key = sk;
 
-  let html = `<div class="ex-progresso" data-prog="${key}">${feitos.size}/${itens.length} concluídos</div>`;
+  // Travado = dia que ainda não chegou. O checklist é o REGISTRO da sessão (é
+  // ele que diz que o treino aconteceu), então não dá para marcar antes. Mas
+  // campo `disabled` sem explicação vira "cliquei e não acontece nada" — e foi
+  // exatamente essa a queixa. Diz o motivo antes de o atleta tentar.
+  let html = '';
+  if (locked) {
+    html += `<div class="ex-travado">🔒 Este treino é de outro dia. No dia, os
+      exercícios liberam para você ir marcando conforme faz.</div>`;
+  }
+  html += `<div class="ex-progresso" data-prog="${key}">${feitos.size}/${itens.length} concluídos</div>`;
   html += `<div class="ex-check-list" id="ex-list-${key}">`;
   for (let i = 0; i < itens.length; i++) {
     const on = feitos.has(i);
