@@ -214,25 +214,105 @@ async def get_ftp(user_id: str) -> tuple[int | None, str]:
     return ftp, modo
 
 
+# ── onde o atleta tem POTENCIÔMETRO ──────────────────────────────────────────
+#
+# "Indoor" nunca foi a pergunta certa. O que decide se um treino pode levar alvo
+# em watts é existir MEDIDOR na bike daquele dia — não o treino ser dentro de
+# casa. Um rolo de equilíbrio é indoor e não mede nada; uma bike de rua com
+# medidor mede na trilha. O caso que motivou isto: medidor só no rolo
+# interativo, nenhum na MTB, e às vezes um treino indoor no rolo de equilíbrio.
+#
+# Os valores gravados em `potencia_modo` continuam os mesmos (nada de migração):
+# o que mudou foi o significado de "indoor", que hoje quer dizer "só na bike com
+# medidor", e não mais "nos treinos de qualidade".
 MODOS_ALVO = ("indoor", "sempre", "ambos", "nunca")
 MODO_ALVO_PADRAO = "indoor"
+
+# Ordem em que os treinos ganham a bike com medidor quando o atleta faz só
+# alguns na semana: o watt muda muito mais uma sessão de VO2máx que um Z2.
+PRIORIDADE_COM_POTENCIA = (
+    "TESTE_FTP", "VO2MAX", "TIROS", "TEMPO", "FORCA", "Z2_LONGO", "RECUPERACAO",
+)
+
+# Sessões que não são pedal não entram na conta.
+_SEM_BIKE = {"ACADEMIA", "DESCANSO"}
+
+
+def treinos_com_potenciometro(user: dict | None) -> int | None:
+    """Quantos treinos por semana o atleta faz na bike que TEM medidor.
+
+    None = nunca configurou. Nesse caso o app mantém o comportamento antigo
+    (alvo de watts pelo tipo do treino), para não mudar a semana de quem já
+    estava rodando feliz.
+    """
+    cfg = (user or {}).get("potenciometro") or {}
+    n = cfg.get("treinos_semana")
+    if isinstance(n, bool) or not isinstance(n, (int, float)):
+        return None
+    return max(0, min(int(n), 7))
+
+
+def tem_potenciometro(treino: dict | None) -> bool | None:
+    """O dia foi marcado como "com medidor"? None = não marcado.
+
+    Lê `com_potencia` e aceita o antigo `indoor` dos treinos gravados antes da
+    troca de eixo — os dois querem dizer "este dia leva alvo em watts".
+    """
+    t = treino or {}
+    for chave in ("com_potencia", "indoor"):
+        if t.get(chave) is not None:
+            return bool(t[chave])
+    return None
+
+
+def marcar_treinos_com_potencia(treinos: list[dict], quantos: int) -> list[dict]:
+    """Marca `com_potencia` nos `quantos` treinos que vão para a bike com medidor.
+
+    Os demais ficam explicitamente em False: sem isso o envio ao Garmin cairia
+    de volta na heurística por tipo e mandaria watts num dia de MTB.
+    """
+    candidatos = [
+        t for t in treinos
+        if (t.get("tipo") or "DESCANSO").upper() not in _SEM_BIKE
+        and t.get("origem") != "extra"
+    ]
+    ordem = {tipo: i for i, tipo in enumerate(PRIORIDADE_COM_POTENCIA)}
+    escolhidos = sorted(
+        candidatos,
+        key=lambda t: (ordem.get((t.get("tipo") or "").upper(), 99), t.get("data") or ""),
+    )[:max(0, quantos)]
+    ids = {id(t) for t in escolhidos}
+    for t in candidatos:
+        t["com_potencia"] = id(t) in ids
+    return treinos
 
 
 def _modo_valido(modo: str | None) -> str:
     return modo if modo in MODOS_ALVO else MODO_ALVO_PADRAO
 
 
-async def salvar_modo_potencia(user_id: str, modo: str) -> str:
-    """Salva só o alvo enviado ao Garmin (FC, watts ou os dois), sem tocar no FTP.
+async def salvar_modo_potencia(user_id: str, modo: str,
+                               treinos_semana: int | None = None) -> dict:
+    """Salva o alvo enviado ao Garmin e quantos treinos vão na bike com medidor.
 
-    Vive separado de `salvar_ftp` porque são duas decisões diferentes: o FTP é um
+    Vive separado de `salvar_ftp` porque são decisões diferentes: o FTP é um
     número medido, o alvo é uma preferência de como treinar. No portal cada um
-    tem seu card — salvar um não pode reescrever o outro.
+    tem seu card — salvar um não pode reescrever o outro, e nada aqui encosta no
+    valor do FTP.
+
+    `treinos_semana=None` apaga a configuração e devolve o app ao comportamento
+    antigo (alvo pelo tipo do treino).
     """
     from app.services.user_service import atualizar_usuario
     modo = _modo_valido(modo)
-    await atualizar_usuario(user_id, {"potencia_modo": modo})
-    return modo
+    campos: dict = {"potencia_modo": modo}
+    if treinos_semana is None:
+        campos["potenciometro"] = None
+    else:
+        campos["potenciometro"] = {"treinos_semana": max(0, min(int(treinos_semana), 7))}
+    await atualizar_usuario(user_id, campos)
+    return {"potencia_modo": modo,
+            "treinos_semana": (campos["potenciometro"] or {}).get("treinos_semana")}
 
 
 async def salvar_ftp(user_id: str, ftp: int, modo: str | None = None,

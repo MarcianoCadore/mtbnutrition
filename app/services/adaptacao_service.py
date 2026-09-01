@@ -516,6 +516,7 @@ async def aplicar_ajustes(user_id: str, semana_inicio: str, proposta: dict) -> d
     from app.services.plano_semana_service import _anexar_legenda_alvos
     from app.services.config_service import get_zonas, get_zonas_potencia
     from app.services.garmin_workout_service import upload_e_agendar, deletar_workout_garmin
+    from app.services.config_service import tem_potenciometro
 
     db = get_db()
     doc = await db.semanas.find_one({"semana_inicio": semana_inicio, "user_id": str(user_id)})
@@ -556,8 +557,8 @@ async def aplicar_ajustes(user_id: str, semana_inicio: str, proposta: dict) -> d
                            "motivo": proposta["desvio"]["motivo"]},
             },
         }
-        # `periodo` e `indoor` são escolhas do atleta para aquele dia, não do
-        # treinador: o ajuste troca o treino, não a rotina dele.
+        # `periodo` e a marca de potenciômetro são escolhas do atleta para aquele
+        # dia, não do treinador: o ajuste troca o treino, não a rotina dele.
         await db.semanas.update_one(
             {"semana_inicio": semana_inicio, "user_id": str(user_id),
              "treinos": {"$elemMatch": {"data": data_iso, "origem": {"$ne": "extra"}}}},
@@ -582,7 +583,7 @@ async def aplicar_ajustes(user_id: str, semana_inicio: str, proposta: dict) -> d
                     nome=f"{aj['tipo'].replace('_', ' ')} — {data_iso}",
                     data_iso=data_iso,
                     descricao=aj["descricao"],
-                    forcar_indoor=antes.get("indoor"),
+                    forcar_indoor=tem_potenciometro(antes),
                 )
                 if gid:
                     await db.semanas.update_one(

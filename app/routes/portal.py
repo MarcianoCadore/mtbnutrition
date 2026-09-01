@@ -543,10 +543,10 @@ HTML = """<!DOCTYPE html>
         <input type="date" id="ftpData" style="padding:9px 10px;border:1.5px solid #ddd;border-radius:7px;font-size:1rem;width:100%;box-sizing:border-box;margin-bottom:16px">
         <div style="display:flex;gap:16px;margin-bottom:4px">
           <label style="display:flex;align-items:center;gap:6px;font-size:.9rem;cursor:pointer">
-            <input type="radio" name="ftpModo" id="ftpIndoor" value="indoor" checked> 🏠 Indoor (watts)
+            <input type="radio" name="ftpModo" id="ftpIndoor" value="indoor" checked> ⚡ Só na bike com medidor
           </label>
           <label style="display:flex;align-items:center;gap:6px;font-size:.9rem;cursor:pointer">
-            <input type="radio" name="ftpModo" id="ftpOutdoor" value="outdoor"> 🌳 Outdoor (FC)
+            <input type="radio" name="ftpModo" id="ftpOutdoor" value="outdoor"> ❤️ Sempre por FC
           </label>
         </div>
         <div id="ftpStatus" style="margin-top:12px;font-size:.85rem;color:#1565c0;min-height:20px"></div>
@@ -1007,7 +1007,7 @@ function buildCards(treinos) {
     const tipoLbl = (TIPOS.find(tp => tp.v === t.tipo) || {l: t.tipo}).l;
     const lockAttr = isFuturo ? 'disabled' : '';
 
-    _planejado[key] = {tipo: t.tipo, duracao_min: t.duracao_min, cadencia_rpm: t.cadencia_rpm, descricao: t.descricao, academia: t.academia || null, indoor: t.indoor || false};
+    _planejado[key] = {tipo: t.tipo, duracao_min: t.duracao_min, cadencia_rpm: t.cadencia_rpm, descricao: t.descricao, academia: t.academia || null, indoor: (t.com_potencia !== undefined && t.com_potencia !== null) ? !!t.com_potencia : !!t.indoor};
     const res = t.resultado || null;
     if (res) _resultados[key] = res;
     const resHTML = res
@@ -1037,7 +1037,7 @@ function buildCards(treinos) {
       <ul class="treino-resumo" id="resumo-${key}">
         <li><span class="ri">⏱</span><span class="rk">Tempo</span><span class="rv" id="resumo-dur-${key}">${durStr || '—'}</span></li>
         ${!isAcademia ? `<li><span class="ri">🦵</span><span class="rk">Cad. alvo</span><span class="rv rv-cad" id="resumo-cad-${key}">${cad ? cad+' rpm' : '—'}</span></li>` : ''}
-        ${potAlvo ? `<li id="resumo-alvo-${key}" style="${!t.indoor ? 'display:none' : ''}"><span class="ri">⚡</span><span class="rk">Alvo indoor</span><span class="rv">${potAlvo}</span></li>` : ''}
+        ${potAlvo ? `<li id="resumo-alvo-${key}" style="${!t.indoor ? 'display:none' : ''}"><span class="ri">⚡</span><span class="rk">Alvo em watts</span><span class="rv">${potAlvo}</span></li>` : ''}
         ${tssPlanejado ? `<li><span class="ri">📊</span><span class="rk">P: TSS</span><span class="rv">${tssPlanejado}${tssObtido ? ` · real ${tssObtido}` : ''}</span></li>` : ''}
       </ul>` : '';
 
@@ -1117,12 +1117,12 @@ function buildCards(treinos) {
         ${window.FTP_ON && !hide && !isAcademia ? `<div class="indoor-area">
           <div class="indoor-toggle" id="indoor-toggle-${key}">
             <button id="indoor-out-${key}" class="${!t.indoor ? 'ativo' : ''}"
-              onclick="setIndoor('${key}', false)" title="Outdoor — Garmin usará frequência cardíaca">
-              🚵 Outdoor (FC)
+              onclick="setIndoor('${key}', false)" title="Bike sem potenciômetro — o Garmin manda alvo de frequência cardíaca">
+              ❤️ Sem medidor (FC)
             </button>
             <button id="indoor-in-${key}" class="${t.indoor ? 'ativo' : ''}"
-              onclick="setIndoor('${key}', true)" title="Indoor — Garmin usará watts do rolo">
-              🏠 Indoor (Watts)
+              onclick="setIndoor('${key}', true)" title="Bike com potenciômetro — o Garmin manda alvo em watts">
+              ⚡ Com medidor (W)
             </button>
           </div>
           <div class="indoor-sync-msg" id="indoor-msg-${key}"></div>
@@ -1309,7 +1309,7 @@ async function setIndoor(key, indoor) {
     const liAlvo = document.getElementById(`resumo-alvo-${key}`);
     if (liAlvo) liAlvo.style.display = indoor ? '' : 'none';
 
-    const label = indoor ? '🏠 Indoor (Watts)' : '🚵 Outdoor (FC)';
+    const label = indoor ? '⚡ Com medidor (W)' : '❤️ Sem medidor (FC)';
     if (d.garmin_sync && d.garmin_sync.ok) {
       msg.textContent = `✅ ${label} — workout re-enviado ao Garmin`;
     } else if (d.garmin_sync) {
@@ -1458,7 +1458,8 @@ function abrirTreinoInfo(key) {
 
   const cad   = document.getElementById(`cad-${key}`)?.value || p.cadencia_rpm || '';
   const notas = document.getElementById(`desc-${key}`)?.value || p.descricao || '';
-  const isIndoor = p.indoor || false;
+  const isIndoor = (p.com_potencia !== undefined && p.com_potencia !== null)
+    ? !!p.com_potencia : !!p.indoor;
 
   const dt = new Date(key + 'T00:00');
   const diaLabel = `${DIAS[(dt.getDay()+6)%7]} ${key.slice(8,10)}/${key.slice(5,7)}`;
@@ -1481,7 +1482,7 @@ function abrirTreinoInfo(key) {
     // Treino de bike: objetivo + dica + a prescrição REAL (notas). Não há mais
     // lista "Como executar" fixa por tipo — ela divergia das notas. As "Notas do
     // treino" são a única fonte da prescrição (séries×tempo, cadência, recup).
-    const modoLabel = isIndoor ? ' <span style="font-size:.72rem;background:#e3f2fd;color:#1565c0;border-radius:4px;padding:1px 6px;font-weight:700;vertical-align:middle">🏠 Indoor — Watts</span>' : '';
+    const modoLabel = isIndoor ? ' <span style="font-size:.72rem;background:#e3f2fd;color:#1565c0;border-radius:4px;padding:1px 6px;font-weight:700;vertical-align:middle">⚡ Watts — bike com medidor</span>' : '';
     corpo += `<div class="treino-chart" id="tc-${key}"><div class="tc-loading">Carregando gráfico…</div></div>`;
     // Exporta o treino do dia em .zwo (Zwift Workout) para abrir em Zwift/
     // TrainerRoad/MyWhoosh/Rouvy etc. Potência relativa ao FTP → todo usuário

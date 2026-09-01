@@ -228,7 +228,7 @@ class TestAlvoSeparadoDoFTP:
         from app.services.config_service import salvar_modo_potencia, get_ftp
         uid = await self._usuario(fake_db)
 
-        assert await salvar_modo_potencia(uid, "nunca") == "nunca"
+        assert (await salvar_modo_potencia(uid, "nunca"))["potencia_modo"] == "nunca"
         assert (await get_ftp(uid)) == (None, "nunca")
 
     async def test_eftp_estimado_nao_muda_o_alvo(self, fake_db):

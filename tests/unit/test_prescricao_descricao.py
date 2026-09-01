@@ -18,7 +18,7 @@ DESC_TEMPO = (
     "Sessão principal: 3×15 min em Z3/Z4 com 5 min de recuperação Z1 entre cada bloco. "
     "15 min volta à calma Z1."
 )
-LEGENDA = "\n\n🎯 Alvo — Outdoor (FC): Zona 1 100-120 · Zona 2 120-140 · Zona 3 140-155 bpm"
+LEGENDA = "\n\n🎯 Alvo — Sem medidor (FC): Zona 1 100-120 · Zona 2 120-140 · Zona 3 140-155 bpm"
 
 
 def _blocos(segs):

@@ -63,7 +63,7 @@ class TestLimparRotuloTipo:
             "Atenção — hidrate bem antes do treino.",
             "Tempo-limite de 90 min para o percurso.",
             "Recuperação de 4 min Z1-Z2 entre cada bloco — desça completamente.",
-            "🎯 Alvo — Outdoor (FC): Zona 2 142-149 bpm",
+            "🎯 Alvo — Sem medidor (FC): Zona 2 142-149 bpm",
             "15 min aquecimento. 5×4 min Z5.",
         ):
             assert L(s) == s
@@ -88,10 +88,10 @@ class TestLimparRotuloTipo:
         s = (
             "VO2MAX — 2026-08-24\n"
             "Tiros — 75 min. 5×2 min em Z4/Z5 (177-192 bpm) com 2 min Z1.\n\n"
-            "🎯 Alvo — Outdoor (FC): Zona 5 177-192 bpm"
+            "🎯 Alvo — Sem medidor (FC): Zona 5 177-192 bpm"
         )
         out = C(s)
         assert out.startswith("75 min.")
         assert "VO2MAX — 2026-08-24" not in out
         assert "bpm)" not in out          # parêntese de bpm removido
-        assert "🎯 Alvo — Outdoor (FC): Zona 5 177-192 bpm" in out
+        assert "🎯 Alvo — Sem medidor (FC): Zona 5 177-192 bpm" in out

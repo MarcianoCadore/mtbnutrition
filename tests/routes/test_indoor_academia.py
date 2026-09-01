@@ -50,4 +50,4 @@ class TestMarcarIndoor:
 
         assert r.status_code == 200
         doc = run(fake_db.semanas.find_one({"semana_inicio": SEG, "user_id": uid}))
-        assert doc["treinos"][0]["indoor"] is True
+        assert doc["treinos"][0]["com_potencia"] is True

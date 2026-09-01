@@ -35,6 +35,11 @@ class TreinoSemana(BaseModel):
     fit_file: Optional[str] = None
     garmin_workout_id: Optional[str] = None
     resultado: Optional[dict] = None
+    # Este dia vai na bike COM potenciômetro? Decide se o alvo enviado ao relógio
+    # é em watts ou em FC. `indoor` é o nome antigo do mesmo campo, de quando o
+    # eixo era o lugar do treino em vez do equipamento.
+    com_potencia: Optional[bool] = None
+    indoor: Optional[bool] = None
 
 
 class PlanoSemanal(BaseModel):
@@ -144,13 +149,15 @@ async def salvar_semana(request: Request, plano: PlanoSemanal):
         extras_existentes = [t for t in existing.get("treinos", []) if t.get("origem") == "extra"]
         for i, t in enumerate(data["treinos"]):
             saved = existing_map.get(t["data"], {})
-            # preserva resultado, garmin_workout_id e indoor do sync / toggle
+            # preserva resultado, garmin_workout_id e a marca de potenciômetro
+            # vinda do sync / do toggle do dia
             if saved.get("resultado") and not t.get("resultado"):
                 t["resultado"] = saved["resultado"]
             if saved.get("garmin_workout_id") and not t.get("garmin_workout_id"):
                 t["garmin_workout_id"] = saved["garmin_workout_id"]
-            if saved.get("indoor") is not None and t.get("indoor") is None:
-                t["indoor"] = saved["indoor"]
+            for campo in ("com_potencia", "indoor"):
+                if saved.get(campo) is not None and t.get(campo) is None:
+                    t[campo] = saved[campo]
             # academia não está no modelo TreinoSemana → seria descartada no
             # model_dump(); preserva o bloco salvo quando o cliente não o envia.
             if saved.get("academia") and not t.get("academia"):
@@ -387,6 +394,7 @@ async def enviar_para_garmin(request: Request, body: EnviarGarminBody):
     evitando duplicatas no calendário.
     """
     from app.services.garmin_workout_service import upload_e_agendar, deletar_workout_garmin
+    from app.services.config_service import tem_potenciometro
 
     db = get_db()
     user_id = request.state.user_id
@@ -444,6 +452,9 @@ async def enviar_para_garmin(request: Request, body: EnviarGarminBody):
             nome=nome,
             data_iso=t.data,
             descricao=t.descricao,
+            # Sem a marca do dia, o alvo sairia da heurística "qualidade = rolo"
+            # e mandaria watts para uma sessão de MTB sem medidor.
+            forcar_indoor=tem_potenciometro(t.model_dump()),
         )
         if gid:
             await db.semanas.update_one(
@@ -482,6 +493,7 @@ async def reenviar_para_garmin(request: Request, semana_inicio: str):
     Garmin foi apagado. Não depende da IA — usa os dados já salvos no banco.
     """
     from app.services.garmin_workout_service import upload_e_agendar, deletar_workout_garmin
+    from app.services.config_service import tem_potenciometro
 
     db = get_db()
     user_id = request.state.user_id
@@ -526,6 +538,7 @@ async def reenviar_para_garmin(request: Request, semana_inicio: str):
             nome=nome,
             data_iso=t["data"],
             descricao=t.get("descricao"),
+            forcar_indoor=tem_potenciometro(t),
         )
         if gid:
             await db.semanas.update_one(
@@ -560,7 +573,11 @@ async def ler_zonas(request: Request):
     zonas_fc = await get_zonas(user_id)
     zonas_pot = await get_zonas_potencia(user_id)
     _, modo = await get_ftp(user_id)
-    return {**zonas_fc, "potencia": zonas_pot, "potencia_modo": modo}
+    from app.services.config_service import treinos_com_potenciometro
+    from app.services.user_service import get_por_id as _get_u
+    treinos_pot = treinos_com_potenciometro(await _get_u(request.state.user_id))
+    return {**zonas_fc, "potencia": zonas_pot, "potencia_modo": modo,
+            "treinos_com_potencia": treinos_pot}
 
 
 @router.post("/zonas/importar-garmin")
@@ -675,6 +692,9 @@ class FTPBody(BaseModel):
 
 class AlvoBody(BaseModel):
     modo: str  # "indoor" | "sempre" | "ambos" | "nunca"
+    # Quantos treinos por semana o atleta faz na bike que TEM potenciômetro.
+    # None = não configurado (o app decide pelo tipo do treino, como antes).
+    treinos_semana: Optional[int] = None
 
 
 @router.post("/zonas/ftp")
@@ -693,8 +713,8 @@ async def salvar_alvo_endpoint(request: Request, body: AlvoBody):
     duas). Separado de /zonas/ftp: o card do alvo não deve exigir nem reescrever
     o FTP."""
     from app.services.config_service import salvar_modo_potencia
-    modo = await salvar_modo_potencia(request.state.user_id, body.modo)
-    return {"status": "ok", "potencia_modo": modo}
+    r = await salvar_modo_potencia(request.state.user_id, body.modo, body.treinos_semana)
+    return {"status": "ok", **r}
 
 
 @router.get("/zonas/potencia")
@@ -1047,16 +1067,17 @@ async def marcar_indoor(
     if treino.get("tipo") == "ACADEMIA":
         raise HTTPException(
             status_code=400,
-            detail="Treino de academia não tem alvo de FC/watts — indoor/outdoor não se aplica.",
+            detail="Treino de academia não tem alvo de FC/watts — potenciômetro não se aplica.",
         )
 
-    # Atualiza campo indoor no banco
+    # Grava com o nome que descreve o eixo de verdade (a bike tem medidor?).
+    # `indoor` fica nos docs antigos e continua sendo lido por tem_potenciometro.
     await db.semanas.update_one(
         {
             "semana_inicio": semana_inicio, "user_id": user_id,
             "treinos": {"$elemMatch": {"data": data, "origem": {"$ne": "extra"}}},
         },
-        {"$set": {"treinos.$.indoor": body.indoor}},
+        {"$set": {"treinos.$.com_potencia": body.indoor}},
     )
 
     garmin_sync = None
@@ -1106,7 +1127,7 @@ async def marcar_indoor(
             )
 
     return {
-        "indoor": body.indoor,
+        "com_potencia": body.indoor,
         "data": data,
         "garmin_sync": garmin_sync,
     }
@@ -3265,20 +3286,26 @@ _PAGINA_PERFIL = """<!DOCTYPE html>
   <div class="section-title">⌚ Alvo dos treinos no Garmin</div>
   <div class="card">
     <h2>🎯 O que o relógio cobra de você</h2>
-    <p class="hint">Define a métrica que vai como alvo em cada passo do treino enviado ao Garmin — é ela que dispara o alerta de "fora da zona". As faixas de FC e de watts continuam as duas na descrição do treino, seja qual for a escolha.</p>
+    <p class="hint">Define a métrica que vai como alvo em cada passo do treino enviado ao Garmin — é ela que dispara o alerta de "fora da zona". O que decide não é o treino ser dentro ou fora de casa, e sim a bike daquele dia ter <b>potenciômetro</b>: um rolo de equilíbrio é indoor e não mede watts, e uma bike de rua com medidor mede na trilha.</p>
     <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px">
       <div>
         <label style="font-size:.8rem;font-weight:600;display:block;margin-bottom:4px">Alvo enviado ao Garmin</label>
         <select id="ftp_modo" style="padding:9px 10px;border:1.5px solid #ddd;border-radius:7px;font-size:.92rem">
           <option value="nunca">❤️ Frequência cardíaca em todos os treinos</option>
-          <option value="indoor">🏠 Watts no rolo, FC na rua</option>
-          <option value="sempre">🚵 Watts em todos os treinos — tenho medidor na bike</option>
+          <option value="indoor">⚡ Watts só na bike que tem potenciômetro</option>
+          <option value="sempre">🚵 Watts em todos os treinos — tenho medidor em todas as bikes</option>
           <option value="ambos">⚡❤️ Os dois juntos no mesmo passo</option>
         </select>
       </div>
+      <div id="box_pot_semana">
+        <label style="font-size:.8rem;font-weight:600;display:block;margin-bottom:4px">Treinos por semana nessa bike</label>
+        <input type="number" id="pot_treinos_semana" min="0" max="7" placeholder="ex.: 2"
+               style="width:120px;padding:9px 10px;border:1.5px solid #ddd;border-radius:7px;font-size:.92rem">
+      </div>
       <button id="btnSalvarAlvo" onclick="salvarAlvo()" style="white-space:nowrap">💾 Salvar alvo</button>
     </div>
-    <p class="hint" style="margin-top:-4px">As três opções com watts precisam do FTP preenchido acima. Em <b>Os dois juntos</b> o passo vai com as duas faixas e o relógio mostra watts e bpm lado a lado — o alerta acompanha os watts nos dias de rolo e a FC nos dias marcados como outdoor. Aparelhos mais antigos (Edge 530, por exemplo) podem ignorar a segunda faixa e mostrar só a principal.</p>
+    <p class="hint" style="margin-top:-4px">Diga quantos treinos da semana você faz na bike com medidor e a IA já monta a semana marcando esses dias em watts — são os mais duros, onde o watt muda a sessão — e os outros em FC. Você não precisa marcar nada dia a dia; o botão de cada treino no calendário serve só para corrigir uma exceção (o dia em que o rolo interativo virou rolo de equilíbrio, por exemplo). Deixe em branco para o app decidir pelo tipo do treino, como fazia antes.</p>
+    <p class="hint">As três opções com watts precisam do FTP preenchido acima. Em <b>Os dois juntos</b> o passo vai com as duas faixas e o relógio mostra watts e bpm lado a lado. Aparelhos mais antigos (Edge 530, por exemplo) podem ignorar a segunda faixa e mostrar só a principal.</p>
     <div id="st-alvo" class="status"></div>
   </div>
 
@@ -3564,6 +3591,9 @@ function aplicarFTP(zp) {
   if (!zp) return;
   document.getElementById('ftp_val').value = zp.ftp || '';
   document.getElementById('ftp_modo').value = zp.potencia_modo || 'indoor';
+  if (zp.treinos_com_potencia !== null && zp.treinos_com_potencia !== undefined) {
+    document.getElementById('pot_treinos_semana').value = zp.treinos_com_potencia;
+  }
   renderZonasPot(zp.zonas || [], zp.ftp);
 }
 function renderZonasPot(zonas, ftp) {
@@ -3601,21 +3631,28 @@ async function salvarFTP() {
 }
 const _ROTULO_ALVO = {
   nunca:  'Os treinos vão para o Garmin com alvo de frequência cardíaca.',
-  indoor: 'Rolo vai em watts; treinos de rua vão em FC.',
+  indoor: 'Só a bike com potenciômetro recebe watts; o resto vai em FC.',
   sempre: 'Todos os treinos vão para o Garmin com alvo em watts.',
   ambos:  'Cada passo vai com as duas faixas — watts e FC.',
 };
 async function salvarAlvo() {
   const btn=document.getElementById('btnSalvarAlvo'), st=document.getElementById('st-alvo');
   const modo = document.getElementById('ftp_modo').value;
+  const bruto = document.getElementById('pot_treinos_semana').value.trim();
+  const treinos_semana = bruto === '' ? null : Math.max(0, Math.min(7, parseInt(bruto, 10) || 0));
   btn.disabled=true; btn.textContent='Salvando...'; st.className='status';
   try {
-    const r = await fetch('/workout/zonas/alvo', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({modo})});
+    const r = await fetch('/workout/zonas/alvo', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({modo, treinos_semana})});
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || 'Erro');
     document.getElementById('ftp_modo').value = d.potencia_modo;
+    if (d.treinos_semana !== null && d.treinos_semana !== undefined) {
+      document.getElementById('pot_treinos_semana').value = d.treinos_semana;
+    }
     st.className='status ok';
-    st.textContent = '✅ ' + (_ROTULO_ALVO[d.potencia_modo] || 'Alvo salvo.')
+    const extra = (d.potencia_modo === 'indoor' && d.treinos_semana !== null && d.treinos_semana !== undefined)
+      ? ` A IA vai marcar ${d.treinos_semana} treino(s) por semana em watts.` : '';
+    st.textContent = '✅ ' + (_ROTULO_ALVO[d.potencia_modo] || 'Alvo salvo.') + extra
                    + ' Clique em "Enviar + Sincronizar Garmin" na semana para os treinos já agendados irem de novo com o alvo novo.';
   } catch(e) { st.className='status err'; st.textContent='❌ '+e.message; }
   finally { btn.disabled=false; btn.textContent='💾 Salvar alvo'; }

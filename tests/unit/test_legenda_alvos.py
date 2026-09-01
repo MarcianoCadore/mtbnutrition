@@ -55,8 +55,8 @@ class TestLegenda:
 
     def test_cobre_fc_e_watts(self):
         leg = p._legenda_alvos(FC_ALDEROSSI, WATTS)
-        assert "Outdoor (FC)" in leg and "bpm" in leg
-        assert "Indoor (Watts)" in leg and "W" in leg
+        assert "Sem medidor (FC)" in leg and "bpm" in leg
+        assert "Com medidor (Watts)" in leg and "W" in leg
         assert "Zona 2 168-225" in leg  # watts Z2
 
     def test_watts_ausente_sem_ftp(self):
@@ -80,7 +80,7 @@ class TestAnexar:
             {"tipo": "ACADEMIA", "descricao": "agachamento 4x8"},
         ]
         p._anexar_legenda_alvos(treinos, FC_ALDEROSSI, WATTS)
-        assert "Outdoor (FC)" in treinos[0]["descricao"]
+        assert "Sem medidor (FC)" in treinos[0]["descricao"]
         assert treinos[1]["descricao"] == ""
         assert treinos[2]["descricao"] == "agachamento 4x8"
 
@@ -88,7 +88,7 @@ class TestAnexar:
         treinos = [{"tipo": "TEMPO", "descricao": "3x10 Z3."}]
         p._anexar_legenda_alvos(treinos, FC_ALDEROSSI, None)
         p._anexar_legenda_alvos(treinos, FC_ALDEROSSI, None)
-        assert treinos[0]["descricao"].count("Outdoor (FC)") == 1
+        assert treinos[0]["descricao"].count("Sem medidor (FC)") == 1
 
 
 class TestClassificacaoNaoQuebra:

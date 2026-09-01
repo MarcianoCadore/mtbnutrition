@@ -300,14 +300,14 @@ def _fmt_faixa(z: dict) -> str:
 
 
 def _legenda_alvos(zonas_fc: list[dict], zonas_watts: list[dict] | None) -> str:
-    """Legenda determinística dos alvos reais do atleta, em FC (outdoor) e — se o
-    FTP estiver configurado — em watts (indoor).
+    """Legenda determinística dos alvos reais do atleta, em FC e — se o FTP
+    estiver configurado — em watts.
 
     O código é dono dos números: a IA cita a zona apenas pelo nome (ex.: "Z2") e
     o app anexa aqui as faixas exatas das zonas do atleta. Assim a prosa nunca
     diverge das zonas reais (bug do Alderossi: "Zona 2 (113-132)" quando a Z2
     dele é 132-150). Cobre os dois modos porque o alvo enviado ao Garmin muda
-    conforme o dia é marcado indoor (watts) ou outdoor (FC).
+    conforme o dia ser na bike COM potenciômetro (watts) ou sem (FC).
     """
     # IMPORTANTE: usa "Zona N" (e não "ZN") de propósito. O reclassificador
     # (classificar_por_texto) casa \bz2\b/\bz5\b etc. na descrição; "Zona 2" não
@@ -316,11 +316,11 @@ def _legenda_alvos(zonas_fc: list[dict], zonas_watts: list[dict] | None) -> str:
     if zonas_fc:
         fc = " · ".join(f"Zona {z['zona']} {_fmt_faixa(z)}" for z in zonas_fc if int(z["zona"]) <= 5)
         if fc:
-            linhas.append(f"{_MARCADOR_LEGENDA} — Outdoor (FC): {fc} bpm")
+            linhas.append(f"{_MARCADOR_LEGENDA} — Sem medidor (FC): {fc} bpm")
     if zonas_watts:
         pw = " · ".join(f"Zona {z['zona']} {_fmt_faixa(z)}" for z in zonas_watts if int(z["zona"]) <= 5)
         if pw:
-            linhas.append(f"⚡ Indoor (Watts): {pw} W")
+            linhas.append(f"⚡ Com medidor (Watts): {pw} W")
     return "\n".join(linhas)
 
 
@@ -883,6 +883,12 @@ async def gerar_proxima_semana(
     potencia_modo: str = (zp_doc or {}).get("potencia_modo", "indoor")
     zonas_pot_user: list[dict] = (zp_doc or {}).get("zonas", [])
 
+    # Quantos treinos da semana vão na bike que tem potenciômetro (perfil).
+    from app.services.config_service import (
+        marcar_treinos_com_potencia, treinos_com_potenciometro,
+    )
+    quantos_com_potencia: int | None = treinos_com_potenciometro(u)
+
     # Academia
     academia_cfg: dict = u.get("academia") or {}
     treina_academia: bool = bool(academia_cfg.get("treina"))
@@ -1198,12 +1204,20 @@ META DE VOLUME SEMANAL (o atleta definiu no perfil): {formatar_horas(volume_alvo
             f"Z{z['zona']}({z['nome']}) {z['min']}-{z['max'] if z['max']<9000 else '∞'}W"
             for z in zonas_pot_user
         )
-        _uso_pot = {
-            "indoor": "Usa potência apenas no rolo (VO2MAX, TIROS, TEMPO, FORCA). Z2_LONGO e RECUPERACAO são feitos na rua sem medidor.",
-            "sempre": "Tem medidor de potência em todas as bikes — SEMPRE prescreva watts.",
-            "ambos":  "Segue watts OU FC conforme o dia — prescreva as DUAS referências em todos os treinos.",
-            "nunca":  "Sem medidor de potência — prescreva APENAS por FC.",
-        }.get(potencia_modo, "")
+        if potencia_modo == "indoor" and quantos_com_potencia is not None:
+            _uso_pot = (
+                f"Tem potenciômetro em UMA bike só, e faz {quantos_com_potencia} "
+                f"treino(s) por semana nela. Prescreva watts NESSES treinos (os mais "
+                f"duros da semana) e APENAS FC nos outros — nas demais bikes não há "
+                f"medidor, e alvo em watts que o atleta não consegue ver é alvo perdido."
+            )
+        else:
+            _uso_pot = {
+                "indoor": "Tem medidor só na bike do rolo. Prescreva watts nos treinos de qualidade (VO2MAX, TIROS, TEMPO, FORCA); Z2_LONGO e RECUPERACAO vão só em FC.",
+                "sempre": "Tem medidor de potência em todas as bikes — SEMPRE prescreva watts.",
+                "ambos":  "Segue watts OU FC conforme o dia — prescreva as DUAS referências em todos os treinos.",
+                "nunca":  "Sem medidor de potência — prescreva APENAS por FC.",
+            }.get(potencia_modo, "")
         bloco_potencia = f"FTP: {ftp_user}W\nZONAS DE POTÊNCIA: {zonas_pot_txt}\n{_uso_pot}"
     else:
         bloco_potencia = "FTP não configurado — prescreva intensidade apenas por FC."
@@ -1325,8 +1339,15 @@ RESTRIÇÕES DE AGENDA (OBRIGATÓRIAS):
                 )
         treinos_out.append(treino_out)
 
+    # Quais dias vão na bike COM potenciômetro. Sai da configuração do perfil,
+    # não de um clique por dia: o atleta pediu explicitamente que a IA agende
+    # isso sozinha. Sem configuração, ninguém é marcado e o envio ao Garmin
+    # segue a heurística antiga por tipo de treino.
+    if quantos_com_potencia is not None:
+        marcar_treinos_com_potencia(treinos_out, quantos_com_potencia)
+
     # Código é dono dos números: anexa a legenda com as faixas reais do atleta
-    # em FC (outdoor) e watts (indoor). A IA cita só o nome da zona na prosa.
+    # em FC e em watts. A IA cita só o nome da zona na prosa.
     _anexar_legenda_alvos(treinos_out, zonas_lista, zonas_pot_user)
 
     return {

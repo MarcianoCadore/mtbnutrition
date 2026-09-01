@@ -26,7 +26,11 @@ from garminconnect.workout import (
 
 logger = logging.getLogger(__name__)
 
-# Tipos de treino feitos no rolo (indoor) — recebem alvo de watts quando modo="indoor"
+# Heurística ANTIGA, mantida só para quem nunca declarou onde tem potenciômetro:
+# presumia que treino de qualidade é feito no rolo, logo tem medidor. Quebrava
+# nos dois sentidos — VO2máx no rolo de equilíbrio (sem medidor) recebia watts,
+# e Z2 numa speed com medidor recebia FC. Quem configura o perfil não passa mais
+# por aqui: o dia chega marcado com `com_potencia`.
 _TIPOS_INDOOR = {"VO2MAX", "TIROS", "TEMPO", "FORCA", "TESTE_FTP"}
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -551,9 +555,10 @@ async def upload_e_agendar(
     """Faz upload do workout e agenda para a data. Retorna o garmin_workout_id.
 
     forcar_indoor:
-      True  → força alvos em watts (usuário marcou "indoor" no dia)
-      False → força alvos em FC (usuário marcou "outdoor" no dia)
-      None  → usa a lógica do potencia_modo + tipo (comportamento padrão)
+      True  → força alvos em watts (o dia é na bike COM potenciômetro)
+      False → força alvos em FC (o dia é na bike SEM potenciômetro)
+      None  → decide pelo potencia_modo; sem marcação do dia, cai na heurística
+              antiga por tipo de treino
 
     No modo "ambos" o step leva watts E FC juntos: `forcar_indoor`/o tipo decidem
     qual é o alvo primário (o que dispara o alerta do relógio) e a outra métrica
