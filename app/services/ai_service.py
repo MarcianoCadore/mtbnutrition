@@ -422,10 +422,20 @@ async def analisar_atividade_pos_treino(planejado: dict, resultado: dict, user_i
             pass
 
     if ftp_analise:
-        norm_p = resultado.get("norm_power") or resultado.get("avg_power")
+        # IF é NP/FTP — só NP. Usar a potência MÉDIA no lugar da NP e ainda
+        # chamar de "IF" entrega à IA um número muito menor que o real num treino
+        # intervalado (a média é diluída por aquecimento e recuperações), e ela
+        # conclui que faltou intensidade num treino que foi feito certinho.
+        norm_p = resultado.get("norm_power")
         if norm_p:
             if_val = round(norm_p / ftp_analise, 2)
             linhas.append(f"- FTP do atleta: {ftp_analise}W | IF (NP/FTP): {if_val}")
+        elif resultado.get("avg_power"):
+            linhas.append(
+                f"- FTP do atleta: {ftp_analise}W | esta sessão não tem NP gravada, "
+                f"então NÃO há IF para citar. A potência média NÃO é IF e não serve "
+                f"para julgar a intensidade de um treino intervalado."
+            )
         if fit_path and zonas_pot_analise:
             try:
                 from app.services.fit_service import tempo_em_zonas_potencia
@@ -542,14 +552,30 @@ IMPORTANTE — SEM DADOS DE FC NESTA SESSÃO ({motivo_fc}):
 - Nunca conclua que "faltou intensidade" só porque a FC média ficou em Z2 num
   treino de tiros — isso é esperado e correto."""
     _DIR_POT = """- Quando houver dados de POTÊNCIA (watts): prefira potência para julgar intensidade —
-  é mais imediata que FC e não sofre o lag cardíaco. IF > 0.90 = treino intenso;
-  IF 0.75-0.90 = zona de limiar/tempo; IF < 0.75 = Z2/recuperação.
+  é mais imediata que FC e não sofre o lag cardíaco. As faixas de IF abaixo valem
+  para esforço CONTÍNUO: IF > 0.90 = treino intenso; IF 0.75-0.90 = limiar/tempo;
+  IF < 0.75 = Z2/recuperação.
+- Em TIROS, VO2MAX ou qualquer sessão INTERVALADA, essas faixas NÃO se aplicam ao
+  treino inteiro: o IF da sessão é diluído por aquecimento, recuperações entre os
+  blocos e volta à calma, exatamente como a FC média. IF de 0.65-0.80 é o normal
+  de um treino de tiros bem executado — nunca conclua a partir dele que "faltou
+  intensidade" ou que "os blocos podem não ter sido executados".
+- O que prova a execução dos blocos é o TEMPO EM ZONAS ALTAS de potência (Z5 ou
+  acima) e a potência máxima. Se houve tempo relevante em Z5/Z6, os blocos foram
+  feitos — não afirme o contrário no mesmo parecer.
 - Potência Normalizada (NP) representa o "custo fisiológico equivalente" de um
-  treino variado — use-a, não a média bruta, para avaliar a demanda real."""
+  treino variado — use-a, não a média bruta, para avaliar a demanda real. Se a NP
+  não estiver nos dados, NÃO invente IF nem NP a partir da potência média."""
     _DIR_VOLUME = """- Em treino intervalado, a média do treino inteiro (velocidade, potência) é
   diluída por aquecimento e recuperações — não a use como prova de esforço fraco.
 - Sem métrica de intensidade, o que dá para afirmar é o cumprimento do volume e
   da estrutura prescrita: avalie por aí e não especule sobre esforço."""
+    _DIR_CADENCIA = """- Cadência MÉDIA de pedal na rua/trilha é diluída pelo tempo SEM pedalar (descidas,
+  curvas, trânsito) e não representa a cadência dos blocos: 70-75 rpm de média é
+  normal num treino de tiros e NÃO é "cadência baixa".
+- Só aponte cadência como ponto fraco se o PLANEJADO trouxer uma cadência-alvo
+  explícita e o realizado tiver ficado claramente fora dela. Sem alvo prescrito,
+  não invente faixa ideal nem cobre o atleta por isso."""
     _DIR_ACADEMIA = """- Musculação para MTB serve à bike: força de pernas (potência em subida e saída),
   core (estabilidade e absorção de impacto) e superiores (controle do guidão).
 - Progressão de força é por CARGA, SÉRIES, REPETIÇÕES ou variação do exercício — nunca
@@ -578,6 +604,7 @@ IMPORTANTE — SEM DADOS DE FC NESTA SESSÃO ({motivo_fc}):
         foco_txt = "a execução do que foi prescrito"
         criterio_nota = "a estrutura prescrita"
     if not e_academia:
+        diretrizes = f"{diretrizes}\n{_DIR_CADENCIA}"
         eixos_txt = "volume (duração realizada vs planejada), cadência e o que ajustar no próximo treino"
         eixos_nota = ", o volume e a cadência"
         persona = "Você é um coach de ciclismo MTB especializado em análise de desempenho."

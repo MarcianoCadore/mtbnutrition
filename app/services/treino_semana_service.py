@@ -232,6 +232,57 @@ async def criar_treino_dia(
     }
 
 
+# ── ajustar o treino do dia (sem reescrever a prescrição) ────────────────────
+
+async def ajustar_treino_dia(
+    user_id: str,
+    data_iso: str,
+    duracao_min: int | None = None,
+    descricao: str | None = None,
+) -> dict:
+    """Muda SÓ duração e/ou descrição do treino do dia, preservando o resto.
+
+    "Diminui o treino de hoje para 1h03" não é criar um treino novo, mas era o
+    que acontecia: sem esta função a única saída do chat era `criar_treino_dia`,
+    que reescreve o dia inteiro — e um `tipo` errado do modelo transformava um
+    VO2máx em "recuperação", zerava a cadência-alvo e apagava a prescrição. Aqui
+    tipo, cadência, período e o agendamento no relógio ficam como estavam.
+
+    Retorna o treino ajustado. Lança ValueError se o dia não tiver treino real.
+    """
+    db = get_db()
+    treino = await get_treino(user_id, data_iso)
+    if not _e_treino_real(treino):
+        raise ValueError(f"Não há treino em {data_iso} para ajustar.")
+
+    campos: dict = {}
+    if duracao_min is not None:
+        campos["duracao_min"] = int(duracao_min)
+    if descricao is not None:
+        campos["descricao"] = descricao
+    if not campos:
+        raise ValueError("Nada para ajustar: informe duração e/ou descrição.")
+
+    # Treino que ainda não aconteceu e já está no relógio fica desatualizado com
+    # a duração nova — solta o vínculo para o atleta reenviar pelo botão (o envio
+    # nunca é automático, ver [[feedback-envio-garmin]]).
+    garmin_id_antigo = None
+    if not (treino.get("resultado") or {}) and treino.get("garmin_workout_id"):
+        garmin_id_antigo = treino["garmin_workout_id"]
+        campos["garmin_workout_id"] = None
+
+    await _set_treino_dia(user_id, data_iso, campos, db)
+
+    logger.info("ajustar_treino_dia user=%s: %s %s", user_id, data_iso, list(campos))
+    return {
+        "data": data_iso,
+        "tipo": treino.get("tipo"),
+        "duracao_min": campos.get("duracao_min", treino.get("duracao_min")),
+        "descricao": campos.get("descricao", treino.get("descricao")),
+        "garmin_id_antigo": garmin_id_antigo,
+    }
+
+
 # ── remover treino de um dia (vira descanso) ─────────────────────────────────
 
 async def remover_treino_dia(user_id: str, data_iso: str) -> dict:

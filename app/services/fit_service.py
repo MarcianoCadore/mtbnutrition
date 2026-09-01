@@ -1,6 +1,54 @@
 import re
 import statistics
+from collections import deque
+
 from fitparse import FitFile
+
+# Cinta sem bateria / mal posicionada não grava "FC baixa": grava ZERO. Contadas
+# como batimento, essas amostras caem todas na primeira zona e o classificador lê
+# um VO2máx inteiro como "recuperação" (100% Z1). Zero não é batimento — some.
+# E se a FC válida não cobrir metade do treino, é melhor não ter FC nenhuma do
+# que julgar a sessão por meia sessão: cai para a leitura por watts.
+_FC_COBERTURA_MINIMA = 0.5
+
+# Janela da média móvel da potência normalizada (padrão Coggan: 30 segundos).
+_NP_JANELA_S = 30
+
+
+def _fc_utilizavel(hr_values: list, total_registros: int) -> list:
+    """FC do .fit que dá para usar: sem as amostras zeradas e só se cobrir o
+    treino. Devolve [] quando a cinta não entregou dado confiável."""
+    validos = [h for h in hr_values if h > 0]
+    if not validos:
+        return []
+    if total_registros and len(validos) < total_registros * _FC_COBERTURA_MINIMA:
+        return []
+    return validos
+
+
+def potencia_normalizada(power_values: list | None) -> float | None:
+    """NP calculada segundo-a-segundo: média móvel de 30s, à 4ª potência, média,
+    raiz 4ª.
+
+    Boa parte dos .fit não traz `normalized_power` na mensagem de sessão. Sem
+    esse cálculo o resto do app cai na potência MÉDIA, que num treino
+    intervalado fica muito abaixo da NP — e faz um VO2máx bem executado parecer
+    um pedal Z2 (IF diluído por aquecimento, recuperações e volta à calma).
+    """
+    if not power_values or len(power_values) < _NP_JANELA_S:
+        return None
+    janela, soma, quartas = deque(), 0, []
+    for v in power_values:
+        janela.append(v)
+        soma += v
+        if len(janela) > _NP_JANELA_S:
+            soma -= janela.popleft()
+        if len(janela) == _NP_JANELA_S:
+            quartas.append((soma / _NP_JANELA_S) ** 4)
+    if not quartas:
+        return None
+    return (sum(quartas) / len(quartas)) ** 0.25
+
 
 def _fracao_por_zona(valores: list, zonas: dict | None) -> dict:
     """Fração do tempo em cada zona, com as faixas DO ATLETA.
@@ -185,7 +233,7 @@ def hrtss_ponderado(caminho: str, limiar) -> int | None:
         n = 0
         for msg in ff.get_messages("record"):
             hr = msg.get_value("heart_rate")
-            if hr is not None:
+            if hr is not None and int(hr) > 0:   # zero é cinta morta, não batimento
                 soma += (int(hr) / limiar) ** 2
                 n += 1
     except Exception:
@@ -213,11 +261,15 @@ def tempo_em_zonas(caminho: str, zonas: list[dict]) -> dict | None:
     zs = sorted(zonas, key=lambda z: z["min"])
     contagem = {z["zona"]: 0 for z in zs}
     n = 0
+    n_registros = 0
     for msg in ff.get_messages("record"):
+        n_registros += 1
         hr = msg.get_value("heart_rate")
         if hr is None:
             continue
         hr = int(hr)
+        if hr <= 0:                       # cinta morta grava zero — não é Z1
+            continue
         n += 1
         if hr <= zs[0]["max"]:            # abaixo/dentro da primeira zona
             contagem[zs[0]["zona"]] += 1
@@ -228,7 +280,9 @@ def tempo_em_zonas(caminho: str, zonas: list[dict]) -> dict | None:
                 if z["min"] <= hr <= z["max"]:
                     contagem[z["zona"]] += 1
                     break
-    if not n:
+    # FC que não cobre o treino não vira distribuição: melhor devolver nada do
+    # que uma distribuição de meia sessão (ver _fc_utilizavel).
+    if not n or (n_registros and n < n_registros * _FC_COBERTURA_MINIMA):
         return None
     return contagem  # ~1 amostra/segundo nos .fit do Garmin
 
@@ -304,6 +358,24 @@ def melhores_esforcos(power_values: list[int],
     return saida
 
 
+def np_do_fit(caminho: str) -> float | None:
+    """NP lida direto do arquivo, para completar um resultado já gravado sem ela.
+
+    Sessões sincronizadas antes de o app calcular a NP ficaram com o campo vazio,
+    e sem NP não há IF nem TSS por potência na reavaliação.
+    """
+    try:
+        ff = FitFile(caminho)
+        pw = []
+        for msg in ff.get_messages("record"):
+            v = msg.get_value("power")
+            if v is not None:
+                pw.append(int(v))
+    except Exception:
+        return None
+    return potencia_normalizada(pw)
+
+
 def curva_de_potencia(caminho: str) -> dict[int, int]:
     """Melhores esforços de um arquivo .fit. {} se não houver potência."""
     valores = []
@@ -373,7 +445,9 @@ def analisar_fit(caminho: str, zonas_bpm: dict | None = None,
                 avg_cadence_ses = int(val)
 
     # Registros por segundo
+    n_registros = 0
     for msg in ff.get_messages("record"):
+        n_registros += 1
         hr = msg.get_value("heart_rate")
         if hr is not None:
             hr_values.append(int(hr))
@@ -384,15 +458,20 @@ def analisar_fit(caminho: str, zonas_bpm: dict | None = None,
         if cad is not None and int(cad) > 0:
             cadence_values.append(int(cad))
 
+    # Cinta morta grava zero: sem isto o treino inteiro conta como Z1.
+    hr_values = _fc_utilizavel(hr_values, n_registros)
+
     # Fallbacks: duração e potência a partir dos records
-    if not duration_s and hr_values:
-        duration_s = float(len(hr_values))   # ~1 registro/seg
+    if not duration_s and n_registros:
+        duration_s = float(n_registros)      # ~1 registro/seg
 
     if power_values:
         if avg_power is None:
             avg_power = sum(power_values) / len(power_values)
         if max_power is None:
             max_power = float(max(power_values))
+        if norm_power is None:
+            norm_power = potencia_normalizada(power_values)
 
     duration_min = max(1, round(duration_s / 60)) if duration_s else None
 

@@ -121,6 +121,18 @@ async def reavaliar_treino(user_id, data_iso: str, ignorar_fc: bool | None = Non
         if os.path.exists(candidato):
             fit_path = candidato
 
+    # NP que o dispositivo não gravou: calcula agora, do próprio .fit. Sem ela a
+    # análise cai na potência média — e num intervalado a média faz um VO2máx
+    # bem executado parecer Z2.
+    if fit_path and not resultado.get("norm_power"):
+        try:
+            from app.services.fit_service import np_do_fit
+            np_calc = np_do_fit(fit_path)
+            if np_calc:
+                resultado["norm_power"] = round(np_calc)
+        except Exception as exc:
+            logger.warning("reavaliar_treino: NP não calculada (%s): %s", data_iso, exc)
+
     # TSS: o hrTSS mente junto com a FC — recalcula preferindo potência e
     # deixa o campo vazio se não sobrar métrica confiável (o card cai para o
     # "TSS previsto" do planejado).

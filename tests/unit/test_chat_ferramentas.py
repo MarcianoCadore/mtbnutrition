@@ -72,3 +72,89 @@ class TestVerSemana:
         assert "[Z2_LONGO] PLANEJADO 90min" in linhas[0]
         assert "+ ACADEMIA 45min no mesmo dia" in linhas[1]
         assert "EXTRA" in linhas[2]
+
+
+class TestAjustarTreino:
+    """Encurtar um treino não pode reescrever o dia.
+
+    Regressão de 31/08/2026: "diminui o treino de hoje para 1h03" só tinha
+    `adicionar_treino` como saída, e ele reescreve o dia inteiro. O modelo passou
+    tipo=RECUPERACAO num VO2máx, a cadência-alvo foi a zero junto e a avaliação
+    do treino saiu comparando um treino de tiros com uma prescrição de
+    recuperação.
+    """
+
+    PLANO = {"data": QUA, "tipo": "VO2MAX", "duracao_min": 78, "cadencia_rpm": "90-100",
+             "periodo": "tarde", "descricao": "15 min aquecimento. 5x2 min VO2max. "
+                                              "Volta à calma 15 min Z1.",
+             "garmin_workout_id": "999"}
+
+    async def _semana(self, fake_db, **extra):
+        await fake_db.semanas.insert_one({
+            "semana_inicio": SEG, "user_id": UID, "objetivo": "",
+            "treinos": [{**self.PLANO, **extra}],
+        })
+
+    async def _treino(self, fake_db):
+        doc = await fake_db.semanas.find_one({"semana_inicio": SEG, "user_id": UID})
+        return doc["treinos"][0]
+
+    async def test_muda_so_a_duracao(self, fake_db):
+        await self._semana(fake_db)
+
+        saida = await chat._executar_ferramenta(UID, "ajustar_treino",
+                                                {"data": QUA, "duracao_min": 63})
+
+        assert "Erro" not in saida
+        t = await self._treino(fake_db)
+        assert t["duracao_min"] == 63
+        assert t["tipo"] == "VO2MAX", "o tipo do treino não muda ao encurtar"
+        assert t["cadencia_rpm"] == "90-100"
+        assert t["periodo"] == "tarde"
+        assert t["descricao"] == self.PLANO["descricao"]
+
+    async def test_descricao_nova_acompanha_o_tempo_novo(self, fake_db):
+        await self._semana(fake_db)
+
+        await chat._executar_ferramenta(UID, "ajustar_treino", {
+            "data": QUA, "duracao_min": 63,
+            "descricao": "15 min aquecimento. 5x2 min VO2max. Volta à calma 3 min Z1.",
+        })
+
+        t = await self._treino(fake_db)
+        assert t["duracao_min"] == 63
+        assert "3 min Z1" in t["descricao"]
+        assert t["tipo"] == "VO2MAX"
+
+    async def test_treino_ja_realizado_mantem_o_agendamento(self, fake_db):
+        """Ajuste retroativo (o atleta contando o que fez) não mexe no relógio."""
+        await self._semana(fake_db, resultado={"duracao_min": 66})
+
+        saida = await chat._executar_ferramenta(UID, "ajustar_treino",
+                                                {"data": QUA, "duracao_min": 63})
+
+        t = await self._treino(fake_db)
+        assert t["garmin_workout_id"] == "999"
+        assert "Garmin" not in saida
+
+    async def test_treino_futuro_solta_o_agendamento(self, fake_db):
+        """Duração nova = workout desatualizado no relógio: some o vínculo para o
+        atleta reenviar pelo botão."""
+        await self._semana(fake_db)
+
+        saida = await chat._executar_ferramenta(UID, "ajustar_treino",
+                                                {"data": QUA, "duracao_min": 100})
+
+        t = await self._treino(fake_db)
+        assert t["garmin_workout_id"] is None
+        assert "reenvie" in saida
+
+    async def test_dia_sem_treino_vira_erro(self, fake_db):
+        saida = await chat._executar_ferramenta(UID, "ajustar_treino",
+                                                {"data": QUA, "duracao_min": 60})
+        assert saida.startswith("Erro:")
+
+    async def test_sem_nada_para_ajustar_vira_erro(self, fake_db):
+        await self._semana(fake_db)
+        saida = await chat._executar_ferramenta(UID, "ajustar_treino", {"data": QUA})
+        assert saida.startswith("Erro:")

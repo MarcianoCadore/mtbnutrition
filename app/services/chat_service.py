@@ -43,7 +43,10 @@ _TOOLS = [
             "FORCA (força específica NA BIKE — cadência baixa, marcha pesada), "
             "ACADEMIA (musculação no ginásio — agachamento, supino, remada, etc.), "
             "RECUPERACAO (pedalada leve), DESCANSO (sem treino). "
-            "Use FORCA para treino de força na bike. Use ACADEMIA para musculação no ginásio."
+            "Use FORCA para treino de força na bike. Use ACADEMIA para musculação no ginásio. "
+            "Só use para COLOCAR um treino diferente no dia: para mudar a duração ou o texto "
+            "de um treino que já existe, use ajustar_treino — esta ferramenta apaga o tipo, "
+            "a cadência-alvo e a prescrição do dia."
         ),
         "input_schema": {
             "type": "object",
@@ -67,6 +70,42 @@ _TOOLS = [
                 },
             },
             "required": ["data", "tipo", "duracao_min", "descricao"],
+        },
+    },
+    {
+        "name": "ajustar_treino",
+        "description": (
+            "Ajusta a DURAÇÃO e/ou a DESCRIÇÃO de um treino que já está no calendário, "
+            "preservando o tipo, a cadência-alvo e o resto da prescrição. "
+            "USE SEMPRE que o atleta pedir para encurtar, alongar ou corrigir um treino "
+            "que já existe: 'diminui o treino de hoje para 1h03', 'aumenta o pedal de "
+            "sábado para 3h', 'a volta à calma foi só 3 min'. "
+            "NUNCA use adicionar_treino para isso — adicionar_treino reescreve o dia "
+            "inteiro e troca o tipo do treino, transformando um VO2máx em outra coisa. "
+            "Se mudar a descricao, escreva a prescrição COMPLETA e coerente com a nova "
+            "duração (aquecimento, blocos, volta à calma). A descrição é o PLANO do dia: "
+            "não narre nela o que o atleta executou nem escreva coisas como "
+            "'planejado eram 15 min' — isso é avaliado à parte, pelo resultado."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "string",
+                    "description": "Data do treino a ajustar, formato YYYY-MM-DD.",
+                },
+                "duracao_min": {
+                    "type": "integer",
+                    "description": "Nova duração em minutos. Omita para não mexer na duração.",
+                },
+                "descricao": {
+                    "type": "string",
+                    "description": (
+                        "Nova prescrição completa do dia. Omita para manter a que já está lá."
+                    ),
+                },
+            },
+            "required": ["data"],
         },
     },
     {
@@ -355,9 +394,18 @@ async def _build_sistema(user_id: str) -> str:
         "Antes de propor alterações, consulte a semana com ver_semana para saber o que já está agendado.",
         "Após cada ação, confirme o que foi feito e explique brevemente a escolha.",
         "",
+        "== MUDAR O TEMPO DE UM TREINO ==",
+        "Encurtar ou alongar um treino que JÁ ESTÁ no calendário é ajustar_treino, nunca "
+        "adicionar_treino. adicionar_treino serve para COLOCAR outro treino no dia: ele troca o "
+        "tipo, zera a cadência-alvo e apaga a prescrição — um VO2máx encurtado vira 'recuperação' "
+        "no calendário e a avaliação do treino sai errada por causa disso.",
+        "Ao mudar a duração, mande também a descricao completa e coerente com o novo tempo. A "
+        "descrição é o PLANO do dia: não escreva nela o que o atleta executou nem observações "
+        "como 'planejado eram 15 min, mas encurtou'.",
+        "",
         "== PLANEJAR ≠ REGISTRAR ==",
-        "adicionar_treino, remover_treino e mover_treino mexem no PLANO — só para o que ainda "
-        "vai acontecer.",
+        "adicionar_treino, ajustar_treino, remover_treino e mover_treino mexem no PLANO — só "
+        "para o que ainda vai acontecer.",
         "Quando o atleta disser que JÁ FEZ um treino e ele não apareceu pelo Garmin/Strava, "
         "chame registrar_treino_realizado com o relato dele. NUNCA use adicionar_treino para "
         "isso: além de não registrar nada como feito, ele reescreve a descrição do dia e apaga "
@@ -486,6 +534,7 @@ async def _executar_ferramenta(user_id: str, nome: str, args: dict) -> str:
     from app.services.treino_semana_service import (
         get_treinos_semana,
         criar_treino_dia,
+        ajustar_treino_dia,
         remover_treino_dia,
         mover_treino,
     )
@@ -507,6 +556,21 @@ async def _executar_ferramenta(user_id: str, nome: str, args: dict) -> str:
             # Se substituiu um treino que já estava agendado no Garmin, cancela o antigo.
             await _cancelar_no_garmin(user_id, [resultado.get("garmin_id_antigo")])
             return f"Treino adicionado: {args['data']} [{args['tipo']}] {args.get('duracao_min', 60)}min"
+
+        elif nome == "ajustar_treino":
+            r = await ajustar_treino_dia(
+                user_id,
+                args["data"],
+                args.get("duracao_min"),
+                args.get("descricao"),
+            )
+            # Só solta vínculo de treino FUTURO ainda não realizado (ver serviço).
+            await _cancelar_no_garmin(user_id, [r.get("garmin_id_antigo")])
+            msg = (f"Treino de {r['data']} ajustado: [{r['tipo']}] {r['duracao_min']}min "
+                   f"(tipo e prescrição preservados).")
+            if r.get("garmin_id_antigo"):
+                msg += " O agendamento antigo no Garmin foi cancelado — reenvie pelo botão do portal."
+            return msg
 
         elif nome == "remover_treino":
             resultado = await remover_treino_dia(user_id, args["data"])
