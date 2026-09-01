@@ -307,6 +307,22 @@ HTML = """<!DOCTYPE html>
        o item desmonta (nome em caixa alta, quebrado) e o campo de carga vaza
        para fora do card. Por isso os seletores abaixo são qualificados. */
     .ex-progresso { font-size: .72rem; color: var(--muted); font-weight: 700; margin-bottom: 6px; }
+
+    /* Resumo no CARD: só o placar e o botão que abre o modal. A lista inteira
+       aqui deixava a coluna do dia três vezes mais alta que as vizinhas. */
+    .ex-resumo { display: flex; flex-direction: column; gap: 6px; margin-bottom: 6px; }
+    .ex-resumo .ex-progresso { margin: 0; }
+    .day-body button.ex-abrir { width: 100%; padding: 8px; border: 1.5px solid var(--green);
+      border-radius: 7px; background: transparent; color: var(--green); font-size: .78rem;
+      font-weight: 700; cursor: pointer; transition: background .12s, color .12s; }
+    .day-body button.ex-abrir:hover { background: var(--green); color: #fff; }
+
+    /* No MODAL há largura: nome e carga cabem na mesma linha, e o item respira. */
+    .esp-checklist .ex-check-item { flex-direction: row; align-items: center;
+      justify-content: space-between; gap: 12px; padding: 9px 11px; }
+    .esp-checklist .ex-check-item label.ex-check-main { flex: 1 1 auto; font-size: .85rem; }
+    .esp-checklist .ex-carga { flex: 0 0 auto; margin-left: 0; }
+    .esp-checklist .ex-check-list { gap: 6px; }
     .ex-check-list { display: flex; flex-direction: column; gap: 4px; }
     .ex-check-item { display: flex; flex-direction: column; gap: 5px; padding: 7px 8px;
       border: 1px solid var(--border); border-radius: 6px; background: var(--card);
@@ -841,6 +857,21 @@ function _splitExercicio(txt) {
 // dois: o do treino principal (sk = data) e o do bloco de academia
 // (sk = data + '-ac'). A data real do treino vem de _execucao[sk].data, porque é
 // ela que monta a URL — o sk sozinho não serve.
+// No CARD só cabe o placar. A lista inteira (6 exercícios com campo de carga,
+// mais a escala de sensação) deixava a coluna do dia três vezes mais alta que
+// as vizinhas e quebrava a grade da semana — por isso ela vive no modal, que
+// é onde há espaço e onde o atleta já abre o treino para ler a prescrição.
+function renderChecklistResumo(sk, itens, locked) {
+  const exec = _execucao[sk] || {};
+  const feitos = (exec.itens_feitos || []).length;
+  return `<div class="ex-resumo">
+    <div class="ex-progresso" data-prog="${sk}">${feitos}/${itens.length} concluídos</div>
+    <button class="ex-abrir" onclick="abrirTreinoInfo('${sk}')">
+      ${locked ? '👀 Ver exercícios' : '✅ Marcar exercícios'}
+    </button>
+  </div>`;
+}
+
 function renderChecklistAcademia(sk, itens, locked) {
   const exec = _execucao[sk] || {};
   const feitos = new Set(exec.itens_feitos || []);
@@ -849,7 +880,7 @@ function renderChecklistAcademia(sk, itens, locked) {
   const dis = locked ? 'disabled' : '';
   const key = sk;
 
-  let html = `<div class="ex-progresso" id="ex-prog-${key}">${feitos.size}/${itens.length} concluídos</div>`;
+  let html = `<div class="ex-progresso" data-prog="${key}">${feitos.size}/${itens.length} concluídos</div>`;
   html += `<div class="ex-check-list" id="ex-list-${key}">`;
   for (let i = 0; i < itens.length; i++) {
     const on = feitos.has(i);
@@ -907,9 +938,13 @@ function toggleExercicio(key, idx, on) {
   e.itens_feitos = [...s].sort((a, b) => a - b);
 
   document.getElementById(`ex-item-${key}-${idx}`)?.classList.toggle('feito', on);
+  // O placar aparece duas vezes: no card (resumo) e no topo do modal. Marcar um
+  // exercício tem de mexer nos dois, senão o atleta fecha o modal e o card
+  // continua dizendo 0/6.
   const total = document.querySelectorAll(`#ex-list-${key} .ex-check-item`).length;
-  const prog = document.getElementById(`ex-prog-${key}`);
-  if (prog) prog.textContent = `${e.itens_feitos.length}/${total} concluídos`;
+  document.querySelectorAll(`[data-prog="${key}"]`).forEach(el => {
+    el.textContent = `${e.itens_feitos.length}/${total} concluídos`;
+  });
 
   enviarExecucao(key, e.sensacao);
 }
@@ -1116,7 +1151,7 @@ function buildCards(treinos) {
               <label>${isAcademia ? 'Exercícios' : 'Notas'}</label>
               <button class="info-treino" onclick="abrirTreinoInfo('${key}')" title="Ver especificação do treino"><span class="ic">ⓘ</span> saber mais</button>
             </div>
-            ${temChecklist ? renderChecklistAcademia(key, exItensAcad, checkTravado) : ''}
+            ${temChecklist ? renderChecklistResumo(key, exItensAcad, checkTravado) : ''}
             <textarea id="desc-${key}" placeholder="${isAcademia ? 'Lista de exercícios...' : 'Detalhes...'}" ${lockAttr} style="${temChecklist ? 'display:none' : ''}">${desc}</textarea>
             ${temChecklist && !lockAttr ? `<button class="ex-edit-toggle" onclick="toggleDescEdit('${key}')">✏️ editar a lista</button>` : ''}
           </div>
@@ -1487,7 +1522,16 @@ function abrirTreinoInfo(key) {
   if (tipo === 'ACADEMIA') {
     // Academia puro: mostra apenas os exercícios (sem estrutura de bike)
     corpo += `<div class="esp-obj">Treino de musculação complementar ao MTB. Exercícios escolhidos pela IA considerando os treinos de bike do dia anterior e posterior.</div>`;
-    if (notas && notas.trim()) {
+    // É AQUI que o atleta marca o que já fez: o modal abre em cima do
+    // calendário, tem largura para o campo de carga ao lado do nome e não
+    // deforma a coluna do dia. No card fica só o placar.
+    const itensAcad = _parseAcademiaTexto(notas).exItens;
+    if (itensAcad.length > 0) {
+      corpo += `<div class="esp-bloco esp-checklist" style="margin-top:10px">`
+             + `<div class="esp-titulo">Exercícios — marque conforme for fazendo</div>`
+             + renderChecklistAcademia(key, itensAcad, key > localIso(new Date()))
+             + `</div>`;
+    } else if (notas && notas.trim()) {
       corpo += `<div class="esp-bloco" style="margin-top:10px"><div class="esp-titulo">Exercícios</div>`
              + `<div class="esp-notas">${notas.replace(/</g,'&lt;').replace(/\\n/g,'<br>')}</div></div>`;
     } else {
