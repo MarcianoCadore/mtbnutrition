@@ -42,7 +42,10 @@ _DOWNLOAD_URL = "https://service14.mywhoosh.com/v2/rider/profile/download-activi
 # job (10 min) com folga para o servidor ter ficado fora do ar um tempo.
 _JANELA_PADRAO = 5
 
-_TIMEOUT = httpx.Timeout(30.0, read=60.0)
+# O .fit vem de um S3 em eu-west-1 e passa dos 250 KB em treino longo: leitura
+# curta demais derrubava justamente as sessões maiores.
+_TIMEOUT = httpx.Timeout(30.0, read=120.0)
+_TENTATIVAS_DOWNLOAD = 3
 
 
 class MyWhooshErro(Exception):
@@ -67,13 +70,33 @@ async def esta_conectado(user_id: str) -> bool:
     return await credenciais(user_id) is not None
 
 
-async def conectar(user_id: str, email: str, senha: str) -> bool:
+async def conectar(user_id: str, email: str, senha: str) -> dict:
     """Valida as credenciais fazendo login de verdade e só então salva.
 
     Guardar uma senha que não funciona faria o job falhar de 10 em 10 min sem o
     atleta entender por quê.
+
+    O que já está na conta do MyWhoosh no momento de conectar é marcado como
+    visto, SEM subir: o pedido é "salvei agora, vai pro Garmin", não "importe
+    meu histórico". Sem isto, conectar despejaria as últimas sessões no Garmin
+    Connect — várias já lá, algumas de meses atrás.
+
+    Retorna {"ignoradas": N} com quantas ficaram para trás.
     """
-    await _login(email, senha)          # levanta MyWhooshErro se não autenticar
+    sessao = await _login(email, senha)   # levanta MyWhooshErro se não autenticar
+
+    ignoradas = 0
+    try:
+        for atividade in await _listar(sessao, _JANELA_PADRAO):
+            activity_id = _id_da_atividade(atividade)
+            if activity_id and await _reservar(user_id, activity_id):
+                ignoradas += 1
+    except MyWhooshErro as exc:
+        # Não impede a conexão: no pior caso a primeira passada do job sobe uma
+        # sessão que já estava no Garmin, e o Garmin devolve 409.
+        logger.warning("mywhoosh: não deu para marcar o histórico (user=%s) — %s",
+                       user_id, exc)
+
     await atualizar_usuario(user_id, {
         "integracao.mywhoosh": {
             "email": email,
@@ -81,8 +104,9 @@ async def conectar(user_id: str, email: str, senha: str) -> bool:
             "conectado_em": datetime.now(timezone.utc),
         },
     })
-    logger.info("mywhoosh: conectado para user_id=%s", user_id)
-    return True
+    logger.info("mywhoosh: conectado para user_id=%s (%s atividades antigas ignoradas)",
+                user_id, ignoradas)
+    return {"ignoradas": ignoradas}
 
 
 async def desconectar(user_id: str) -> None:
@@ -93,6 +117,19 @@ async def desconectar(user_id: str) -> None:
 
 
 # ── API do MyWhoosh ──────────────────────────────────────────────────────────
+
+def _detalhe(exc: Exception) -> str:
+    """Timeout do httpx tem str() vazio — sem isto o log vira "falhou: " e não
+    dá para saber se foi rede, 403 ou arquivo corrompido."""
+    txt = str(exc).strip()
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    partes = [type(exc).__name__]
+    if status:
+        partes.append(f"HTTP {status}")
+    if txt:
+        partes.append(txt)
+    return " — ".join(partes)
+
 
 async def _login(email: str, senha: str) -> dict:
     """Autentica e devolve {"token": ..., "whoosh_id": ...}."""
@@ -111,7 +148,7 @@ async def _login(email: str, senha: str) -> dict:
             r.raise_for_status()
             data = r.json()
     except httpx.HTTPError as exc:
-        raise MyWhooshErro(f"não deu para falar com o MyWhoosh: {exc}") from exc
+        raise MyWhooshErro(f"não deu para falar com o MyWhoosh: {_detalhe(exc)}") from exc
 
     if not data.get("Success") or not data.get("AccessToken"):
         raise MyWhooshErro(data.get("Message") or "e-mail ou senha do MyWhoosh inválidos")
@@ -144,9 +181,10 @@ async def _listar(sessao: dict, limite: int) -> list[dict]:
             r = await c.post(_ATIVIDADES_URL, headers=headers,
                              json={"page": 1, "limit": limite, "sortDate": "DESC"})
             r.raise_for_status()
-            return _extrair_atividades(r.json())
+            # A API ignora o "limit" do payload (pedindo 5 vieram 10): corta aqui.
+            return _extrair_atividades(r.json())[:limite]
     except httpx.HTTPError as exc:
-        raise MyWhooshErro(f"não deu para listar as atividades: {exc}") from exc
+        raise MyWhooshErro(f"não deu para listar as atividades: {_detalhe(exc)}") from exc
 
 
 def _id_da_atividade(atividade: dict) -> str | None:
@@ -158,35 +196,50 @@ def _id_da_atividade(atividade: dict) -> str | None:
 
 
 async def _baixar_fit(sessao: dict, atividade: dict) -> bytes:
-    """Baixa o .fit: a API devolve uma URL S3 assinada, o arquivo vem de lá."""
+    """Baixa o .fit: a API devolve uma URL S3 assinada, o arquivo vem de lá.
+
+    Tenta mais de uma vez: o S3 do MyWhoosh fica na Irlanda e derruba a leitura
+    de vez em quando — na primeira execução real foram justamente as duas
+    sessões maiores que caíram por timeout, e as duas baixaram na tentativa
+    seguinte.
+    """
     file_id = atividade.get("activityFileId")
     if not file_id:
         raise MyWhooshErro("atividade sem arquivo .fit para baixar")
 
     headers = {"Authorization": f"Bearer {sessao['token']}",
                "Content-Type": "application/json"}
-    try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=True) as c:
-            r = await c.post(_DOWNLOAD_URL, headers=headers,
-                             json={"key": sessao["whoosh_id"], "fileId": file_id})
-            r.raise_for_status()
-            data = r.json()
-            if data.get("error"):
-                raise MyWhooshErro(data.get("message") or "erro ao pedir o arquivo")
-            url = data.get("data")
-            if not isinstance(url, str) or not url.startswith("http"):
-                raise MyWhooshErro("o MyWhoosh não devolveu link de download")
 
-            arq = await c.get(url)
-            arq.raise_for_status()
-            conteudo = arq.content
-    except httpx.HTTPError as exc:
-        raise MyWhooshErro(f"não deu para baixar o .fit: {exc}") from exc
+    ultimo: Exception | None = None
+    for tentativa in range(1, _TENTATIVAS_DOWNLOAD + 1):
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=True) as c:
+                r = await c.post(_DOWNLOAD_URL, headers=headers,
+                                 json={"key": sessao["whoosh_id"], "fileId": file_id})
+                r.raise_for_status()
+                data = r.json()
+                if data.get("error"):
+                    raise MyWhooshErro(data.get("message") or "erro ao pedir o arquivo")
+                url = data.get("data")
+                if not isinstance(url, str) or not url.startswith("http"):
+                    raise MyWhooshErro("o MyWhoosh não devolveu link de download")
 
-    # Assinatura do formato: os bytes 8-11 de todo .fit são ".FIT".
-    if len(conteudo) < 14 or conteudo[8:12] != b".FIT":
-        raise MyWhooshErro("o arquivo baixado não é um .fit válido")
-    return conteudo
+                arq = await c.get(url)
+                arq.raise_for_status()
+                conteudo = arq.content
+        except httpx.HTTPError as exc:
+            ultimo = exc
+            logger.warning("mywhoosh: download tentativa %s/%s falhou — %s",
+                           tentativa, _TENTATIVAS_DOWNLOAD, _detalhe(exc))
+            continue
+
+        # Assinatura do formato: os bytes 8-11 de todo .fit são ".FIT". Uma
+        # página de erro do S3 chega com HTTP 200 e não pode virar "treino".
+        if len(conteudo) < 14 or conteudo[8:12] != b".FIT":
+            raise MyWhooshErro("o arquivo baixado não é um .fit válido")
+        return conteudo
+
+    raise MyWhooshErro(f"não deu para baixar o .fit: {_detalhe(ultimo)}") from ultimo
 
 
 # ── controle de duplicata ────────────────────────────────────────────────────

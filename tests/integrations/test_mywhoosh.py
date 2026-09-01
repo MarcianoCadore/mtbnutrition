@@ -88,7 +88,7 @@ class TestConectar:
     async def test_valida_antes_de_salvar(self, fake_db, api):
         await fake_db.users.insert_one({"_id": ObjectId(UID), "nome": "Atleta"})
 
-        assert await mw.conectar(UID, EMAIL, SENHA) is True
+        assert await mw.conectar(UID, EMAIL, SENHA) == {"ignoradas": 1}
 
         u = await fake_db.users.find_one({"_id": ObjectId(UID)})
         cfg = u["integracao"]["mywhoosh"]
@@ -110,6 +110,48 @@ class TestConectar:
         await _conectado(fake_db)
         await mw.desconectar(UID)
         assert await mw.esta_conectado(UID) is False
+
+
+class TestPrimeiraConexao:
+    """Conectar não é importar histórico.
+
+    O pedido é "salvei o treino agora, sobe pro Garmin". Se conectar despejasse
+    as últimas sessões, o Garmin ganharia de volta pedais que já estão lá — e
+    alguns de meses atrás.
+    """
+
+    async def test_o_que_ja_existia_nao_sobe(self, fake_db, api, garmin):
+        await fake_db.users.insert_one({"_id": ObjectId(UID), "nome": "Atleta"})
+
+        r = await mw.conectar(UID, EMAIL, SENHA)
+
+        assert r == {"ignoradas": 1}
+        assert await mw.sync_para_garmin(UID) == 0
+        assert garmin["subidas"] == [], "nada do histórico pode ir para o Garmin"
+
+    async def test_treino_novo_depois_de_conectar_sobe(self, fake_db, api, garmin):
+        await fake_db.users.insert_one({"_id": ObjectId(UID), "nome": "Atleta"})
+        await mw.conectar(UID, EMAIL, SENHA)
+
+        # O atleta pedala e salva: a sessão nova aparece no topo da lista.
+        nova = {"id": "act-2", "activityFileId": "file-2", "name": "Ride de hoje"}
+        api["atividades"] = [nova, ATIVIDADE]
+
+        assert await mw.sync_para_garmin(UID) == 1
+        assert garmin["subidas"] == [FIT]
+
+    async def test_falha_ao_marcar_historico_nao_impede_conectar(self, fake_db, api, garmin,
+                                                                monkeypatch):
+        """Melhor conectar e arriscar um 409 do Garmin do que recusar a conexão."""
+        await fake_db.users.insert_one({"_id": ObjectId(UID), "nome": "Atleta"})
+
+        async def _explode(_sessao, _limite):
+            raise mw.MyWhooshErro("API fora do ar")
+
+        monkeypatch.setattr(mw, "_listar", _explode)
+
+        assert await mw.conectar(UID, EMAIL, SENHA) == {"ignoradas": 0}
+        assert await mw.esta_conectado(UID) is True
 
 
 class TestSync:

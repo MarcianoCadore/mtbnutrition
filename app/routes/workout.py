@@ -1521,11 +1521,11 @@ async def mywhoosh_conectar(
 
     user_id = request.state.user_id
     try:
-        await conectar(user_id, email, senha)
+        r = await conectar(user_id, email, senha)
     except MyWhooshErro as e:
         logger.error("mywhoosh_conectar: falhou para user_id=%s — %s", user_id, e)
         raise HTTPException(status_code=400, detail=str(e))
-    return {"status": "conectado"}
+    return {"status": "conectado", "ignoradas": r.get("ignoradas", 0)}
 
 
 @router.post("/mywhoosh/desconectar")
@@ -2487,15 +2487,15 @@ _PAGINA_INTEGRACAO = """<!DOCTYPE html>
         st.textContent = '❌ ' + (d.detail || 'Não consegui conectar. Confira e-mail e senha.');
         return;
       }
-      st.className='status info'; st.textContent = '✅ Conectado! Buscando suas atividades…';
-      try {
-        const s2 = await fetch('/workout/mywhoosh/sync', { method:'POST' });
-        const d2 = await s2.json();
-        st.textContent = d2.enviadas
-          ? `✅ Conectado! ${d2.enviadas} atividade${d2.enviadas > 1 ? 's' : ''} enviada${d2.enviadas > 1 ? 's' : ''} ao Garmin.`
-          : '✅ Conectado! Nenhuma atividade nova por enquanto.';
-      } catch (e) {}
-      setTimeout(() => location.reload(), 1800);
+      // Nada de sync aqui: o que já existia na conta foi marcado como visto, e
+      // disparar um sync agora só correria com o reload logo abaixo (o browser
+      // cancelaria a requisição no meio do download).
+      const d = await r.json().catch(() => ({}));
+      st.className = 'status ok';
+      st.textContent = d.ignoradas
+        ? `✅ Conectado! Suas ${d.ignoradas} sessões antigas foram deixadas como estão — daqui pra frente, todo treino novo sobe sozinho.`
+        : '✅ Conectado! Todo treino novo do MyWhoosh sobe sozinho para o Garmin.';
+      setTimeout(() => location.reload(), 2500);
     } catch(e) {
       st.className='status err'; st.textContent = '❌ ' + e.message;
     } finally {
