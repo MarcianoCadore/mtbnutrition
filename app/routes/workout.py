@@ -1484,6 +1484,49 @@ async def garmin_desconectar(request: Request):
     return {"status": "desconectado"}
 
 
+# ── MyWhoosh: a ponte do treino indoor até o Garmin ──────────────────────────
+
+@router.post("/mywhoosh/conectar")
+async def mywhoosh_conectar(
+    request: Request,
+    email: str = Form(...),
+    senha: str = Form(...),
+):
+    """Conecta a conta MyWhoosh. A partir daí, toda atividade salva lá sobe
+    sozinha para o Garmin Connect e o sync normal a lê e avalia."""
+    from app.services.mywhoosh_service import MyWhooshErro, conectar
+
+    user_id = request.state.user_id
+    try:
+        await conectar(user_id, email, senha)
+    except MyWhooshErro as e:
+        logger.error("mywhoosh_conectar: falhou para user_id=%s — %s", user_id, e)
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "conectado"}
+
+
+@router.post("/mywhoosh/desconectar")
+async def mywhoosh_desconectar(request: Request):
+    from app.services.mywhoosh_service import desconectar
+
+    await desconectar(request.state.user_id)
+    return {"status": "desconectado"}
+
+
+@router.post("/mywhoosh/sync")
+async def mywhoosh_sync(request: Request):
+    """Força uma passada agora, sem esperar os 10 min do job. É o que o botão
+    'Sincronizar' chama logo depois de conectar."""
+    from app.services.mywhoosh_service import MyWhooshErro, sync_para_garmin
+
+    user_id = request.state.user_id
+    try:
+        enviadas = await sync_para_garmin(user_id)
+    except MyWhooshErro as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"enviadas": enviadas}
+
+
 @router.get("/zonas", response_class=HTMLResponse)
 async def pagina_zonas(request: Request):
     from app.services.user_service import get_por_id
@@ -1537,9 +1580,37 @@ async def pagina_integracao(request: Request):
       </form>
       <div id="stGarmin" class="status"></div>"""
 
+    # MyWhoosh sobe a atividade PARA o Garmin: sem Garmin conectado não há para
+    # onde mandar, então o formulário nem aparece.
+    mywhoosh_email = (integ.get("mywhoosh") or {}).get("email")
+    if not garmin_conectado:
+        mywhoosh_html = """
+      <p class="hint">Treina no MyWhoosh? Conecte o Garmin acima primeiro — é para lá que as atividades vão.</p>"""
+    elif mywhoosh_email:
+        mw_safe = (str(mywhoosh_email)
+                   .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+        mywhoosh_html = f"""
+      <div class="status ok" style="display:block">✅ MyWhoosh conectado <b>({mw_safe})</b></div>
+      <p class="hint">Cada treino que você salvar no MyWhoosh sobe sozinho para o Garmin Connect, e o app lê e avalia de lá. Não precisa deixar o computador ligado.</p>
+      <button onclick="sincronizarMyWhoosh()" id="btnMwSync">Sincronizar agora</button>
+      <button class="sec" onclick="desconectarMyWhoosh()" id="btnMwDesc">Desconectar MyWhoosh</button>
+      <div id="stMw" class="status"></div>"""
+    else:
+        mywhoosh_html = """
+      <p class="hint">O MyWhoosh não manda os treinos para o Garmin sozinho. Conecte sua conta aqui e o app faz essa ponte: assim que você salvar a atividade, ela sobe para o Garmin Connect e volta avaliada.</p>
+      <form id="formMw" onsubmit="conectarMyWhoosh(event)">
+        <label class="fld">E-mail MyWhoosh</label>
+        <input type="email" id="mw_email" name="email" autocomplete="username" required>
+        <label class="fld" style="margin-top:10px">Senha MyWhoosh</label>
+        <input type="password" id="mw_senha" name="senha" autocomplete="current-password" required>
+        <button type="submit" id="btnMwConn" style="margin-top:14px">Conectar MyWhoosh</button>
+      </form>
+      <div id="stMw" class="status"></div>"""
+
     tema = (u.get("preferencias") or {}).get("tema") or "light"
     return (_PAGINA_INTEGRACAO
             .replace("{{GARMIN_BLOCO}}", garmin_html)
+            .replace("{{MYWHOOSH_BLOCO}}", mywhoosh_html)
             .replace("__TEMA__", tema))
 
 
@@ -2358,6 +2429,11 @@ _PAGINA_INTEGRACAO = """<!DOCTYPE html>
     <h2>⌚ Garmin Connect</h2>
     {{GARMIN_BLOCO}}
   </div>
+
+  <div class="card">
+    <h2>🚴 MyWhoosh</h2>
+    {{MYWHOOSH_BLOCO}}
+  </div>
 </main>
 <script>
   function getMonday(d) {
@@ -2374,6 +2450,66 @@ _PAGINA_INTEGRACAO = """<!DOCTYPE html>
   // Importa 90 dias de histórico. Demora (baixa e analisa um .fit por sessão),
   // então a mensagem explica o que está acontecendo em vez de deixar a tela
   // parada — e uma falha aqui nunca desfaz a conexão que acabou de dar certo.
+  async function conectarMyWhoosh(ev) {
+    ev.preventDefault();
+    const btn = document.getElementById('btnMwConn');
+    const st = document.getElementById('stMw');
+    btn.disabled = true; btn.textContent = 'Conectando…';
+    st.className = 'status info'; st.textContent = 'Verificando suas credenciais no MyWhoosh…';
+    try {
+      const fd = new FormData();
+      fd.append('email', document.getElementById('mw_email').value);
+      fd.append('senha', document.getElementById('mw_senha').value);
+      const r = await fetch('/workout/mywhoosh/conectar', { method:'POST', body: fd });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        st.className='status err';
+        st.textContent = '❌ ' + (d.detail || 'Não consegui conectar. Confira e-mail e senha.');
+        return;
+      }
+      st.className='status info'; st.textContent = '✅ Conectado! Buscando suas atividades…';
+      try {
+        const s2 = await fetch('/workout/mywhoosh/sync', { method:'POST' });
+        const d2 = await s2.json();
+        st.textContent = d2.enviadas
+          ? `✅ Conectado! ${d2.enviadas} atividade${d2.enviadas > 1 ? 's' : ''} enviada${d2.enviadas > 1 ? 's' : ''} ao Garmin.`
+          : '✅ Conectado! Nenhuma atividade nova por enquanto.';
+      } catch (e) {}
+      setTimeout(() => location.reload(), 1800);
+    } catch(e) {
+      st.className='status err'; st.textContent = '❌ ' + e.message;
+    } finally {
+      btn.disabled = false; btn.textContent = 'Conectar MyWhoosh';
+    }
+  }
+
+  async function sincronizarMyWhoosh() {
+    const st = document.getElementById('stMw');
+    st.className = 'status info'; st.textContent = 'Procurando atividades novas…';
+    try {
+      const r = await fetch('/workout/mywhoosh/sync', { method:'POST' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'falhou');
+      st.className = 'status ok';
+      st.textContent = d.enviadas
+        ? `✅ ${d.enviadas} atividade${d.enviadas > 1 ? 's' : ''} enviada${d.enviadas > 1 ? 's' : ''} ao Garmin. A avaliação sai no próximo sync.`
+        : '✅ Tudo em dia — nada novo no MyWhoosh.';
+    } catch(e) {
+      st.className = 'status err'; st.textContent = '❌ ' + e.message;
+    }
+  }
+
+  async function desconectarMyWhoosh() {
+    if (!confirm('Desconectar o MyWhoosh? Suas atividades param de subir sozinhas para o Garmin.')) return;
+    const st = document.getElementById('stMw');
+    try {
+      await fetch('/workout/mywhoosh/desconectar', { method:'POST' });
+      location.reload();
+    } catch(e) {
+      st.className = 'status err'; st.textContent = '❌ ' + e.message;
+    }
+  }
+
   async function importarHistorico(st) {
     st.className = 'status info';
     st.textContent = '📥 Importando seus últimos 90 dias… isso pode levar um minuto.';

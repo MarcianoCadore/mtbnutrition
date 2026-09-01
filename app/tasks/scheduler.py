@@ -283,12 +283,24 @@ async def job_garmin_sync():
     for u in com_garmin:
         user_id = str(u["_id"])
         try:
+            # MyWhoosh primeiro: o treino indoor entra no Garmin e já é lido na
+            # mesma passada. Falha aqui não pode impedir o sync do Garmin — quem
+            # pedala fora continua sendo sincronizado.
+            mw = 0
+            try:
+                from app.services.mywhoosh_service import sync_para_garmin
+                mw = await sync_para_garmin(user_id)
+            except Exception as e:
+                logger.error("job_garmin_sync: MyWhoosh falhou para user_id=%s — %s",
+                             user_id, e)
+
             pl = await sync_treinos_planejados(user_id, semana)
             at = await sync_atividades(user_id, semana)
-            if pl or at:
+            if pl or at or mw:
                 print(
                     f"[{datetime.now()}] Garmin sync ({u.get('login')}): "
                     f"{pl} treinos planejados, {at} atividades"
+                    + (f", {mw} do MyWhoosh" if mw else "")
                 )
         except Exception as e:
             # Não derruba outros usuários — loga e segue
