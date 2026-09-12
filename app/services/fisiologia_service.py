@@ -18,13 +18,15 @@ import anthropic
 import pytz
 
 from config.settings import settings
-from app.services import custo_ia_service
+from app.services import custo_ia_service, ia_client
 from app.services.mongo_service import get_db
 from app.services.user_service import get_por_id
 
 logger = logging.getLogger(__name__)
 
-_client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+# Quem atende: Gemini (grátis) por padrão, Anthropic se IA_PROVEDOR=claude.
+# A interface é a mesma dos dois lados — ver app/services/ia_client.py.
+_client = ia_client.get_client()
 _MODEL_PARECER = "claude-opus-4-8"       # análise fisiológica (inteligência importa)
 _MODEL_PARECER_FALLBACK = "claude-sonnet-5"
 _TZ = pytz.timezone("America/Sao_Paulo")
@@ -44,7 +46,9 @@ def _is_quota_error(exc: Exception) -> bool:
     if isinstance(exc, (anthropic.RateLimitError, anthropic.PermissionDeniedError)):
         return True
     msg = str(exc).lower()
-    return any(k in msg for k in ("rate limit", "quota", "credit", "overloaded", "529"))
+    # "resource_exhausted"/"429" são a forma do Gemini dizer a mesma coisa.
+    return any(k in msg for k in ("rate limit", "quota", "credit", "overloaded",
+                                  "529", "resource_exhausted", "429"))
 
 
 def _extrair_texto(response) -> str:
@@ -329,7 +333,10 @@ async def gerar_parecer_fisiologico(user_id: str, semana_atual: str) -> dict:
     db = get_db()
     existente = await db.pareceres_fisiologicos.find_one(
         {"user_id": user_id, "semana_ref": semana_atual})
-    if existente and existente.get("modelo") in ("claude-opus", "claude-sonnet"):
+    # "deterministico" é o fallback de emergência — esse vale a pena refazer.
+    # Qualquer outra origem (Opus, Gemini, Claude Code no terminal) é parecer
+    # de verdade e se reaproveita no mesmo dia.
+    if existente and existente.get("modelo") != "deterministico":
         gerado_em = datetime.fromisoformat(existente["gerado_em"])
         if gerado_em.astimezone(_TZ).date() == datetime.now(_TZ).date():
             existente.pop("_id", None)

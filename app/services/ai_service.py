@@ -4,10 +4,12 @@ import json
 import re
 from config.settings import settings
 from app.models.models import Treino, TipoTreino, PlanoAlimentar
-from app.services import custo_ia_service
+from app.services import custo_ia_service, ia_client
 from datetime import datetime
 
-_client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+# Quem atende: Gemini (grátis) por padrão, Anthropic se IA_PROVEDOR=claude.
+# A interface é a mesma dos dois lados — ver app/services/ia_client.py.
+_client = ia_client.get_client()
 _MODEL = "claude-sonnet-4-6"
 _MODEL_ANALISE = "claude-sonnet-4-6"
 

@@ -32,8 +32,11 @@ _PRECOS = {
     "claude-haiku-4-5":  {"in": 1.00, "out":  5.00},
     # Google — o fallback gratuito tem cota, mas não é infinito; contabilizar
     # pelo preço de tabela deixa visível quanto o fallback estaria custando.
-    "gemini-2.0-flash":       {"in": 0.10, "out": 0.40},
+    "gemini-3.6-flash":       {"in": 0.30, "out": 2.50},
+    "gemini-3.5-flash-lite":  {"in": 0.10, "out": 0.40},
+    "gemini-3.1-flash-lite":  {"in": 0.10, "out": 0.40},
     "gemini-2.5-flash-lite":  {"in": 0.10, "out": 0.40},
+    "gemini-2.0-flash":       {"in": 0.10, "out": 0.40},
 }
 
 _PRECO_PADRAO = {"in": 3.00, "out": 15.00}
@@ -107,6 +110,10 @@ async def registrar(user_id, feature: str, modelo: str, resp=None,
     treino. Erro aqui vira log e segue.
     """
     try:
+        # O serviço ainda pede o modelo pelo nome antigo (claude-*), mas quem
+        # atendeu pode ter sido o Gemini via ia_client — cobrar preço de Claude
+        # por chamada gratuita inventaria um custo que não existe.
+        modelo = getattr(resp, "modelo_real", None) or modelo
         dados = uso if uso is not None else extrair_uso(resp)
         if not dados:
             return 0.0
