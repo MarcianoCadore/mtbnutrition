@@ -9,13 +9,15 @@ import anthropic
 
 from config.settings import settings
 from app.utils import hoje_local
-from app.services import custo_ia_service
+from app.services import custo_ia_service, ia_client
 from app.services.mongo_service import get_db
 from app.services.user_service import get_por_id
 
 logger = logging.getLogger(__name__)
 
-_client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+# Quem atende: Gemini (grátis) por padrão, Anthropic se IA_PROVEDOR=claude.
+# A interface é a mesma dos dois lados — ver app/services/ia_client.py.
+_client = ia_client.get_client()
 _MODEL_PLANO = "claude-sonnet-5"
 
 
@@ -27,12 +29,17 @@ def _extrair_texto(response) -> str:
 _TIPOS_VALIDOS = {"Z2_LONGO", "TIROS", "VO2MAX", "TEMPO", "FORCA", "ACADEMIA", "RECUPERACAO", "DESCANSO", "TESTE_FTP"}
 
 
-_MODEL_GEMINI = "gemini-2.0-flash"
+# Segundo degrau da escada: o primeiro (`_client`) já é o gemini-3.6-flash, de
+# cota curta (~20/dia). Quando ele recusa por cota, o flash-lite tem 500/dia e
+# ainda escreve um JSON de semana decente — melhor que cair no +5% mecânico.
+# Era "gemini-2.0-flash", que o Google aposentou (404) e deixou o fallback morto
+# sem ninguém perceber até 12/09/2026.
+_MODEL_GEMINI = ia_client.MODELO_LEVE
 
 
 async def _chamar_gemini(prompt: str, sistema: str | None = None,
                          user_id: str | None = None, feature: str = "gerar_semana") -> str:
-    """Chama Gemini Flash (gratuito) como fallback quando Claude está sem cota."""
+    """Chama o Gemini leve — último recurso antes do fallback determinístico."""
     from google import genai
     from google.genai import types as gtypes
 
@@ -49,8 +56,6 @@ async def _chamar_gemini(prompt: str, sistema: str | None = None,
             response_mime_type="application/json",
         ),
     )
-    # A cota gratuita não é infinita: contabilizar pelo preço de tabela mostra
-    # quanto o fallback custaria se ela acabasse.
     await custo_ia_service.registrar(user_id, feature, _MODEL_GEMINI, resp)
     return resp.text
 
@@ -60,7 +65,9 @@ def _is_quota_error(exc: Exception) -> bool:
     if isinstance(exc, (anthropic.RateLimitError, anthropic.PermissionDeniedError)):
         return True
     msg = str(exc).lower()
-    return any(k in msg for k in ("rate limit", "quota", "credit", "overloaded", "529"))
+    # "resource_exhausted"/"429" são a forma do Gemini dizer a mesma coisa.
+    return any(k in msg for k in ("rate limit", "quota", "credit", "overloaded",
+                                  "529", "resource_exhausted", "429"))
 
 _DURACAO_PADRAO = {
     "Z2_LONGO":    120,
@@ -841,16 +848,20 @@ Há duas formas de programar academia, e elas são excludentes entre si no mesmo
 """
 
 
-async def gerar_proxima_semana(
+async def montar_contexto_semana(
     user_id: str, semana_atual: str, teto_dia_util_min: int = 120,
     dias_treino_override: list[int] | None = None,
+    parecer_pronto: dict | None = None,
 ) -> dict:
-    """Gera o plano da próxima semana com base na análise da semana atual.
+    """Monta o prompt da próxima semana e o contexto que valida a resposta.
 
-    `teto_dia_util_min` permite elevar pontualmente o teto de duração dos
-    treinos em dia útil (ex: semana de férias com mais tempo disponível).
-    `dias_treino_override` substitui pontualmente os dias de treino do
-    perfil (ex: semana de férias sem fim de semana disponível).
+    Separado de `gerar_proxima_semana` para que a geração possa acontecer
+    fora do processo — hoje o plano é escrito pelo Claude Code, no terminal,
+    em vez de por uma API paga (ver scripts/semana_claude.py). Quem gera muda;
+    o prompt e as travas que conferem o resultado continuam sendo os mesmos.
+
+    `parecer_pronto` injeta um parecer fisiológico já feito, em vez de gastar
+    uma chamada de IA para produzi-lo.
     """
     db = get_db()
     doc = await db.semanas.find_one({"semana_inicio": semana_atual, "user_id": user_id})
@@ -867,9 +878,10 @@ async def gerar_proxima_semana(
     # Analisa as últimas semanas executadas ANTES de montar a próxima. Nunca
     # bloqueia a geração: em falha, segue sem parecer (comportamento antigo).
     from app.services.fisiologia_service import gerar_parecer_fisiologico, bloco_parecer_prompt
-    parecer: dict | None = None
+    parecer: dict | None = parecer_pronto
     try:
-        parecer = await gerar_parecer_fisiologico(user_id, semana_atual)
+        if parecer is None:
+            parecer = await gerar_parecer_fisiologico(user_id, semana_atual)
     except Exception as e:
         logger.warning("Parecer fisiológico falhou (%s) — gerando semana sem parecer", e)
     bloco_parecer = bloco_parecer_prompt(parecer)
@@ -1285,6 +1297,43 @@ RESTRIÇÕES DE AGENDA (OBRIGATÓRIAS):
 {"POTÊNCIA (WATTS) NAS PRESCRIÇÕES:" + chr(10) + ("Inclua o alvo em watts NA DESCRIÇÃO de TODOS os treinos: ex. 'Z2 | 171-231W'." if potencia_modo in ("sempre", "ambos") else "Inclua o alvo em watts NA DESCRIÇÃO dos treinos de qualidade (VO2MAX, TIROS, TEMPO, FORCA): ex. '4×4 min Z5 | >327W'. Z2_LONGO e RECUPERACAO não têm potência (feitos na rua sem medidor).") if ftp_user else ""}
 """
 
+    # O contexto vai junto do prompt porque quem normaliza a resposta depois
+    # precisa exatamente dos mesmos números que entraram nele.
+    return {
+        "prompt":               prompt,
+        "sistema":              _SISTEMA_PLANO,
+        "user_id":              user_id,
+        "semana_atual":         semana_atual,
+        "proxima":              proxima,
+        "treinos":              treinos,
+        "preferencias":         preferencias,
+        "fase_prova":           fase_prova,
+        "estagio_prova":        estagio_prova,
+        "data_prova":           data_prova,
+        "zonas_lista":          zonas_lista,
+        "zonas_pot_user":       zonas_pot_user,
+        "quantos_com_potencia": quantos_com_potencia,
+        "parecer":              parecer,
+    }
+
+
+
+async def gerar_proxima_semana(
+    user_id: str, semana_atual: str, teto_dia_util_min: int = 120,
+    dias_treino_override: list[int] | None = None,
+) -> dict:
+    """Gera o plano da próxima semana com base na análise da semana atual.
+
+    `teto_dia_util_min` permite elevar pontualmente o teto de duração dos
+    treinos em dia útil (ex: semana de férias com mais tempo disponível).
+    `dias_treino_override` substitui pontualmente os dias de treino do
+    perfil (ex: semana de férias sem fim de semana disponível).
+    """
+    ctx = await montar_contexto_semana(
+        user_id, semana_atual, teto_dia_util_min, dias_treino_override)
+    prompt, treinos = ctx["prompt"], ctx["treinos"]
+    proxima, preferencias = ctx["proxima"], ctx["preferencias"]
+
     modelo_usado = "claude"
     try:
         response = await _client.messages.create(
@@ -1317,6 +1366,29 @@ RESTRIÇÕES DE AGENDA (OBRIGATÓRIAS):
             logger.warning("Claude falhou para gerar próxima semana: %s — usando fallback", e)
             data = _fallback(treinos, proxima, preferencias)
             modelo_usado = "fallback"
+
+    return normalizar_plano(data, ctx, modelo_usado)
+
+
+def normalizar_plano(data: dict, ctx: dict, modelo_usado: str = "claude") -> dict:
+    """Valida e normaliza o plano cru da IA contra o contexto que o gerou.
+
+    É aqui que mora a proteção do atleta: tipo de treino válido, teto de
+    duração, regras de agenda, dia duplo com academia, marcação do
+    potenciômetro e legenda de zonas. Vale para qualquer origem — API,
+    Claude Code no terminal ou fallback determinístico.
+    """
+    from app.services.config_service import marcar_treinos_com_potencia
+
+    proxima = ctx["proxima"]
+    preferencias = ctx["preferencias"]
+    fase_prova = ctx["fase_prova"]
+    estagio_prova = ctx["estagio_prova"]
+    data_prova = ctx["data_prova"]
+    zonas_lista = ctx["zonas_lista"]
+    zonas_pot_user = ctx["zonas_pot_user"]
+    quantos_com_potencia = ctx["quantos_com_potencia"]
+    parecer = ctx["parecer"]
 
     # normaliza e valida cada treino retornado pela IA
     treinos_out = []
