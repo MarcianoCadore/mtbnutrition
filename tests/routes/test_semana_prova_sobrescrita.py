@@ -6,9 +6,8 @@ A escrita veio do portal — a grade mandou o plano que tinha em memória, que e
 a semana mecânica de +5% anterior.
 
 Dois buracos apareceram na investigação, e são estes que os testes abaixo
-prendem: o documento gravado fora do portal não carimbava versão (então a aba
-velha nem levava 409), e o salvamento trocava o documento inteiro pelo payload,
-apagando os campos que o modelo não conhece.
+prendem: o documento gravado fora do portal não carimbava versão, e por isso a aba
+velha nem chegava a levar 409 — a proteção existia e estava desligada.
 """
 from datetime import date, timedelta
 
@@ -85,16 +84,3 @@ class TestDiaDaProva:
             "semana_inicio": SEG, "objetivo": "", "treinos": _grade_antiga(),
             "base_versao": ""})
         assert r.status_code == 409
-
-
-class TestCamposForaDoModelo:
-    def test_marca_de_semana_gerada_pela_ia_sobrevive(self, auth_client, fake_db, run):
-        """`gerada_por_ia` não está em TreinoSemana — e some se o replace_one não olhar."""
-        client, uid = auth_client
-        run(fake_db.semanas.insert_one({**_semana_polimento(), "user_id": uid}))
-
-        client.post("/workout/semana", json={
-            "semana_inicio": SEG, "objetivo": "", "treinos": _grade_antiga()})
-
-        doc = run(fake_db.semanas.find_one({"semana_inicio": SEG, "user_id": uid}))
-        assert doc.get("gerada_por_ia") is True

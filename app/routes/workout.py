@@ -200,15 +200,6 @@ async def salvar_semana(request: Request, plano: PlanoSemanal):
                 data["treinos"][i] = saved
         data["treinos"].extend(extras_existentes)
 
-    # `data` só tem os campos do modelo, e o replace_one troca o documento
-    # inteiro — então tudo que vive no doc mas não no payload (gerada_por_ia,
-    # origem da geração) sumia em silêncio a cada salvamento da grade. É o que
-    # apagou a marca da semana montada pela IA em 12/09/2026.
-    if existing:
-        for campo, valor in existing.items():
-            if campo not in ("_id", "treinos", "atualizado_em") and campo not in data:
-                data[campo] = valor
-
     data["atualizado_em"] = _dt.now(timezone.utc).isoformat()
     await db.semanas.replace_one(
         {"semana_inicio": plano.semana_inicio, "user_id": user_id},

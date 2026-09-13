@@ -333,10 +333,7 @@ async def gerar_parecer_fisiologico(user_id: str, semana_atual: str) -> dict:
     db = get_db()
     existente = await db.pareceres_fisiologicos.find_one(
         {"user_id": user_id, "semana_ref": semana_atual})
-    # "deterministico" é o fallback de emergência — esse vale a pena refazer.
-    # Qualquer outra origem (Opus, Gemini, Claude Code no terminal) é parecer
-    # de verdade e se reaproveita no mesmo dia.
-    if existente and existente.get("modelo") != "deterministico":
+    if existente and existente.get("modelo") in ("claude-opus", "claude-sonnet"):
         gerado_em = datetime.fromisoformat(existente["gerado_em"])
         if gerado_em.astimezone(_TZ).date() == datetime.now(_TZ).date():
             existente.pop("_id", None)
