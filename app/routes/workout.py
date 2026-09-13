@@ -1505,6 +1505,18 @@ async def evolucao_dados(request: Request, semanas: int = 12):
     return await resumo(request.state.user_id, semanas)
 
 
+@router.get("/evolucao/retrospectiva")
+async def evolucao_retrospectiva(request: Request, meses: int = 1):
+    """Como os treinos vêm vindo no período — e contra o período anterior.
+
+    Não chama IA: os pontos fortes e fracos já foram escritos na avaliação de
+    cada treino, e aqui eles só são agrupados por tema.
+    """
+    from app.services.evolucao_service import retrospectiva
+    meses = max(1, min(int(meses or 1), 12))
+    return await retrospectiva(request.state.user_id, meses)
+
+
 @router.get("/curva-potencia")
 async def curva_potencia(request: Request):
     """Melhores esforços dos últimos 90 dias + o FTP que sai deles."""
@@ -3971,6 +3983,33 @@ _PAGINA_EVOLUCAO = """<!DOCTYPE html>
   .cv-w { font-size:.9rem; font-weight:800; }
   .cv-w small { display:block; font-size:.68rem; color:var(--muted); font-weight:500; }
 
+  /* Retrospectiva — "como vêm vindo meus treinos" */
+  .rt-periodos { display:flex; gap:7px; flex-wrap:wrap; margin-bottom:14px; }
+  .rt-periodos button { background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:99px; padding:7px 15px; font-size:.82rem; font-weight:700; cursor:pointer; font-family:inherit; }
+  .rt-periodos button:hover { border-color:var(--green); color:var(--green); }
+  .rt-periodos button[aria-pressed="true"] { background:var(--green); border-color:var(--green); color:#fff; }
+  .rt-periodos button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .rt-num { display:grid; grid-template-columns:repeat(auto-fit,minmax(128px,1fr)); gap:12px; margin-bottom:18px; }
+  .rt-n { border:1px solid var(--border); border-radius:12px; padding:12px 14px; }
+  .rt-n .v { font-size:1.45rem; font-weight:800; line-height:1.15; }
+  .rt-n .l { font-size:.68rem; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; font-weight:700; margin-top:2px; }
+  .rt-n .d { font-size:.74rem; margin-top:5px; color:var(--muted); }
+  .rt-n .d.sobe { color:#16a34a; font-weight:700; }
+  .rt-n .d.desce { color:#dc2626; font-weight:700; }
+  .rt-cols { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:18px; }
+  .rt-col h3 { font-size:.82rem; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); margin-bottom:9px; }
+  .rt-item { display:flex; align-items:baseline; gap:9px; padding:8px 0; border-bottom:1px solid var(--border); }
+  .rt-item:last-child { border-bottom:0; }
+  .rt-item .t { font-weight:700; font-size:.88rem; }
+  .rt-item .q { margin-left:auto; font-size:.75rem; color:var(--muted); white-space:nowrap; }
+  .rt-item .ex { display:block; font-size:.76rem; color:var(--muted); line-height:1.45; margin-top:2px; }
+  .rt-desvio { background:var(--bg); border-radius:10px; padding:12px 14px; margin-top:16px; font-size:.84rem; }
+  .rt-desvio b { color:var(--text); }
+  .rt-desvio ul { list-style:none; margin-top:7px; display:grid; gap:4px; }
+  .rt-desvio li { color:var(--muted); font-size:.8rem; }
+  .rt-sessao { font-size:.82rem; color:var(--muted); line-height:1.5; margin-top:14px; }
+  .rt-sessao b { color:var(--text); }
+
   .vazio { text-align:center; padding:26px 16px; color:var(--muted); font-size:.9rem; line-height:1.6; }
   .vazio b { color:var(--text); }
   .btn { display:inline-block; margin-top:12px; background:var(--green); color:#fff; border:none; border-radius:9px; padding:11px 20px; font-size:.9rem; font-weight:700; cursor:pointer; text-decoration:none; }
@@ -3986,6 +4025,17 @@ _PAGINA_EVOLUCAO = """<!DOCTYPE html>
 <main>
   <h1>Sua evolução</h1>
   <p class="sub">O que mudou nas últimas 12 semanas — comparando você com você mesmo.</p>
+  <div class="card">
+    <h2>Como vêm vindo seus treinos</h2>
+    <p class="hint">O que as avaliações de cada treino dizem quando você olha o período inteiro de uma vez. Escolha até onde voltar.</p>
+    <div class="rt-periodos" role="group" aria-label="Período da retrospectiva">
+      <button type="button" data-meses="1" aria-pressed="true">1 mês</button>
+      <button type="button" data-meses="3" aria-pressed="false">3 meses</button>
+      <button type="button" data-meses="6" aria-pressed="false">6 meses</button>
+      <button type="button" data-meses="12" aria-pressed="false">12 meses</button>
+    </div>
+    <div id="retro"><p class="vazio">Carregando…</p></div>
+  </div>
   <div id="conteudo"><p class="vazio">Carregando…</p></div>
 </main>
 
@@ -4090,6 +4140,109 @@ function render(d) {
 
   el.innerHTML = html;
 }
+
+// ── Retrospectiva: "como vêm vindo meus treinos" ──────────────────────────
+const TIPO_PT = {Z2_LONGO:'Z2 longo', TIROS:'Tiros', VO2MAX:'VO2máx', TEMPO:'Tempo',
+                 FORCA:'Força', ACADEMIA:'Academia', RECUPERACAO:'Recuperação',
+                 DESCANSO:'Descanso', TESTE_FTP:'Teste de FTP'};
+
+function dataBr(iso) { return iso ? iso.slice(8,10) + '/' + iso.slice(5,7) : ''; }
+
+function delta(atual, anterior, unidade, casas) {
+  // Número sozinho não informa: 40h só quer dizer algo contra as 28h de antes.
+  if (atual == null || anterior == null || !anterior) return '';
+  const d = atual - anterior;
+  if (Math.abs(d) < (casas ? 0.05 : 0.5)) return '<div class="d">igual ao período anterior</div>';
+  const txt = (d > 0 ? '↑ ' : '↓ ') + Math.abs(casas ? d.toFixed(casas) : Math.round(d)) + (unidade || '');
+  return `<div class="d ${d > 0 ? 'sobe' : 'desce'}">${txt} vs. período anterior</div>`;
+}
+
+function listaTemas(itens, vazio) {
+  if (!itens.length) return `<p class="rt-sessao">${vazio}</p>`;
+  return itens.map(i => `<div class="rt-item">
+      <div><span class="t">${i.rotulo}</span><span class="ex">${i.exemplo}</span></div>
+      <span class="q">${i.n} sessõe(s)</span>
+    </div>`).join('');
+}
+
+function renderRetro(d) {
+  const el = document.getElementById('retro');
+  const a = d.atual, b = d.anterior;
+
+  if (!a.sessoes) {
+    el.innerHTML = `<p class="vazio">Nenhum treino registrado entre ${dataBr(d.de)} e ${dataBr(d.ate)}.<br>
+      Escolha um período maior para ver mais longe.</p>`;
+    return;
+  }
+
+  // Comparar com um período anterior quase vazio produz "↑ 102h vs. anterior",
+  // que é verdade aritmética e mentira de treino: o histórico simplesmente não
+  // existia lá atrás. Abaixo de 3 sessões, não se compara.
+  const comparavel = b.sessoes >= 3;
+  const vs = (x, y, u, c) => comparavel ? delta(x, y, u, c) : '';
+
+  let html = `<p class="hint" style="margin-top:-4px">${dataBr(d.de)} a ${dataBr(d.ate)} · ${a.sessoes} treino(s) registrado(s)${
+    comparavel ? '' : ' · sem histórico suficiente antes disso para comparar'}</p>
+  <div class="rt-num">
+    <div class="rt-n"><div class="v">${a.horas}<small style="font-size:.85rem">h</small></div>
+      <div class="l">No selim</div>${vs(a.horas, b.horas, 'h', 1)}</div>
+    <div class="rt-n"><div class="v">${a.aderencia != null ? a.aderencia + '%' : '—'}</div>
+      <div class="l">Aderência</div><div class="d">${a.sessoes} de ${a.planejados} planejados</div></div>
+    <div class="rt-n"><div class="v">${a.nota_media ?? '—'}</div>
+      <div class="l">Nota média</div>${vs(a.nota_media, b.nota_media, '', 1)}</div>
+    <div class="rt-n"><div class="v">${a.cadencia_media ?? '—'}<small style="font-size:.8rem">rpm</small></div>
+      <div class="l">Cadência</div>${vs(a.cadencia_media, b.cadencia_media, ' rpm')}</div>
+    <div class="rt-n"><div class="v">${a.km}<small style="font-size:.8rem">km</small></div>
+      <div class="l">Distância</div>${vs(a.km, b.km, ' km')}</div>
+    <div class="rt-n"><div class="v">${(a.elevacao/1000).toFixed(1)}<small style="font-size:.8rem">k m</small></div>
+      <div class="l">Subida</div>${vs(a.elevacao, b.elevacao, ' m')}</div>
+  </div>`;
+
+  html += `<div class="rt-cols">
+    <div class="rt-col"><h3>✅ O que vem indo bem</h3>${
+      listaTemas(d.fortes, 'Ainda sem pontos fortes registrados neste período.')}</div>
+    <div class="rt-col"><h3>🔧 O que melhorar</h3>${
+      listaTemas(d.fracos, 'Nenhum ponto fraco recorrente — raro e bom.')}</div>
+  </div>`;
+
+  if (d.desvios_total) {
+    html += `<div class="rt-desvio">
+      <b>🔀 ${d.desvios_total} sessõe(s) saíram diferentes do que estava prescrito</b>
+      <ul>${d.desvios.map(x => `<li>${TIPO_PT[x.planejado] || x.planejado} virou
+        ${TIPO_PT[x.realizado] || x.realizado} — ${x.n}× (${x.datas.map(dataBr).join(', ')})</li>`).join('')}</ul>
+    </div>`;
+  }
+
+  if (d.melhor) {
+    html += `<p class="rt-sessao"><b>Melhor treino:</b> ${dataBr(d.melhor.data)} ·
+      ${TIPO_PT[d.melhor.tipo] || d.melhor.tipo} · nota ${d.melhor.nota} — ${d.melhor.resumo}</p>`;
+  }
+  if (d.pior && d.pior.data !== (d.melhor || {}).data) {
+    html += `<p class="rt-sessao"><b>Treino mais fraco:</b> ${dataBr(d.pior.data)} ·
+      ${TIPO_PT[d.pior.tipo] || d.pior.tipo} · nota ${d.pior.nota} — ${d.pior.resumo}</p>`;
+  }
+
+  el.innerHTML = html;
+}
+
+function carregarRetro(meses) {
+  document.querySelectorAll('.rt-periodos button').forEach(b => {
+    b.setAttribute('aria-pressed', String(Number(b.dataset.meses) === meses));
+  });
+  document.getElementById('retro').innerHTML = '<p class="vazio">Carregando…</p>';
+  fetch(`/workout/evolucao/retrospectiva?meses=${meses}`)
+    .then(r => r.json())
+    .then(renderRetro)
+    .catch(() => {
+      document.getElementById('retro').innerHTML =
+        '<p class="vazio">Não consegui carregar a retrospectiva agora.</p>';
+    });
+}
+
+document.querySelectorAll('.rt-periodos button').forEach(b => {
+  b.addEventListener('click', () => carregarRetro(Number(b.dataset.meses)));
+});
+carregarRetro(1);
 
 fetch('/workout/evolucao/dados')
   .then(r => r.json())
