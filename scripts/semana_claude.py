@@ -25,7 +25,7 @@ import asyncio
 import json
 import os
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -102,7 +102,6 @@ async def cmd_parecer_prompt(args):
 
 
 async def cmd_parecer_salvar(args):
-    from datetime import datetime, timezone
     from app.services.fisiologia_service import _coletar_historico, calcular_metricas
 
     parecer_ia = _carregar_json(args.arquivo)
@@ -175,6 +174,18 @@ async def cmd_salvar(args):
         raise SystemExit(
             f"❌ {proxima} já tem treino com resultado registrado — não vou sobrescrever.")
 
+    # O plano vem da IA, mas o que o dia JÁ tem no banco é do atleta: o id do
+    # workout no Garmin (sem ele o reenvio não consegue apagar o antigo e o
+    # relógio fica com dois treinos no mesmo dia), o resultado sincronizado e o
+    # checklist da academia. Regravar a semana não pode levar isso embora.
+    por_data = {t["data"]: t for t in (existente or {}).get("treinos", [])
+                if t.get("origem") != "extra"}
+    for t in plano["treinos"]:
+        salvo = por_data.get(t["data"]) or {}
+        for campo in ("garmin_workout_id", "resultado", "execucao", "com_potencia"):
+            if salvo.get(campo) is not None and t.get(campo) is None:
+                t[campo] = salvo[campo]
+
     extras = [t for t in (existente or {}).get("treinos", []) if t.get("origem") == "extra"]
     doc = {
         "semana_inicio": proxima,
@@ -182,6 +193,11 @@ async def cmd_salvar(args):
         "objetivo": plano.get("progressao", ""),
         "treinos": plano["treinos"] + extras,
         "gerada_por_ia": True,
+        # Carimbo de versão. Sem ele, uma aba do portal aberta ANTES desta
+        # gravação salva por cima sem nem levar 409: o portal compara a versão
+        # que leu com a do banco, e "" == "" passa batido. Foi assim que a
+        # semana de polimento do Carcará virou 9h55 em 12/09/2026.
+        "atualizado_em": datetime.now(timezone.utc).isoformat(),
     }
     if args.simular:
         print(f"(simulação — nada gravado) {u.get('nome')} | {proxima}")

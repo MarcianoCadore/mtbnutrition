@@ -10,11 +10,19 @@ Duas travas, uma por camada:
 - a semana carrega um carimbo de versão que volta no salvamento (409 se mudou);
 - dia com resultado é intocável por esta rota, venha o payload de onde vier.
 """
+from datetime import date, timedelta
+
 import pytest
 
-SEG = "2026-08-31"     # segunda — e "hoje" nestes testes
-TER = "2026-09-01"
-QUA = "2026-09-02"
+# Datas RELATIVAS a hoje, de propósito. Na primeira versão deste arquivo elas
+# eram fixas (31/08 a 02/09 de 2026) e, quando o calendário passou por elas, o
+# teste do "dia futuro" parou de testar o dia futuro: a condição virou passado,
+# a trava deixou de ser exercitada e o teste passou a falhar sozinho, sem que
+# nada no produto tivesse quebrado. Teste com data fixa tem prazo de validade.
+_HOJE = date.today()
+SEG = (_HOJE + timedelta(days=(7 - _HOJE.weekday()))).isoformat()   # próxima segunda
+TER = (date.fromisoformat(SEG) + timedelta(days=1)).isoformat()
+QUA = (date.fromisoformat(SEG) + timedelta(days=2)).isoformat()
 
 
 def _treino(data, tipo="Z2_LONGO", **extra):
