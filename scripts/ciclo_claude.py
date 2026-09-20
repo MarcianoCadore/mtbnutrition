@@ -305,13 +305,14 @@ async def cmd_salvar(args):
 # ─── Consulta ────────────────────────────────────────────────────────────────
 
 async def cmd_ver(args):
-    ciclo = await cs.ciclo_ativo(args.user_id)
+    ciclo = await cs.ciclo_ativo_ou_proximo(args.user_id)
     if not ciclo:
-        print("Nenhum ciclo ativo. Rode `diagnostico` e depois `salvar`.")
+        print("Nenhum ciclo ativo nem programado. Rode `diagnostico` e depois `salvar`.")
         return
     hoje = date.today().isoformat()
     pos = cs.posicao(ciclo, cs.segunda_de(hoje))
-    print(f"Ciclo {ciclo['numero']}: {ciclo['inicio']} a {ciclo['fim']}")
+    quando = "" if pos else f" (começa em {ciclo['inicio']})"
+    print(f"Ciclo {ciclo['numero']}: {ciclo['inicio']} a {ciclo['fim']}{quando}")
     print(f"🎯 {ciclo.get('objetivo')}")
     if pos:
         print(f"📍 semana {pos['semana_no_ciclo']}/{cs.SEMANAS_CICLO} | "
@@ -319,7 +320,8 @@ async def cmd_ver(args):
               f"semana {pos['semana_no_bloco']}/{pos['semanas_no_bloco']} do bloco | "
               f"papel: {pos['papel']} | alvo {pos['alvo_tss']} TSS")
     print()
-    print(cs.bloco_prompt(ciclo, cs.segunda_de(hoje)))
+    # Antes de o ciclo começar, mostra a 1ª semana dele — é o que interessa ver.
+    print(cs.bloco_prompt(ciclo, cs.segunda_de(hoje) if pos else ciclo["inicio"]))
 
 
 def main():

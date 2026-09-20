@@ -568,6 +568,26 @@ async def ciclo_ativo(user_id: str, ref: str | None = None) -> dict | None:
     })
 
 
+async def ciclo_ativo_ou_proximo(user_id: str, ref: str | None = None) -> dict | None:
+    """O ciclo corrente ou, se ele ainda não começou, o próximo a começar.
+
+    Um ciclo é sempre criado numa segunda-feira futura, então entre a criação e
+    a virada da semana `ciclo_ativo` responde None corretamente — e quem só quer
+    OLHAR o ciclo recém-criado acha que ele não foi salvo. A geração da semana
+    continua usando `ciclo_ativo`, que é a pergunta certa lá: a semana pergunta
+    por uma data específica, não por "o que vem por aí".
+    """
+    atual = await ciclo_ativo(user_id, ref)
+    if atual:
+        return atual
+    dia = ref or hoje_local().isoformat()
+    db = get_db()
+    return await db.ciclos.find_one(
+        {"user_id": user_id, "estado": "ativo", "inicio": {"$gt": dia}},
+        sort=[("inicio", 1)],
+    )
+
+
 async def ciclo_por_id(ciclo_id: str) -> dict | None:
     db = get_db()
     return await db.ciclos.find_one({"_id": ObjectId(ciclo_id)})

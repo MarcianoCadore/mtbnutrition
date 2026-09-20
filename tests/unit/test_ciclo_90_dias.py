@@ -650,3 +650,28 @@ def test_vespera_de_prova_A_e_mais_leve_que_uma_semana_de_manutencao():
     det = {d["semana"]: d for d in
            _semanas_planas(cs.esqueleto_blocos(INICIO, temporada, 524))}
     assert det["2026-10-12"]["alvo_tss"] < det["2026-10-05"]["alvo_tss"]
+
+
+def test_bloco_prompt_da_primeira_semana_de_um_ciclo_que_ainda_nao_comecou():
+    """Ciclo criado no domingo para começar na segunda: olhar para ele tem que funcionar."""
+    ciclo = _ciclo()
+    assert cs.posicao(ciclo, "2026-09-20") is None      # domingo, véspera
+    assert "BLOCO 1" in cs.bloco_prompt(ciclo, ciclo["inicio"])
+
+
+# ── Ciclo × taper genérico: quem manda na semana de prova ────────────────────
+
+def test_bloco_de_competicao_nao_repete_alvo_de_carga_do_taper():
+    """Dois alvos de carga no mesmo prompt e a IA escolhe um — provavelmente o errado.
+
+    `proxima_prova` dispara polimento para QUALQUER prova seguinte. Com quatro
+    largadas em seis semanas isso poliria o atleta quatro vezes, e punha 195 TSS
+    (taper) ao lado de 393 TSS (ciclo) para a mesma semana.
+    """
+    from app.services.plano_semana_service import _REGRAS_COMPETICAO, _REGRAS_TAPER
+
+    assert "ALVO DE CARGA" not in _REGRAS_COMPETICAO
+    assert "NÃO faça polimento completo" in _REGRAS_COMPETICAO
+    # E o texto de taper de verdade continua existindo para quem não está em
+    # bloco de competição.
+    assert "ALVO DE CARGA DA SEMANA" in _REGRAS_TAPER["prova"] + "ALVO DE CARGA DA SEMANA"

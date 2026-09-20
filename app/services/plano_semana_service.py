@@ -555,6 +555,17 @@ _REGRAS_FASE = {
 # Polimento: duas semanas, dois recados. O que a literatura sustenta é cortar
 # VOLUME mantendo INTENSIDADE — daí as duas frases insistirem nisso. O número
 # concreto (TSS-alvo) é anexado em runtime por _bloco_carga_taper().
+# Substitui as regras de polimento quando a semana cai num BLOCO DE COMPETIÇÃO
+# do ciclo. Não repete alvo de carga: o do ciclo já está no prompt, e dois
+# números para a mesma semana sempre acabam com a IA escolhendo um deles.
+_REGRAS_COMPETICAO = (
+    "REGRAS DA FASE (BLOCO DE COMPETIÇÃO): esta prova faz parte de uma sequência "
+    "de largadas — NÃO faça polimento completo para ela, ou o atleta chega "
+    "destreinado na última. Basta mini-descarga nos 2-3 dias anteriores (só "
+    "aberturas curtas de 1-2 min) e nada de sessão-chave na véspera. O alvo de "
+    "carga da semana é o do CICLO, informado acima — siga aquele."
+)
+
 _REGRAS_TAPER = {
     "descarga": (
         "REGRAS DA FASE (POLIMENTO — SEMANA DE DESCARGA; a prova é na semana que vem): "
@@ -1062,6 +1073,8 @@ async def montar_contexto_semana(
         proxima_prova, semanas_ate, fase_periodizacao, FASE_LABEL, listar_provas,
         estagio_taper as _estagio_taper, carga_alvo_taper,
     )
+    em_competicao = bool(
+        pos_ciclo and (pos_ciclo["bloco"] or {}).get("foco") == "competicao")
     bloco_prova = ""
     fase_prova: str | None = None
     estagio_prova: str | None = None
@@ -1101,7 +1114,16 @@ async def montar_contexto_semana(
             det.append(f"prioridade {prova['prioridade']}")
         det_txt = (" — " + ", ".join(det)) if det else ""
         meta_txt = f"\nMeta do atleta: {prova['meta']}" if prova.get("meta") else ""
-        if estagio_prova:
+        # Dentro de um bloco de competição quem manda é o ciclo, não o taper
+        # genérico. `proxima_prova` dispara polimento para QUALQUER prova
+        # seguinte: com quatro largadas em seis semanas isso poliria o atleta
+        # quatro vezes — exatamente o que o bloco de competição existe para
+        # impedir — e punha no mesmo prompt dois alvos de carga diferentes para
+        # a mesma semana (o do ciclo e o do taper). O ciclo já decidiu o alvo
+        # lá em cima, e já reservou taper de verdade na véspera das provas A.
+        if em_competicao:
+            regras_txt = _REGRAS_COMPETICAO
+        elif estagio_prova:
             regras_txt = _REGRAS_TAPER[estagio_prova] + _bloco_carga_taper(alvo_tss, _cronica)
         else:
             regras_txt = _REGRAS_FASE.get(fase_prova, "")
@@ -1113,7 +1135,7 @@ async def montar_contexto_semana(
         )
         bloco_prova = f"""
 PRÓXIMA PROVA-ALVO: {prova['nome']} em {prova['data']} ({sem_rest} semana(s) restante(s)){det_txt}.{meta_txt}
-FASE DE PERIODIZAÇÃO: {FASE_LABEL.get(fase_prova, fase_prova)}.
+FASE DE PERIODIZAÇÃO: {"Bloco de competição" if em_competicao else FASE_LABEL.get(fase_prova, fase_prova)}.
 {regras_txt}{dia_prova_txt}
 Direcione a semana para essa fase e para as exigências da prova (terreno/altimetria).
 """
