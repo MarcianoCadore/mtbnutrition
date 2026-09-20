@@ -696,6 +696,42 @@ def _linhas_execucao_academia(fonte: dict, ident: str = "    ") -> list[str]:
     return linhas
 
 
+def _excecao_meta_volume(pos_ciclo: dict | None, estagio_prova: str | None) -> str:
+    """Quando a meta de volume do perfil deixa de valer nesta semana.
+
+    A meta ("fique entre 10h e 11h") e a semana de descarga do ciclo ("corte
+    volume para absorver o bloco") são duas ordens que se contradizem. Sem
+    dizer explicitamente qual manda, o gerador obedece à meta — ela é um
+    número e a descarga é prosa — e a semana de descarga volta a ser semana
+    cheia, que é exatamente o defeito que o ciclo veio resolver.
+
+    Só a semana de CARGA pura mantém a meta: nela o alvo de horas e o alvo de
+    TSS do ciclo dizem a mesma coisa. Em qualquer outro papel eles divergem —
+    uma semana de prova mira ~6h contra uma meta de 10h — e duas ordens
+    contraditórias no mesmo prompt sempre resolvem a favor da numérica.
+
+    Ordem de precedência: papel do ciclo > polimento de prova > nada.
+    """
+    from app.services.ciclo_service import PAPEL_CARGA, PAPEL_MANUTENCAO
+
+    papel = (pos_ciclo or {}).get("papel")
+    if pos_ciclo and papel not in (PAPEL_CARGA, PAPEL_MANUTENCAO):
+        return (
+            f"\n- ESTA SEMANA A META NÃO VALE: o ciclo reservou esta semana como "
+            f"{papel.upper()}. Mire o alvo de TSS do ciclo, fique abaixo da meta "
+            "de horas de propósito, e explique isso ao atleta em \"progressao\"."
+        )
+    if estagio_prova:
+        return (
+            "\n- ESTA SEMANA A META NÃO VALE: polimento/prova mandam mais que ela. "
+            "Siga a periodização e explique isso em \"progressao\"."
+        )
+    return (
+        "\n- ÚNICA exceção: semana de recuperação/descarga planejada por você. "
+        "Nesse caso fique abaixo da meta de propósito e diga o motivo em \"progressao\"."
+    )
+
+
 def _resumo_treino(t: dict) -> str:
     linhas = [f"  - {t['data']} | {t.get('tipo','?')}"]
     if t.get("duracao_min"):
@@ -885,6 +921,23 @@ async def montar_contexto_semana(
     except Exception as e:
         logger.warning("Parecer fisiológico falhou (%s) — gerando semana sem parecer", e)
     bloco_parecer = bloco_parecer_prompt(parecer)
+
+    # ── Ciclo de 90 dias (a memória longa) ───────────────────────────────────
+    # Sem isto a semana é um evento isolado: olha 4 semanas para trás e não sabe
+    # de onde vem nem para onde vai. Com o ciclo ela sabe em que bloco está, se
+    # é semana de carga ou de descarga, qual o alvo de TSS reservado para ela e
+    # qual limitador o ciclo está atacando.
+    #
+    # Nunca bloqueia a geração: atleta sem ciclo (recém-chegado, ou entre dois
+    # ciclos) cai em `bloco_ciclo` vazio e a semana sai como sempre saiu.
+    from app.services import ciclo_service
+    ciclo: dict | None = None
+    try:
+        ciclo = await ciclo_service.ciclo_ativo(user_id, ref=proxima)
+    except Exception as e:
+        logger.warning("Ciclo de 90 dias indisponível (%s) — semana segue sem ele", e)
+    pos_ciclo = ciclo_service.posicao(ciclo, proxima)
+    bloco_ciclo = ciclo_service.bloco_prompt(ciclo, proxima)
 
     # ── Dados do usuário (tolerante a ausências) ──────────────────────────────
     u = await get_por_id(user_id)
@@ -1218,13 +1271,7 @@ Após o TESTE_FTP coloque RECUPERACAO no dia seguinte.
     volume_alvo_min = volume_semanal_do_usuario(preferencias)
     if volume_alvo_min:
         volume_teto_min = round(volume_alvo_min * 1.1)
-        _excecao_taper = (
-            "\n- ESTA SEMANA A META NÃO VALE: polimento/prova mandam mais que ela. "
-            "Siga a periodização e explique isso em \"progressao\"."
-            if estagio_prova else
-            "\n- ÚNICA exceção: semana de recuperação/descarga planejada por você. "
-            "Nesse caso fique abaixo da meta de propósito e diga o motivo em \"progressao\"."
-        )
+        _excecao_taper = _excecao_meta_volume(pos_ciclo, estagio_prova)
         bloco_volume = f"""
 META DE VOLUME SEMANAL (o atleta definiu no perfil): {formatar_horas(volume_alvo_min)} ({volume_alvo_min} min).
 - A soma de "duracao_min" de TODOS os treinos da semana (bike + academia, DESCANSO não conta)
@@ -1270,6 +1317,7 @@ ZONAS GARMIN (apenas para SUA decisão de intensidade — NÃO copie os bpm nas 
 {bloco_potencia}
 DIAS DE TREINO: {dias_treino_nomes}
 {bloco_academia}
+{bloco_ciclo}
 {bloco_prova}
 {bloco_ftp_obrigatorio}
 ═══════════════════════════════════════════
@@ -1314,6 +1362,8 @@ RESTRIÇÕES DE AGENDA (OBRIGATÓRIAS):
         "zonas_pot_user":       zonas_pot_user,
         "quantos_com_potencia": quantos_com_potencia,
         "parecer":              parecer,
+        "ciclo":                ciclo,
+        "pos_ciclo":            pos_ciclo,
     }
 
 
@@ -1370,6 +1420,48 @@ async def gerar_proxima_semana(
     return normalizar_plano(data, ctx, modelo_usado)
 
 
+# Semana de descarga: no máximo UMA sessão de qualidade — a "abertura" que
+# mantém o sistema aceso — e longão cortado. O que a descarga corta é VOLUME,
+# não estímulo: zerar a intensidade destreina justamente na semana em que a
+# adaptação está acontecendo, e é por isso que esta trava não mexe na primeira
+# sessão dura nem reescreve descrição de intervalado (a descrição passaria a
+# mentir sobre a duração).
+_TIPOS_QUALIDADE = ("VO2MAX", "TIROS", "TEMPO", "FORCA")
+_DESCARGA_MAX_QUALIDADE = 1
+_DESCARGA_LONGAO_MAX_MIN = 120
+
+
+def _aplicar_descarga(treinos: list[dict]) -> None:
+    """Trava da semana de descarga, aplicada sobre o plano já normalizado.
+
+    O prompt avisa em letras garrafais que a semana é de descarga, então isto
+    quase nunca deve disparar. Existe porque o parecer de 13/09/2026 flagrou
+    ACWR 1.69 com "nenhuma semana de descarga feita no bloco": pôr a descarga no
+    esqueleto do ciclo resolve o planejamento, não o gerador entusiasmado que
+    entrega três sessões duras assim mesmo. Esqueleto não é trava.
+    """
+    qualidade_vista = 0
+    for t in treinos:
+        tipo = t.get("tipo")
+        if tipo in _TIPOS_QUALIDADE:
+            qualidade_vista += 1
+            if qualidade_vista > _DESCARGA_MAX_QUALIDADE:
+                logger.info(
+                    "Descarga: %s de %s vira RECUPERACAO (2ª sessão dura da semana)",
+                    tipo, t.get("data"),
+                )
+                t["tipo"] = "RECUPERACAO"
+                t["duracao_min"] = min(t.get("duracao_min") or 45, 50)
+                t["descricao"] = _DESCRICAO_PADRAO.get("RECUPERACAO", "")
+                t["cadencia_rpm"] = None
+        elif tipo == "Z2_LONGO" and (t.get("duracao_min") or 0) > _DESCARGA_LONGAO_MAX_MIN:
+            logger.info(
+                "Descarga: longão de %s cortado de %s para %s min",
+                t.get("data"), t["duracao_min"], _DESCARGA_LONGAO_MAX_MIN,
+            )
+            t["duracao_min"] = _DESCARGA_LONGAO_MAX_MIN
+
+
 def normalizar_plano(data: dict, ctx: dict, modelo_usado: str = "claude") -> dict:
     """Valida e normaliza o plano cru da IA contra o contexto que o gerou.
 
@@ -1389,6 +1481,7 @@ def normalizar_plano(data: dict, ctx: dict, modelo_usado: str = "claude") -> dic
     zonas_pot_user = ctx["zonas_pot_user"]
     quantos_com_potencia = ctx["quantos_com_potencia"]
     parecer = ctx["parecer"]
+    pos_ciclo = ctx.get("pos_ciclo")
 
     # normaliza e valida cada treino retornado pela IA
     treinos_out = []
@@ -1445,6 +1538,11 @@ def normalizar_plano(data: dict, ctx: dict, modelo_usado: str = "claude") -> dic
     # não de um clique por dia: o atleta pediu explicitamente que a IA agende
     # isso sozinha. Sem configuração, ninguém é marcado e o envio ao Garmin
     # segue a heurística antiga por tipo de treino.
+    # A semana de descarga do ciclo é protegida aqui, não no prompt: o prompt
+    # pede, a trava garante.
+    if pos_ciclo and pos_ciclo.get("eh_descarga"):
+        _aplicar_descarga(treinos_out)
+
     if quantos_com_potencia is not None:
         marcar_treinos_com_potencia(treinos_out, quantos_com_potencia)
 
@@ -1461,6 +1559,19 @@ def normalizar_plano(data: dict, ctx: dict, modelo_usado: str = "claude") -> dic
         "treinos":        treinos_out,
         "modelo_usado":   modelo_usado,
         "parecer_fisiologico": parecer,
+        # Onde esta semana caiu no ciclo. Guardado junto do plano para que o
+        # portal e o fechamento do bloco não precisem recalcular a posição —
+        # e para que a semana continue sabendo seu papel mesmo se o ciclo for
+        # refeito depois. None quando o atleta não tem ciclo ativo.
+        "ciclo": {
+            "numero":          (ctx.get("ciclo") or {}).get("numero"),
+            "n_bloco":         pos_ciclo["n_bloco"],
+            "foco":            pos_ciclo["bloco"]["foco"],
+            "semana_no_bloco": pos_ciclo["semana_no_bloco"],
+            "semana_no_ciclo": pos_ciclo["semana_no_ciclo"],
+            "papel":           pos_ciclo["papel"],
+            "alvo_tss":        pos_ciclo["alvo_tss"],
+        } if pos_ciclo else None,
     }
 
 
