@@ -455,12 +455,21 @@ _LONGAO_DESC = "Longão for fun (~3h) — base aeróbica Z2, ritmo livre/convers
 
 # Tetos do polimento, por estágio. A descarga ainda é semana de treino (corta
 # volume, segura a intensidade); a semana da prova é só manutenção.
-_TAPER_LONGAO_MIN = {"descarga": 120, "prova": 90}
-_TAPER_TETO_UTIL_MIN = {"descarga": 90, "prova": 60}
+# "competicao" é a semana de prova DENTRO de um bloco de competição: encurta o
+# longão da véspera, mas NÃO aperta os dias úteis. A diferença importa — com
+# quatro largadas em seis semanas, aplicar o teto de 60 min em toda semana de
+# prova taperaria o atleta quatro vezes pela porta dos fundos, que é o mesmo
+# erro que o prompt já foi corrigido para não cometer. O polimento de verdade
+# continua existindo: o ciclo reserva uma semana inteira dele na véspera de
+# cada prova A.
+_TAPER_LONGAO_MIN = {"descarga": 120, "prova": 90, "competicao": 90}
+_TAPER_TETO_UTIL_MIN = {"descarga": 90, "prova": 60, "competicao": _MAX_MIN_DIA_UTIL}
 _TAPER_LONGAO_DESC = {
     "descarga": ("Rodagem de descarga (~2h) — Z2 constante com 2-3 acelerações curtas. "
                  "Encurta o longão sem tirar o ritmo de prova."),
     "prova": ("Rodagem leve de taper (~1h30) — Z2 solto, pernas leves para a prova."),
+    "competicao": ("Ativação da véspera (~1h30) — Z2 solto com 2-3 aberturas de 1-2 min. "
+                   "Abre as pernas para a largada sem gastar nada."),
 }
 
 # Dias de treino padrão (Marciano: seg–sáb = 0..5)
@@ -665,9 +674,14 @@ def _aplicar_regras_agenda(
     #    semana da prova.
     if wd == dia_longao:
         if est:
-            return ("Z2_LONGO", _TAPER_LONGAO_MIN[est],
-                    _TAPER_LONGAO_DESC[est],
-                    (cadencia or "85-95"))
+            teto = _TAPER_LONGAO_MIN[est]
+            # Prescrição que JÁ respeita o teto fica como veio. A trava existe
+            # para cortar o longão de 3h na véspera da prova, não para apagar
+            # uma descrição correta — foi assim que o ensaio de alimentação da
+            # maratona, pedido pelo ciclo, sumiu do sábado de 26/09/2026.
+            if tipo == "Z2_LONGO" and duracao and duracao <= teto and descricao:
+                return tipo, duracao, descricao, (cadencia or "85-95")
+            return "Z2_LONGO", teto, _TAPER_LONGAO_DESC[est], (cadencia or "85-95")
         return "Z2_LONGO", _LONGAO_MIN, _LONGAO_DESC, (cadencia or "85-95")
 
     # 4) Dias úteis (seg–sex, wd ≤ 4) → teto de 2h (menor no polimento)
@@ -1097,6 +1111,12 @@ async def montar_contexto_semana(
         sem_rest = semanas_ate(prova["data"], ref=proxima)
         fase_prova = fase_periodizacao(sem_rest)
         estagio_prova = _estagio_taper(sem_rest)
+        # Semana de prova dentro de um bloco de competição: o ciclo decidiu que
+        # aqui é mini-descarga, não polimento. Sem esta troca as travas de
+        # agenda aplicariam o taper completo (teto de 60 min em todo dia útil) e
+        # desmentiriam, no silêncio da validação, o que o prompt acabou de pedir.
+        if em_competicao and pos_ciclo["papel"] == ciclo_service.PAPEL_PROVA:
+            estagio_prova = "competicao"
         data_prova = prova["data"]
         # Alvo de carga do polimento ancorado no TSS real das últimas semanas
         # (o parecer é quem calcula a carga crônica). Sem parecer/TSS → None, e

@@ -675,3 +675,54 @@ def test_bloco_de_competicao_nao_repete_alvo_de_carga_do_taper():
     # E o texto de taper de verdade continua existindo para quem não está em
     # bloco de competição.
     assert "ALVO DE CARGA DA SEMANA" in _REGRAS_TAPER["prova"] + "ALVO DE CARGA DA SEMANA"
+
+
+def test_semana_de_prova_em_competicao_encurta_o_longao_mas_nao_aperta_a_semana():
+    """Taper completo em toda semana de prova poliria o atleta quatro vezes."""
+    from app.services.plano_semana_service import (
+        _TAPER_LONGAO_MIN, _TAPER_TETO_UTIL_MIN, _MAX_MIN_DIA_UTIL, _LONGAO_MIN,
+    )
+
+    # A véspera encurta...
+    assert _TAPER_LONGAO_MIN["competicao"] < _LONGAO_MIN
+    # ...mas os dias úteis seguem normais, ao contrário do polimento de verdade.
+    assert _TAPER_TETO_UTIL_MIN["competicao"] == _MAX_MIN_DIA_UTIL
+    assert _TAPER_TETO_UTIL_MIN["prova"] < _MAX_MIN_DIA_UTIL
+
+
+def test_o_longao_de_180min_na_vespera_da_prova_e_cortado():
+    """O bug real da semana de 21/09: 3h de longão no sábado, maratona no domingo."""
+    from app.services.plano_semana_service import _aplicar_regras_agenda
+
+    tipo, dur, desc, cad = _aplicar_regras_agenda(
+        "2026-09-26", "Z2_LONGO", 180, "longão", "85-95",
+        {"dias_treino": [0, 1, 2, 3, 4, 5]},
+        fase="taper", estagio_taper="competicao", data_prova="2026-09-27",
+    )
+    assert dur == 90
+    assert "véspera" in desc.lower() or "ativação" in desc.lower()
+
+
+def test_o_dia_da_prova_passa_intacto():
+    from app.services.plano_semana_service import _aplicar_regras_agenda
+
+    tipo, dur, _, _ = _aplicar_regras_agenda(
+        "2026-09-27", "DESCANSO", None, "", None,
+        {"dias_treino": [0, 1, 2, 3, 4, 5]},
+        fase="taper", estagio_taper="competicao", data_prova="2026-09-27",
+    )
+    assert tipo == "DESCANSO"
+
+
+def test_longao_ja_dentro_do_teto_mantem_a_prescricao_do_treinador():
+    """A trava corta o longão de 3h na véspera; não apaga descrição correta."""
+    from app.services.plano_semana_service import _aplicar_regras_agenda
+
+    minha = "Ativação da véspera. Ensaie os géis que vai usar na prova."
+    tipo, dur, desc, _ = _aplicar_regras_agenda(
+        "2026-09-26", "Z2_LONGO", 90, minha, "85-95",
+        {"dias_treino": [0, 1, 2, 3, 4, 5]},
+        fase="taper", estagio_taper="competicao", data_prova="2026-09-27",
+    )
+    assert dur == 90
+    assert desc == minha, "a trava apagou uma prescrição que já estava certa"

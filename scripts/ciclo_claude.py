@@ -40,6 +40,7 @@ os.chdir(RAIZ)
 
 from app.services import ciclo_service as cs  # noqa: E402
 from app.services.mongo_service import get_db  # noqa: E402
+from app.utils import hoje_local  # noqa: E402
 from app.services.user_service import get_por_id  # noqa: E402
 
 # Dono do app. Mexer no ciclo de outro atleta exige --user-id explícito: um erro
@@ -49,7 +50,7 @@ USER_PADRAO = os.environ.get("SEMANA_USER_ID", "6a2ec0cf191f3f1a12547e21")
 
 def _proxima_segunda() -> str:
     """Segunda que vem — um ciclo nunca começa no meio de uma semana."""
-    hoje = date.today()
+    hoje = hoje_local()
     return (hoje + timedelta(days=(7 - hoje.weekday()) % 7 or 7)).isoformat()
 
 
@@ -309,7 +310,7 @@ async def cmd_ver(args):
     if not ciclo:
         print("Nenhum ciclo ativo nem programado. Rode `diagnostico` e depois `salvar`.")
         return
-    hoje = date.today().isoformat()
+    hoje = hoje_local().isoformat()
     pos = cs.posicao(ciclo, cs.segunda_de(hoje))
     quando = "" if pos else f" (começa em {ciclo['inicio']})"
     print(f"Ciclo {ciclo['numero']}: {ciclo['inicio']} a {ciclo['fim']}{quando}")

@@ -35,6 +35,7 @@ sys.path.insert(0, str(RAIZ))
 os.chdir(RAIZ)
 
 from app.services.mongo_service import get_db  # noqa: E402
+from app.utils import hoje_local  # noqa: E402
 from app.services.user_service import get_por_id  # noqa: E402
 
 # Dono do app. Mexer no calendário de outro atleta exige --user-id explícito:
@@ -43,7 +44,7 @@ USER_PADRAO = os.environ.get("SEMANA_USER_ID", "6a2ec0cf191f3f1a12547e21")
 
 
 def _segunda_desta_semana() -> str:
-    hoje = date.today()
+    hoje = hoje_local()
     return (hoje - timedelta(days=hoje.weekday())).isoformat()
 
 
