@@ -120,7 +120,13 @@ _PADROES_TIPO = {
     "Z2_LONGO": [
         r"\bz2\b", r"\blongo\b", r"\blong\b", r"\bbase\b", r"endurance",
         r"aer[óo]bic", r"\bfundo\b", r"\brodagem\b", r"\bvolume\b",
-        r"cad[êe]ncia", r"cadence", r"fundo\s*aer[óo]bico",
+        r"fundo\s*aer[óo]bico",
+        # "cadência" NÃO entra aqui. Toda prescrição bem escrita traz alvo de
+        # cadência — inclusive VO2máx, tiros e limiar — então ela não distingue
+        # nada e só empurrava tudo para Z2. Pior: o ciclo de 90 dias manda pôr
+        # alvo de cadência em TODO treino (limitador de giro baixo), de modo que
+        # seguir a orientação do treinador quebrava o classificador. Cadência
+        # BAIXA continua valendo, mas como sinal de FORCA, onde é específica.
     ],
     "DESCANSO": [
         r"\bdescanso\b", r"\brest\b", r"\bfolga\b", r"\boff\b",
@@ -142,14 +148,42 @@ _SERIE_Z5_MIN = re.compile(
     r"\d+\s*[x×]\s*\d+\s*min(?:utos?)?[^.\n]*?\bz\s*5\b", re.IGNORECASE)
 _SERIE_Z5_SEG = re.compile(
     r"\d+\s*[x×]\s*\d+\s*s(?:eg(?:undos?)?)?\b[^.\n]*?\bz\s*5\b", re.IGNORECASE)
+# Mesma ideia um degrau abaixo: blocos de minutos em Z3/Z4 são limiar/ritmo.
+# Faltava, e o buraco era exatamente do tamanho do erro: "2x10 min em Z3" perdia
+# para o "Z1 a Z2" do aquecimento e o treino de limiar virava Z2_LONGO no card.
+_SERIE_Z34_MIN = re.compile(
+    r"\d+\s*[x×]\s*\d+\s*min(?:utos?)?[^.\n]*?\bz\s*[34]\b", re.IGNORECASE)
+# Z3/Z4 medido em SEGUNDOS é abertura, não série de limiar: três piques de 90 s
+# dentro de um pedal solto é o que se faz na véspera da prova. Esse único "Z4"
+# carimbava TEMPO num dia de ativação — o card anunciava treino de limiar e o
+# relógio recebia alvo de limiar na véspera da largada.
+_Z34_EM_SEGUNDOS = re.compile(
+    r"\d+\s*s(?:eg(?:undos?)?)?\b[^.\n]{0,60}?\bz\s*[34]\b", re.IGNORECASE)
+
+
+def _sem_aberturas_curtas(texto: str) -> str:
+    """Remove as aberturas de segundos em Z3/Z4 antes de pontuar por palavras.
+
+    Só age quando NÃO há série de minutos em Z3/Z4 — havendo, o treino é de
+    limiar de verdade e quem decide é `tipo_definitivo`, antes de chegar aqui.
+    """
+    if _SERIE_Z34_MIN.search(texto):
+        return texto
+    return _Z34_EM_SEGUNDOS.sub(" ", texto)
 
 
 def tipo_definitivo(*textos: str | None) -> str | None:
     """Tipo inferido da ESTRUTURA da série principal, quando inequívoca.
 
-    Só dispara para blocos de Z5 (o sinal mais confiável e o que o scorer errava):
-    minutos de Z5 = VO2máx, segundos de Z5 = tiros. Retorna None se não houver
-    série de Z5 clara ou se ambas casarem (aí o scorer por palavras decide)."""
+    Minutos de Z5 = VO2máx, segundos de Z5 = tiros, minutos de Z3/Z4 = limiar.
+    A série principal manda porque o scorer por palavras-chave conta menções
+    incidentais: o aquecimento "Z1 a Z2", a recuperação ENTRE blocos e a volta à
+    calma somam para Z2_LONGO/RECUPERACAO e afogam o único trecho que define o
+    treino. Retorna None quando não há série clara — aí o scorer decide.
+
+    Z5 é avaliado primeiro: numa sessão com blocos de Z5 E de Z3, quem define o
+    dia é o estímulo mais duro.
+    """
     for texto in textos:
         if not texto:
             continue
@@ -160,6 +194,8 @@ def tipo_definitivo(*textos: str | None) -> str | None:
             return "VO2MAX"
         if tiros and not vo2:
             return "TIROS"
+        if not vo2 and not tiros and _SERIE_Z34_MIN.search(t):
+            return "TEMPO"
     return None
 
 
@@ -207,7 +243,7 @@ def classificar_por_texto(*textos: str | None) -> str | None:
     for idx, texto in enumerate(textos):
         if not texto:
             continue
-        t = _limpar_datas(texto.lower())
+        t = _sem_aberturas_curtas(_limpar_datas(texto.lower()))
         peso = 3.0 if idx == 0 else 1.0  # idx 0 = título do treino
         for tipo, padroes in _PADROES_TIPO.items():
             for pat in padroes:

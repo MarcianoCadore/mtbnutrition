@@ -127,9 +127,15 @@ class TestTipoDefinitivo:
     def test_segundos_z5(self):
         assert tipo_definitivo("10×45s Z5 máximo") == "TIROS"
 
-    def test_sem_z5_retorna_none(self):
+    def test_minutos_z3_ou_z4_e_limiar(self):
+        # Antes isto devolvia None: o detector de série principal só existia
+        # para Z5, e um treino de limiar caía no scorer por palavras-chave, onde
+        # o Z1/Z2 do aquecimento e da soltura o rebaixava para Z2_LONGO. Foi o
+        # que aconteceu com a quinta de 24/09/2026.
+        assert tipo_definitivo("3×15 min Z3-Z4, recuperação Z2.") == "TEMPO"
+
+    def test_sem_serie_estruturada_retorna_none(self):
         assert tipo_definitivo("90 min base aeróbica Z2, cadência 85-95 rpm.") is None
-        assert tipo_definitivo("3×15 min Z3-Z4, recuperação Z2.") is None
 
     def test_recuperacao_pura_retorna_none(self):
         assert tipo_definitivo("75 min recuperação ativa Z1. Sem esforço.") is None
