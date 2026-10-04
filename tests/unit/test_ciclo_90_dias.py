@@ -726,3 +726,26 @@ def test_longao_ja_dentro_do_teto_mantem_a_prescricao_do_treinador():
     )
     assert dur == 90
     assert desc == minha, "a trava apagou uma prescrição que já estava certa"
+
+
+def test_semana_com_minutos_e_sem_tss_nao_rebaixa_a_referencia():
+    """900 min e 387 TSS é sessão sem FC nem potência, não semana leve."""
+    ref = cs.carga_de_referencia(SEMANAL_COM_MINUTOS)
+    valores = sorted(s["tss"] for s in SEMANAL_COM_MINUTOS if cs._semana_com_dado(s))
+    assert 387 not in valores and 171 not in valores and 95 not in valores
+    assert ref > 483  # mediana antiga, com as semanas sem dado
+
+
+def test_carga_alta_deixa_a_rampa_mais_ingreme():
+    normal = cs.carga_de_referencia(SEMANAL_COM_MINUTOS, volume_alvo_min=1500)
+    alta = cs.carga_de_referencia(SEMANAL_COM_MINUTOS, volume_alvo_min=1500, carga_alta=True)
+    base = cs.carga_de_referencia(SEMANAL_COM_MINUTOS)
+    assert alta == round(base * cs.TETO_PROGRESSAO_CICLO_CARGA_ALTA) > normal
+
+
+def test_manutencao_em_carga_alta_pede_duas_sessoes():
+    ciclo = {"blocos": [{"n": 1, "foco": "competicao", "inicio": "2026-10-05",
+                         "fim": "2026-10-11", "semanas": 1, "semanas_detalhe": [
+                             {"semana": "2026-10-05", "papel": "manutencao", "alvo_tss": 600}]}]}
+    assert "UMA sessão de qualidade" in cs.bloco_prompt(ciclo, "2026-10-05")
+    assert "DUAS sessões" in cs.bloco_prompt(ciclo, "2026-10-05", carga_alta=True)

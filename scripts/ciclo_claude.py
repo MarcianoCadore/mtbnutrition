@@ -104,8 +104,10 @@ async def _levantar(user_id: str, inicio: str) -> dict:
     # A meta de horas do perfil entra no cálculo: o ciclo mira onde o atleta
     # quer chegar, em rampa, e não só onde ele esteve.
     from app.services.plano_semana_service import volume_semanal_do_usuario
+    from app.services.plano_semana_service import carga_alta_do_usuario
     volume_alvo = volume_semanal_do_usuario(u.get("preferencias"))
-    carga_ref = cs.carga_de_referencia(semanal, volume_alvo)
+    carga_ref = cs.carga_de_referencia(
+        semanal, volume_alvo, carga_alta=carga_alta_do_usuario(u.get("preferencias")))
 
     curva = await db.curva_potencia.find_one({"user_id": user_id},
                                              sort=[("atualizado_em", -1)])

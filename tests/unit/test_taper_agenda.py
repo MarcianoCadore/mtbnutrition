@@ -114,3 +114,34 @@ class TestBlocoCargaTaper:
 
     def test_avisa_que_a_prova_fica_fora_da_conta(self):
         assert "NÃO entra" in _bloco_carga_taper(175, 500)
+
+
+class TestLongaoCargaAlta:
+    PREF = {"carga_alta": True}
+
+    def test_longao_estruturado_mantem_a_descricao(self):
+        """A trava é da duração: os blocos de Z3 do longão não podem sumir."""
+        _, dur, desc, _ = _aplicar_regras_agenda(
+            SABADO, "Z2_LONGO", 180, "Longão com 2x20 Z3", None, preferencias=None)
+        assert (dur, desc) == (_LONGAO_MIN, "Longão com 2x20 Z3")
+
+    def test_carga_alta_libera_longao_de_4h(self):
+        _, dur, _, _ = _aplicar_regras_agenda(
+            SABADO, "Z2_LONGO", 240, "Big gear 4h", None, preferencias=self.PREF)
+        assert dur == 240
+
+    def test_carga_alta_ainda_tem_teto(self):
+        _, dur, _, _ = _aplicar_regras_agenda(
+            SABADO, "Z2_LONGO", 400, "Big gear", None, preferencias=self.PREF)
+        assert dur == 240
+
+    def test_sem_carga_alta_longao_fica_em_3h(self):
+        _, dur, _, _ = _aplicar_regras_agenda(
+            SABADO, "Z2_LONGO", 240, "Big gear 4h", None, preferencias=None)
+        assert dur == _LONGAO_MIN
+
+    def test_bloco_do_prompt_traz_o_cardapio(self):
+        from app.services.plano_semana_service import bloco_carga_alta
+        assert bloco_carga_alta(None) == ""
+        txt = bloco_carga_alta({"carga_alta": True, "sessoes_referencia": ["14x90s Z5 big gear"]})
+        assert "MODO CARGA ALTA" in txt and "14x90s Z5 big gear" in txt

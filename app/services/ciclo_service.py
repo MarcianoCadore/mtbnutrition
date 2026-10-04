@@ -160,9 +160,30 @@ def fim_do_ciclo(inicio: str) -> str:
 # numa rampa: ele CHEGA nas 10-12h, no fim do ciclo e não na segunda-feira.
 TETO_PROGRESSAO_CICLO = 1.15
 
+# Atleta em modo "carga alta" (preferencias.carga_alta) pediu explicitamente
+# para treinar como competidor de elite. A rampa continua existindo — só fica
+# mais íngreme: o pedido foi do atleta, não um palpite do app.
+TETO_PROGRESSAO_CICLO_CARGA_ALTA = 1.30
+
+# Abaixo disto a semana tem minutos mas não tem TSS: sessões sincronizadas sem
+# FC nem potência. Ciclismo de verdade não roda a 25 TSS/h (31/08/2026: 900 min
+# e 387 TSS). Contar essas semanas rebaixa a mediana e o TSS/hora do atleta, e
+# foi isso que deixou o ciclo 1 mandando 472 TSS para quem já sustentou 816.
+TSS_POR_HORA_MINIMO = 40
+
+
+def _semana_com_dado(s: dict) -> bool:
+    """Semana com TSS medido de verdade (ver TSS_POR_HORA_MINIMO)."""
+    tss = s.get("tss") or 0
+    if tss <= 0:
+        return False
+    minutos = s.get("minutos") or 0
+    return not minutos or tss / (minutos / 60) >= TSS_POR_HORA_MINIMO
+
 
 def carga_de_referencia(semanal: list[dict],
-                        volume_alvo_min: int | None = None) -> int | None:
+                        volume_alvo_min: int | None = None,
+                        carga_alta: bool = False) -> int | None:
     """TSS/semana que ancora os alvos do ciclo — 12 semanas, não 4.
 
     O parecer semanal usa 4 semanas de propósito: ele responde "como o atleta
@@ -188,7 +209,8 @@ def carga_de_referencia(semanal: list[dict],
     prompt carregaria duas ordens incompatíveis: "fique em 10h" da meta e "mire
     483 TSS" do ciclo, que nas horas dele são 9h2.
     """
-    valores = sorted(s.get("tss") or 0 for s in (semanal or []) if (s.get("tss") or 0) > 0)
+    semanal = [s for s in (semanal or []) if _semana_com_dado(s)]
+    valores = sorted(s["tss"] for s in semanal)
     if not valores:
         return None
     meio = len(valores) // 2
@@ -210,7 +232,8 @@ def carga_de_referencia(semanal: list[dict],
     # vale em rampa.
     if ambicao <= base:
         return round(ambicao)
-    return round(min(ambicao, base * TETO_PROGRESSAO_CICLO))
+    teto = TETO_PROGRESSAO_CICLO_CARGA_ALTA if carga_alta else TETO_PROGRESSAO_CICLO
+    return round(min(ambicao, base * teto))
 
 
 # ── Esqueleto determinístico ─────────────────────────────────────────────────
@@ -630,7 +653,8 @@ async def salvar_ciclo(user_id: str, ciclo: dict) -> dict:
 
 # ── Bloco de prompt ──────────────────────────────────────────────────────────
 
-def bloco_prompt(ciclo: dict | None, semana_inicio: str) -> str:
+def bloco_prompt(ciclo: dict | None, semana_inicio: str,
+                 carga_alta: bool = False) -> str:
     """O ciclo, formatado para entrar no prompt da semana.
 
     Sem ciclo devolve string vazia e a geração segue como sempre foi — o ciclo
@@ -688,6 +712,14 @@ def bloco_prompt(ciclo: dict | None, semana_inicio: str) -> str:
             "SEMANA DE PROVA dentro do bloco de competição. A PROVA é a sessão "
             "dura da semana — não acrescente outra. Mini-descarga nos 2-3 dias "
             "anteriores (só aberturas curtas), e nada de longão cheio na véspera."
+        )
+    elif pos["papel"] == PAPEL_MANUTENCAO and carga_alta:
+        linhas.append(
+            "SEMANA DE MANUTENÇÃO entre duas provas, em MODO CARGA ALTA: o "
+            "atleta pediu para treinar como competidor de elite. DUAS sessões "
+            "de qualidade bem espaçadas (uma de torque/big gear ou sub-limiar, "
+            "uma de Z5) e o longão com blocos estruturados. Os 1-2 dias depois "
+            "da prova anterior continuam leves."
         )
     elif pos["papel"] == PAPEL_MANUTENCAO:
         linhas.append(

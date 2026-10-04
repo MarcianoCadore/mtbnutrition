@@ -451,6 +451,10 @@ def _shift_data(data_iso: str, delta_dias: int) -> str:
 # ── Regras de agenda (configuráveis por usuário) ──────────────────────────────
 _MAX_MIN_DIA_UTIL = 120   # seg–sex: nenhum treino acima de 2h
 _LONGAO_MIN = 180         # longão do fim de semana: 3h (Z2 / "for fun")
+# Modo carga alta (preferencias.carga_alta): o atleta pediu treino de competidor
+# de elite. O longão pode ir a 4h e ter estrutura (big gear, blocos de Z3) — o
+# "for fun de 3h em Z2 puro" constrói base, não prepara uma maratona de 60 km.
+_LONGAO_MAX_CARGA_ALTA = 240
 _LONGAO_DESC = "Longão for fun (~3h) — base aeróbica Z2, ritmo livre/conversacional. Foco em volume e economia de pedalada."
 
 # Tetos do polimento, por estágio. A descarga ainda é semana de treino (corta
@@ -521,6 +525,47 @@ def dias_treino_do_usuario(preferencias: dict | None) -> list[int]:
 # continua sendo a IA (comportamento de sempre).
 VOLUME_SEMANAL_MIN_H = 1
 VOLUME_SEMANAL_MAX_H = 40
+
+
+def carga_alta_do_usuario(preferencias: dict | None) -> bool:
+    """Atleta pediu treino de competidor de elite: tetos de carga destravados."""
+    return bool((preferencias or {}).get("carga_alta"))
+
+
+def sessoes_referencia_do_usuario(preferencias: dict | None) -> list[str]:
+    """Sessões que o atleta fazia com treinador humano e quer de volta."""
+    return [str(x).strip() for x in (preferencias or {}).get("sessoes_referencia") or []
+            if str(x).strip()]
+
+
+def bloco_carga_alta(preferencias: dict | None) -> str:
+    """Instruções do modo carga alta + o cardápio de sessões do atleta."""
+    if not carga_alta_do_usuario(preferencias):
+        return ""
+    linhas = [
+        "═══════════════════════════════════════════",
+        "MODO CARGA ALTA — o atleta pediu para treinar como competidor de elite.",
+        "Isto SOBREPÕE a estrutura genérica acima onde houver conflito:",
+        "- Semana de CARGA/MANUTENÇÃO: até 3 dias duros (2 sessões de qualidade na bike + "
+        "o longão estruturado). Nunca dois duros em dias consecutivos.",
+        "- Longão de 180 a 240 min. Pode e deve ter estrutura: big gear em subida, blocos "
+        "de Z3 sub-limiar, ou estímulos curtos de Z5 no fim. Volume se completa nele.",
+        "- Dias fáceis continuam fáceis: o que sustenta a carga alta é a recuperação de verdade.",
+        "- Big gear / torque é INTENCIONAL: cadência 50-80 rpm na série principal dessas "
+        "sessões. A meta de cadência alta (85-95) vale para Z2 e recuperação, não para elas.",
+        "- Progressão nas repetições de semana para semana (ex.: 10 → 12 → 14 × 90s), "
+        "não só em minutos.",
+        "- Semana de PROVA, TAPER ou DESCARGA continua leve: carga alta é na construção.",
+    ]
+    sessoes = sessoes_referencia_do_usuario(preferencias)
+    if sessoes:
+        linhas += [
+            "",
+            "CARDÁPIO DE SESSÕES DO ATLETA (era o que o treinador humano dele passava — use "
+            "estas como base dos dias duros, adaptando volume à semana; tipos sugeridos):",
+        ] + [f"  • {x}" for x in sessoes]
+    linhas.append("═══════════════════════════════════════════")
+    return "\n".join(linhas)
 
 
 def volume_semanal_do_usuario(preferencias: dict | None) -> int | None:
@@ -682,6 +727,12 @@ def _aplicar_regras_agenda(
             if tipo == "Z2_LONGO" and duracao and duracao <= teto and descricao:
                 return tipo, duracao, descricao, (cadencia or "85-95")
             return "Z2_LONGO", teto, _TAPER_LONGAO_DESC[est], (cadencia or "85-95")
+        # Longão que já veio com prescrição própria fica com ela: a trava é da
+        # duração, não do conteúdo. Apagar a descrição era o que transformava
+        # os "2x20 Z3 dentro do longão" pedidos pelo ciclo em 3h de Z2 puro.
+        teto = _LONGAO_MAX_CARGA_ALTA if carga_alta_do_usuario(pref) else _LONGAO_MIN
+        if tipo == "Z2_LONGO" and descricao and duracao:
+            return tipo, max(_LONGAO_MIN, min(int(duracao), teto)), descricao, (cadencia or "85-95")
         return "Z2_LONGO", _LONGAO_MIN, _LONGAO_DESC, (cadencia or "85-95")
 
     # 4) Dias úteis (seg–sex, wd ≤ 4) → teto de 2h (menor no polimento)
@@ -962,7 +1013,6 @@ async def montar_contexto_semana(
     except Exception as e:
         logger.warning("Ciclo de 90 dias indisponível (%s) — semana segue sem ele", e)
     pos_ciclo = ciclo_service.posicao(ciclo, proxima)
-    bloco_ciclo = ciclo_service.bloco_prompt(ciclo, proxima)
 
     # ── Dados do usuário (tolerante a ausências) ──────────────────────────────
     u = await get_por_id(user_id)
@@ -971,6 +1021,8 @@ async def montar_contexto_semana(
     perfil: dict = u.get("perfil") or {}
     preferencias: dict = u.get("preferencias") or {}
     zonas_doc: dict = u.get("zonas") or {}
+    bloco_ciclo = ciclo_service.bloco_prompt(
+        ciclo, proxima, carga_alta=carga_alta_do_usuario(preferencias))
 
     idade: int = int(perfil.get("idade") or 34)
     peso: float = float(perfil.get("peso_kg") or 85)
@@ -1043,10 +1095,17 @@ async def montar_contexto_semana(
         restricao_util = "- Sem treinos em dias úteis configurados."
 
     if dia_longao_nome:
-        restricao_fds = (
-            f"- {dia_longao_nome.capitalize()}: SEMPRE um longão de 180 min (3h), "
-            f"Z2_LONGO (\"for fun\", ritmo livre/base aeróbica). É o maior treino da semana."
-        )
+        if carga_alta_do_usuario(preferencias):
+            restricao_fds = (
+                f"- {dia_longao_nome.capitalize()}: SEMPRE um longão Z2_LONGO de "
+                f"{_LONGAO_MIN} a {_LONGAO_MAX_CARGA_ALTA} min, com estrutura (ver MODO CARGA ALTA). "
+                "É o maior treino da semana."
+            )
+        else:
+            restricao_fds = (
+                f"- {dia_longao_nome.capitalize()}: SEMPRE um longão de 180 min (3h), "
+                f"Z2_LONGO (\"for fun\", ritmo livre/base aeróbica). É o maior treino da semana."
+            )
     else:
         restricao_fds = "- Sem longão fixo de fim de semana (sem treino em sáb/dom)."
         if dias_treino_override is not None and dias_uteis_treino:
@@ -1381,6 +1440,7 @@ RESTRIÇÕES DE AGENDA (OBRIGATÓRIAS):
 {bloco_volume}
 
 {_instrucoes_objetivo(objetivo)}
+{bloco_carga_alta(preferencias)}
 
 {_bloco_academia_prompt}
 
