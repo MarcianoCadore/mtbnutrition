@@ -538,6 +538,20 @@ def sessoes_referencia_do_usuario(preferencias: dict | None) -> list[str]:
             if str(x).strip()]
 
 
+def _teto_por_tipo(tipo: str, preferencias: dict | None) -> int:
+    """Duração máxima de um treino pelo tipo.
+
+    A tabela `_DURACAO_MAXIMA` é calibrada para o atleta médio (tiros até 90 min,
+    Z2 até 2h). Em modo carga alta ela sai do caminho dos treinos de bike e
+    sobram só os tetos da agenda (2h em dia útil, longão até 4h) — sem isso o
+    10 × 90 s de big gear era cortado para 90 min e o longão de 4h para 3h.
+    """
+    teto = _DURACAO_MAXIMA.get(tipo, 150)
+    if tipo in ("ACADEMIA", "TESTE_FTP") or not carga_alta_do_usuario(preferencias):
+        return teto
+    return max(teto, _LONGAO_MAX_CARGA_ALTA if tipo == "Z2_LONGO" else _MAX_MIN_DIA_UTIL)
+
+
 def bloco_carga_alta(preferencias: dict | None) -> str:
     """Instruções do modo carga alta + o cardápio de sessões do atleta."""
     if not carga_alta_do_usuario(preferencias):
@@ -1592,7 +1606,7 @@ def normalizar_plano(data: dict, ctx: dict, modelo_usado: str = "claude") -> dic
         if tipo not in _TIPOS_VALIDOS:
             tipo = "DESCANSO"
         duracao = int(t.get("duracao_min") or _DURACAO_PADRAO.get(tipo, 60))
-        duracao = min(duracao, _DURACAO_MAXIMA.get(tipo, 150))
+        duracao = min(duracao, _teto_por_tipo(tipo, preferencias))
         descricao = t.get("descricao") or _DESCRICAO_PADRAO.get(tipo, "")
         # ACADEMIA puro não tem cadência (é gym, não bike)
         cadencia = None if tipo == "ACADEMIA" else t.get("cadencia_rpm")

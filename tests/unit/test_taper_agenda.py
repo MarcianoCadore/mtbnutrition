@@ -145,3 +145,10 @@ class TestLongaoCargaAlta:
         assert bloco_carga_alta(None) == ""
         txt = bloco_carga_alta({"carga_alta": True, "sessoes_referencia": ["14x90s Z5 big gear"]})
         assert "MODO CARGA ALTA" in txt and "14x90s Z5 big gear" in txt
+
+    def test_carga_alta_destrava_o_teto_por_tipo(self):
+        from app.services.plano_semana_service import _teto_por_tipo
+        assert _teto_por_tipo("TIROS", None) == 90
+        assert _teto_por_tipo("TIROS", self.PREF) == _MAX_MIN_DIA_UTIL
+        assert _teto_por_tipo("Z2_LONGO", self.PREF) == 240
+        assert _teto_por_tipo("ACADEMIA", self.PREF) == 90
