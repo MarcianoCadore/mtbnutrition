@@ -631,7 +631,7 @@ const TIPOS = [
   {v:'TIROS',      l:'⚡ Tiros',        s:'Tiros'},
   {v:'VO2MAX',     l:'🔥 VO2Max',       s:'VO2Max'},
   {v:'TEMPO',      l:'💨 Tempo',        s:'Tempo'},
-  {v:'FORCA',      l:'💪 Força (bike)',  s:'Força Bike'},
+  {v:'FORCA',      l:'💪 Big gear (força na bike)',  s:'Big gear'},
   {v:'ACADEMIA',   l:'🏋️ Academia',     s:'Academia'},
   {v:'RECUPERACAO',l:'🌿 Recuperação',  s:'Recuperação'},
   {v:'TESTE_FTP',  l:'⚡ Teste FTP',    s:'Teste FTP'},
@@ -1744,7 +1744,7 @@ async function load() {
 // Ajuste da semana esperando o aceite (só aparece para quem escolheu "quero dar
 // o aceite" no perfil; no modo automático a semana já vem ajustada).
 const _AD_TIPO_LABEL = {Z2_LONGO:'Z2 longo', RECUPERACAO:'Recuperação', TEMPO:'Tempo',
-  FORCA:'Força', TIROS:'Tiros', VO2MAX:'VO2máx', TESTE_FTP:'Teste de FTP',
+  FORCA:'Big gear', TIROS:'Tiros', VO2MAX:'VO2máx', TESTE_FTP:'Teste de FTP',
   ACADEMIA:'Academia', DESCANSO:'Descanso'};
 
 async function carregarAdaptacaoPendente() {
@@ -2072,7 +2072,7 @@ const TIPO_CORES = {
 };
 const TIPO_LABELS2 = {
   Z2_LONGO:'Z2 Longo', TIROS:'Tiros', VO2MAX:'VO2Max',
-  TEMPO:'Tempo', FORCA:'Força Bike', ACADEMIA:'Academia', RECUPERACAO:'Recuperação', DESCANSO:'Descanso',
+  TEMPO:'Tempo', FORCA:'Big gear', ACADEMIA:'Academia', RECUPERACAO:'Recuperação', DESCANSO:'Descanso',
   TESTE_FTP:'Teste FTP',
 };
 const DIAS_PT = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];

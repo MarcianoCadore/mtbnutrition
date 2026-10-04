@@ -85,7 +85,7 @@ def format_plano_whatsapp(plano: PlanoAlimentar) -> str:
 
 _TREINO_LABELS = {
     "Z2_LONGO": "Z2 Longo", "TIROS": "Tiros", "VO2MAX": "VO2 Máx",
-    "TEMPO": "Tempo", "FORCA": "Força", "RECUPERACAO": "Recuperação",
+    "TEMPO": "Tempo", "FORCA": "Big gear", "RECUPERACAO": "Recuperação",
     "DESCANSO": "Descanso",
 }
 

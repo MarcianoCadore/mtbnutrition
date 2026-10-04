@@ -93,3 +93,20 @@ def test_os_tipos_classicos_nao_regridem():
 def test_sem_serie_clara_o_scorer_continua_decidindo():
     assert tipo_definitivo("pedal solto de 1h") is None
     assert classificar_por_texto("Longão em Z2, base aeróbica") == "Z2_LONGO"
+
+
+def test_serie_em_marcha_pesada_e_forca_em_qualquer_zona():
+    """O que define big gear é o torque; a zona é só a intensidade."""
+    for texto in ("10 × 90 s em Z5 em big gear numa subida, marcha pesada a 70-80 rpm",
+                  "8 × 30 s dando o seu melhor, sentado, marcha pesada, cadência 50 rpm",
+                  "6x8 min cadência 50-58 rpm marcha pesada Z3"):
+        assert tipo_definitivo(texto) == "FORCA", texto
+
+
+def test_sprint_partindo_de_marcha_pesada_continua_tiro():
+    assert tipo_definitivo("10 × 20 s de sprint em Z5 partindo de marcha pesada") == "TIROS"
+
+
+def test_cadencia_alta_na_serie_nao_e_forca():
+    assert tipo_definitivo("5 × 4 min em Z5, cadência 90-100 rpm") == "VO2MAX"
+    assert tipo_definitivo("2 × 20 min em Z3, cadência 85-95 rpm") == "TEMPO"

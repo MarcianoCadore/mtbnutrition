@@ -482,7 +482,7 @@ async def plano_hoje(request: Request):
 
 _TIPO_LABELS = {
     "Z2_LONGO": "🚴 Z2 Longo", "TIROS": "⚡ Tiros", "VO2MAX": "🔥 VO2Max",
-    "TEMPO": "💨 Tempo", "FORCA": "💪 Força", "RECUPERACAO": "🌿 Recuperação",
+    "TEMPO": "💨 Tempo", "FORCA": "💪 Big gear", "RECUPERACAO": "🌿 Recuperação",
     "DESCANSO": "🛌 Descanso",
 }
 _ORDEM_TIPOS = ["TIROS", "VO2MAX", "TEMPO", "FORCA", "Z2_LONGO", "RECUPERACAO", "DESCANSO"]

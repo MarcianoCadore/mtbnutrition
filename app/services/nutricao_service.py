@@ -835,7 +835,7 @@ REFEICOES_GUIA = [
 
 _TIPO_LABEL_WPP = {
     "Z2_LONGO": "🚴 Z2 Longo", "TIROS": "⚡ Tiros", "VO2MAX": "🔥 VO2Max",
-    "TEMPO": "💨 Tempo", "FORCA": "💪 Força", "RECUPERACAO": "🌿 Recuperação",
+    "TEMPO": "💨 Tempo", "FORCA": "💪 Big gear", "RECUPERACAO": "🌿 Recuperação",
     "DESCANSO": "🛌 Descanso",
 }
 

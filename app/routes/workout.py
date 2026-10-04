@@ -4143,7 +4143,7 @@ function render(d) {
 
 // ── Retrospectiva: "como vêm vindo meus treinos" ──────────────────────────
 const TIPO_PT = {Z2_LONGO:'Z2 longo', TIROS:'Tiros', VO2MAX:'VO2máx', TEMPO:'Tempo',
-                 FORCA:'Força', ACADEMIA:'Academia', RECUPERACAO:'Recuperação',
+                 FORCA:'Big gear', ACADEMIA:'Academia', RECUPERACAO:'Recuperação',
                  DESCANSO:'Descanso', TESTE_FTP:'Teste de FTP'};
 
 function dataBr(iso) { return iso ? iso.slice(8,10) + '/' + iso.slice(5,7) : ''; }

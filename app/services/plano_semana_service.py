@@ -567,6 +567,10 @@ def bloco_carga_alta(preferencias: dict | None) -> str:
         "- Dias fáceis continuam fáceis: o que sustenta a carga alta é a recuperação de verdade.",
         "- Big gear / torque é INTENCIONAL: cadência 50-80 rpm na série principal dessas "
         "sessões. A meta de cadência alta (85-95) vale para Z2 e recuperação, não para elas.",
+        "- Sessão de big gear ou torque é tipo FORCA mesmo quando feita em Z5 (o que a define "
+        "é a marcha pesada). Escreva 'big gear' e a cadência na MESMA frase da série "
+        "(ex.: '10 × 90 s em Z5 em big gear a 70-80 rpm') — é essa frase que mantém o tipo "
+        "no card e no Garmin. Sprint partindo de marcha pesada continua TIROS.",
         "- Progressão nas repetições de semana para semana (ex.: 10 → 12 → 14 × 90s), "
         "não só em minutos.",
         "- Semana de PROVA, TAPER ou DESCARGA continua leve: carga alta é na construção.",
@@ -920,7 +924,7 @@ TIPOS DE TREINO NA BIKE — PRESCRIÇÃO DETALHADA (cite a intensidade SEMPRE pe
   Duração típica: 75-90 min (aquecimento + blocos com recuperação igual + volta à calma).
   Ex: "15 min aquecimento progressivo até Z3. 5×4 min Z5, cadência 90-100 rpm. Recuperação 4 min Z2 entre blocos. 15 min volta à calma Z1."
 
-- FORCA (treino de força na BIKE — NÃO é academia):
+- FORCA (big gear — treino de força na BIKE, NÃO é academia):
   Cadência baixa (50-60 rpm), marcha pesada, intensidade Z3. Simula subidas longas e fortalece musculatura de pedalada.
   Duração típica: 90-105 min.
   Ex: "15 min aquecimento. 6×8 min cadência 50-58 rpm marcha pesada Z3, subida ou resistência alta. Recuperação 3 min Z1 cadência livre. 10 min volta à calma."

@@ -161,6 +161,18 @@ _Z34_EM_SEGUNDOS = re.compile(
     r"\d+\s*s(?:eg(?:undos?)?)?\b[^.\n]{0,60}?\bz\s*[34]\b", re.IGNORECASE)
 
 
+# Série principal feita em marcha pesada é FORÇA, em qualquer zona. O que define
+# o big gear é o torque — Z3 ou Z5 é só a intensidade em que ele é feito. Sem
+# isto, "6x8 min a 50-58 rpm em Z3" virava TEMPO e "10 × 90 s em Z5 em big gear
+# a 70-80 rpm" virava TIROS: o card de 01/10/2026 anunciou limiar num dia de
+# força, e o atleta pedalou a 93 rpm. Cadência só conta com teto ≤ 80 rpm, e
+# "marcha pesada" sozinha não basta: sprint partindo de marcha pesada é tiro.
+_SERIE_FORCA = re.compile(
+    r"\d+\s*[x×]\s*\d+\s*(?:s(?:eg(?:undos?)?)?|min(?:utos?)?)\b[^.\n]*?"
+    r"(?:big\s*gear|\btorque\b|\b(?:[3-7]\d|80)\s*(?:[-–a]\s*(?:[3-7]\d|80)\s*)?rpm\b)",
+    re.IGNORECASE)
+
+
 def _sem_aberturas_curtas(texto: str) -> str:
     """Remove as aberturas de segundos em Z3/Z4 antes de pontuar por palavras.
 
@@ -175,7 +187,8 @@ def _sem_aberturas_curtas(texto: str) -> str:
 def tipo_definitivo(*textos: str | None) -> str | None:
     """Tipo inferido da ESTRUTURA da série principal, quando inequívoca.
 
-    Minutos de Z5 = VO2máx, segundos de Z5 = tiros, minutos de Z3/Z4 = limiar.
+    Série em big gear/torque/≤80 rpm = força; minutos de Z5 = VO2máx, segundos
+    de Z5 = tiros, minutos de Z3/Z4 = limiar.
     A série principal manda porque o scorer por palavras-chave conta menções
     incidentais: o aquecimento "Z1 a Z2", a recuperação ENTRE blocos e a volta à
     calma somam para Z2_LONGO/RECUPERACAO e afogam o único trecho que define o
@@ -187,6 +200,9 @@ def tipo_definitivo(*textos: str | None) -> str | None:
     for texto in textos:
         if not texto:
             continue
+        # Texto cru: `_limpar_datas` lê "50-58 rpm" como dia-mês e apaga a cadência.
+        if _SERIE_FORCA.search(texto):
+            return "FORCA"
         t = _limpar_datas(texto)
         vo2 = bool(_SERIE_Z5_MIN.search(t))
         tiros = bool(_SERIE_Z5_SEG.search(t))

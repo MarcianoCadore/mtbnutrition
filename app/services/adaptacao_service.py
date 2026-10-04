@@ -727,7 +727,7 @@ async def aplicar_pendente(user_id: str, aceitar: bool = True) -> dict | None:
 
 _ROTULO_TIPO = {
     "Z2_LONGO": "Z2 longo", "RECUPERACAO": "Recuperação", "TEMPO": "Tempo",
-    "FORCA": "Força", "TIROS": "Tiros", "VO2MAX": "VO2máx",
+    "FORCA": "Big gear", "TIROS": "Tiros", "VO2MAX": "VO2máx",
     "TESTE_FTP": "Teste de FTP", "ACADEMIA": "Academia", "DESCANSO": "Descanso",
 }
 
