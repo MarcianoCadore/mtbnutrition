@@ -6,12 +6,14 @@
 # o Pedal (18.230.117.0) ficou totalmente inacessível pela rede (não só o app
 # — nem SSH nem ping respondiam) e o usuário optou por não depender mais da
 # AWS. VM dedicada: mtbnutrition (BV1-1-10, br-se1-a).
+# Em 13/10/2026 a VM foi recriada na conta Magalu pessoal (marcianocadore@hotmail.com,
+# que tem créditos), saindo da conta luizalabs. IP antigo: 201.54.19.234.
 # /opt/mtbnutrition pertence ao usuário de serviço `mtbnutri`, que não tem
 # sudo — daí o --rsync-path com sudo, e o chown depois da cópia.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-EC2=ubuntu@201.54.19.234
+EC2=ubuntu@201.23.80.207
 PEM=~/.ssh/id_ed25519
 APP=/opt/mtbnutrition
 
